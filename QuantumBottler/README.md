@@ -101,7 +101,6 @@ first launch. Edit it and restart the game.
 | `HoursLevel3` | `2` | Same for a **level 3** room. |
 | `SuppressCapsBonus` | `false` | Set to `true` to also remove the vanilla Luck-based caps bonus, making the Bottler yield Quantum and nothing else. |
 | `QuantumIconOverride` | *(empty)* | UI sprite name for the Bottler's icon. Empty uses the built-in `Icon_NukaQuantum`. |
-| `LogProduction` | `false` | Logs the computed rate for each Bottler, plus the full resource-to-sprite table, to `BepInEx\LogOutput.log`. |
 
 Want it faster? Lower the hour values. Want Quantum to stay rare? Raise them.
 
@@ -157,8 +156,7 @@ The mod applies eleven Harmony patches:
    resources. That table has no entry for `NukaColaQuantum` at all, and a miss does not throw —
    it silently falls back to an unrelated sprite. Asking the game for the Quantum icon therefore
    returns `Icon_WeaponGreen`, the crafted-weapon icon. (`Lunchbox`, `MrHandy` and `PetCarrier`
-   are missing outright and throw `KeyNotFoundException`.) Enable `LogProduction` to dump the
-   whole table if you are adapting this to another resource.
+   are missing outright and throw `KeyNotFoundException`.)
 
 5. **`ResourceParameters.GetResourceData(List<EResource>)` (postfix)** — fixes the icon on the
    "ready to collect" tapping message, which is a *separate* path from the room icon:

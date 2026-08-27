@@ -6,8 +6,6 @@ The Foundry is a full production room: built from the build menu, staffed like a
 upgradeable through three levels, mergeable up to three segments wide, and unlocked alongside the
 Nuka-Cola Bottler. Luck decides how fast it runs.
 
-It also takes a **backup of every vault save each time the game starts** — see [Save safety](#save-safety).
-
 ---
 
 ## Requirements
@@ -50,20 +48,12 @@ To uninstall safely:
 2. Save and quit.
 3. Delete `BepInEx\plugins\CapsFoundry.dll`.
 
-If you already removed the mod and a vault will not open, reinstall the mod, or restore a save from
-`%LocalAppData%\FalloutShelter\ModBackups\` (see below).
+If you already removed the mod and a vault will not open, reinstalling it makes the vault load
+again — nothing is lost as long as the DLL comes back.
 
-## Save safety
-
-Every time the game starts, the mod copies all `Vault*.sav` files to:
-
-```
-%LocalAppData%\FalloutShelter\ModBackups\<yyyyMMdd-HHmmss>\
-```
-
-The ten most recent sets are kept. This runs before any patching and regardless of the `Enabled`
-setting, so the safety net is there even with the room switched off. To restore, close the game and
-copy a save back over the original in `%LocalAppData%\FalloutShelter\`.
+The mod does not touch your save files itself and keeps no backups of its own. Saves live in
+`%LocalAppData%\FalloutShelter\`; copy that folder somewhere before experimenting if you want a
+fallback.
 
 ---
 

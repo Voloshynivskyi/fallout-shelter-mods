@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.2.0";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.3.0";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -148,11 +148,7 @@ namespace CapsFoundry
                 "Hex colour multiplied into the cloned room's materials so it reads differently " +
                 "from a Geothermal plant. Only the clone is tinted. Empty disables tinting.");
 
-            BackupSaves();
-
             ApplyPatches();
-
-            Log.LogInfo(PluginName + " " + PluginVersion + " loaded. Enabled=" + Enabled.Value);
         }
 
         private void Update()
@@ -213,67 +209,14 @@ namespace CapsFoundry
 
             if (failures.Count == 0)
             {
-                Log.LogInfo("Applied " + applied + " patches.");
+                Log.LogInfo(PluginName + " " + PluginVersion +
+                            (Enabled.Value ? " ready (" : " loaded but disabled (") + applied + " patches).");
                 return;
             }
 
             Log.LogWarning("Applied " + applied + " patches; " + failures.Count + " failed (" +
                            string.Join(", ", failures.ToArray()) + "). The room may misbehave — " +
                            "this usually means the game updated.");
-        }
-
-        /// <summary>
-        /// Copies every vault save into a timestamped folder at game start, keeping the most recent
-        /// <see cref="KeepBackups"/> sets.
-        ///
-        /// This exists because a room of this mod's type cannot be loaded without the mod: once such
-        /// a room is saved, removing or breaking the mod makes that vault unopenable. A backup taken
-        /// before the game touches anything is the difference between an annoyance and lost progress.
-        ///
-        /// Runs before the Harmony patches and independently of the Enabled switch, so the safety net
-        /// is there even when the room itself is turned off.
-        /// </summary>
-        private const int KeepBackups = 10;
-
-        private void BackupSaves()
-        {
-            try
-            {
-                string saveDir = System.IO.Path.Combine(
-                    System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
-                    "FalloutShelter");
-                if (!System.IO.Directory.Exists(saveDir)) return;
-
-                string[] saves = System.IO.Directory.GetFiles(saveDir, "Vault*.sav");
-                if (saves.Length == 0) return;
-
-                string root = System.IO.Path.Combine(saveDir, "ModBackups");
-                System.IO.Directory.CreateDirectory(root);
-
-                string stamp = System.DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                string dest = System.IO.Path.Combine(root, stamp);
-                System.IO.Directory.CreateDirectory(dest);
-
-                foreach (string save in saves)
-                {
-                    System.IO.File.Copy(save, System.IO.Path.Combine(dest, System.IO.Path.GetFileName(save)), true);
-                }
-
-                Log.LogInfo("Backed up " + saves.Length + " save(s) to " + dest);
-
-                // Prune oldest sets so this cannot grow without bound.
-                string[] sets = System.IO.Directory.GetDirectories(root);
-                System.Array.Sort(sets, System.StringComparer.Ordinal);
-                for (int i = 0; i < sets.Length - KeepBackups; i++)
-                {
-                    try { System.IO.Directory.Delete(sets[i], true); } catch { }
-                }
-            }
-            catch (Exception e)
-            {
-                // A failed backup must never stop the game loading.
-                Log.LogWarning("Save backup failed: " + e.Message);
-            }
         }
 
         /// <summary>
@@ -338,7 +281,6 @@ namespace CapsFoundry
                 if (!string.IsNullOrEmpty(donorIcon))
                 {
                     TrySet(clone, "m_Icon", donorIcon);
-                    Log.LogInfo("Build-menu thumbnail taken from " + DonorTypeName + " ('" + donorIcon + "').");
                 }
             }
 
@@ -367,9 +309,6 @@ namespace CapsFoundry
             }
 
             RoomRegistered = true;
-            Log.LogInfo("Registered '" + RoomName.Value + "' as " + AdoptedType +
-                        " (cloned from " + DonorType + "); registry " +
-                        prefabs.Length + " -> " + extended.Length + " entries.");
             return true;
         }
 
@@ -384,7 +323,6 @@ namespace CapsFoundry
             {
                 TrySet(clone, "m_Price", new GameResources(EResource.Nuka, BuildPriceCaps.Value));
                 TrySet(clone, "m_InstantBuildPrice", new GameResources(EResource.Nuka, BuildPriceCaps.Value));
-                Log.LogInfo("Build price set from config: " + BuildPriceCaps.Value + " caps.");
                 return;
             }
 
@@ -413,9 +351,6 @@ namespace CapsFoundry
 
             CopyUpgradeCosts(clone, source);
 
-            Log.LogInfo("Copied pricing from " + sourceType + " (" +
-                        (price == null ? "?" : price[EResource.Nuka].ToString("0")) +
-                        " caps, escalation " + factor + ").");
         }
 
         /// <summary>
@@ -495,8 +430,6 @@ namespace CapsFoundry
                     }
                 }
 
-                Log.LogInfo("Copied upgrade costs for " + copied + " room level(s) from " +
-                            source.m_eRoomType + "; sample level-1 upgrade = " + sample.ToString("0") + " caps.");
             }
             catch (Exception e)
             {
@@ -517,7 +450,6 @@ namespace CapsFoundry
 
                 if (caps > 0f)
                 {
-                    Log.LogInfo("Build price is " + caps.ToString("0") + " caps.");
                     return;
                 }
 
@@ -527,8 +459,6 @@ namespace CapsFoundry
                 if (mgr != null) ApplyPricing(clone, mgr.RoomDataPrefabs);
 
                 price = Traverse.Create(clone).Field("m_Price").GetValue<GameResources>();
-                Log.LogInfo("Build price after retry: " +
-                            (price == null ? "null" : price[EResource.Nuka].ToString("0")) + " caps.");
             }
             catch (Exception e)
             {
@@ -676,9 +606,6 @@ namespace CapsFoundry
             "_TintColor"             // particle effects, last so the body wins
         };
 
-        private static bool _shadersReported;
-        private static bool _renderersReported;
-
         // Materials already coloured, by instance id. Re-tinting must never compound: the colour
         // is applied by multiplication, so repeating it drove the room to black.
         private static readonly HashSet<int> _tintedMaterials = new HashSet<int>();
@@ -747,23 +674,6 @@ namespace CapsFoundry
                     if (changed) renderers[i].materials = mats;
                 }
 
-                if (tinted > 0 && !_renderersReported)
-                {
-                    _renderersReported = true;
-                    System.Text.StringBuilder names = new System.Text.StringBuilder();
-                    for (int i = 0; i < renderers.Length; i++)
-                    {
-                        if (names.Length > 0) names.Append(", ");
-                        names.Append(renderers[i].name);
-                    }
-                    Log.LogInfo("Tinted " + tinted + " material(s) across " + renderers.Length +
-                                " renderer(s) on a " + RoomName.Value + ": " + names);
-                }
-                else if (tinted == 0 && !_shadersReported)
-                {
-                    ReportShaders(renderers);
-                }
-
                 return tinted;
             }
             catch (Exception e)
@@ -801,50 +711,6 @@ namespace CapsFoundry
         {
             return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
         }
-
-        /// <summary>
-        /// Prints what the room's shaders actually expose, once. Without this a failed tint is just
-        /// a dead end; with it we can tell whether these shaders have any colour slot at all.
-        /// </summary>
-        private static void ReportShaders(Renderer[] renderers)
-        {
-            if (_shadersReported) return;
-            _shadersReported = true;
-
-            try
-            {
-                Log.LogInfo("No colour slot matched. Reporting the room's shaders (" +
-                            renderers.Length + " renderer(s)):");
-
-                int reported = 0;
-                for (int i = 0; i < renderers.Length && reported < 5; i++)
-                {
-                    Material[] mats = renderers[i].materials;
-                    for (int m = 0; m < mats.Length && reported < 5; m++)
-                    {
-                        if (mats[m] == null || mats[m].shader == null) continue;
-                        Shader sh = mats[m].shader;
-
-                        System.Text.StringBuilder props = new System.Text.StringBuilder();
-                        int count = sh.GetPropertyCount();
-                        for (int p = 0; p < count; p++)
-                        {
-                            if (props.Length > 0) props.Append(", ");
-                            props.Append(sh.GetPropertyName(p)).Append(":").Append(sh.GetPropertyType(p));
-                        }
-
-                        Log.LogInfo("    renderer '" + renderers[i].name + "' shader '" + sh.name +
-                                    "' props = " + props);
-                        reported++;
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Could not report shaders: " + e.Message);
-            }
-        }
-
 
         /// <summary>Cycle length for an explicit room level, used by the upgrade preview.</summary>
         internal static float HoursFor(Room room, int levelNumber)
@@ -1159,7 +1025,6 @@ namespace CapsFoundry
                 ? avail[sourceIndex]
                 : ERoomBuildLockState.Unlocked;
 
-            Plugin.Log.LogInfo("Unlock borrowed from " + source + "; state = " + avail[typeIndex] + ".");
         }
 
         private static void Inject(UIRoomBuildList list)
@@ -1221,8 +1086,6 @@ namespace CapsFoundry
             // the menu was zeroing it, and a free room is worse than a wrongly priced one.
             Plugin.VerifyPrice(clone);
 
-            Plugin.Log.LogInfo("Injected '" + Plugin.RoomName.Value + "' into the build menu (" +
-                               infos.Length + " -> " + extended.Length + " entries).");
         }
     }
 
@@ -1493,8 +1356,6 @@ namespace CapsFoundry
                 // is still wearing the donor's RoomInfo, so a type check there always failed.
                 Plugin.QueueTint(__result);
 
-                Plugin.Log.LogInfo("Restored " + Plugin.RoomName.Value + " identity on a built room " +
-                                   "(was " + Plugin.DonorTypeName + " from the shared pool).");
             }
             catch (Exception e)
             {
@@ -1540,8 +1401,6 @@ namespace CapsFoundry
                 t.Field("m_currentRoomLevel").SetValue(level);
 
                 float cost = level.m_upgradeCost == null ? -1f : level.m_upgradeCost[EResource.Nuka];
-                Plugin.Log.LogInfo("Rebound level data: merge " + room.MergeLevel + ", level " +
-                                   room.CurrentLevelNumber + ", upgrade = " + cost.ToString("0") + " caps.");
             }
             catch (Exception e)
             {

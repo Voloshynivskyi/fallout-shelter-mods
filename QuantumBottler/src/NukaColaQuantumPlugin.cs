@@ -13,13 +13,12 @@ namespace NukaColaQuantumProduction
     {
         public const string PluginGuid = "ovolo.falloutshelter.nukaquantum";
         public const string PluginName = "Nuka-Cola Quantum Production";
-        public const string PluginVersion = "1.11.0";
+        public const string PluginVersion = "1.12.0";
 
         internal static ConfigEntry<float> HoursLevel1;
         internal static ConfigEntry<float> HoursLevel2;
         internal static ConfigEntry<float> HoursLevel3;
         internal static ConfigEntry<bool> SuppressCapsBonus;
-        internal static ConfigEntry<bool> LogProduction;
         internal static ConfigEntry<string> QuantumIconOverride;
 
         // UnityEngine.Debug.Log does not reach BepInEx's LogOutput.log, so diagnostics go here.
@@ -47,15 +46,9 @@ namespace NukaColaQuantumProduction
             QuantumIconOverride = Config.Bind(
                 "Icon", "QuantumIconOverride", "",
                 "UI sprite name to use for the Bottler's icon. Leave empty for the built-in " +
-                "Quantum icon (Icon_NukaQuantum). Enable LogProduction to have the full " +
-                "resource-to-sprite table written to BepInEx\\LogOutput.log.");
-
-            LogProduction = Config.Bind("Debug", "LogProduction", false,
-                "Log the computed rate for each Bottler room, plus the game's resource-to-sprite table.");
+                "Quantum icon (Icon_NukaQuantum).");
 
             ApplyPatches();
-            Logger.LogInfo(PluginName + " " + PluginVersion + " loaded. Hours per bottle (size 1): L1=" +
-                           HoursLevel1.Value + " L2=" + HoursLevel2.Value + " L3=" + HoursLevel3.Value + ".");
         }
 
         /// <summary>
@@ -90,7 +83,9 @@ namespace NukaColaQuantumProduction
 
             if (failures.Count == 0)
             {
-                Log.LogInfo("Applied " + applied + " patches.");
+                Log.LogInfo(PluginName + " " + PluginVersion + " ready (" + applied + " patches). " +
+                            "Hours per bottle at size 1: L1=" + HoursLevel1.Value +
+                            " L2=" + HoursLevel2.Value + " L3=" + HoursLevel3.Value + ".");
                 return;
             }
 
@@ -150,44 +145,12 @@ namespace NukaColaQuantumProduction
             if (!string.IsNullOrEmpty(QuantumIconOverride.Value))
             {
                 _quantumIcon = QuantumIconOverride.Value;
-                Log.LogInfo("Using QuantumIconOverride from config: " + _quantumIcon);
                 return _quantumIcon;
             }
 
             _quantumIcon = DefaultQuantumIcon;
-            Log.LogInfo("Using Quantum icon sprite: " + _quantumIcon);
-
-            if (LogProduction.Value) DumpResourceIconTable();
 
             return _quantumIcon;
-        }
-
-        /// <summary>
-        /// Diagnostic aid for anyone repurposing another room: prints what sprite the game maps
-        /// each resource to. Lookups are by bit flag, and a miss falls back to an unrelated icon
-        /// instead of failing, so the full table is the only reliable way to spot a bad mapping.
-        /// </summary>
-        private static void DumpResourceIconTable()
-        {
-            try
-            {
-                GameParameters parameters = GameParameters.Instance;
-                if (parameters == null || parameters.Resources == null) return;
-
-                Log.LogInfo("Resource icon table (EResource -> sprite):");
-                foreach (EResource res in System.Enum.GetValues(typeof(EResource)))
-                {
-                    if (res == EResource.Count || res == EResource.None) continue;
-                    string name;
-                    try { name = parameters.Resources.GetIconName(res); }
-                    catch (System.Exception ex) { name = "<error: " + ex.GetType().Name + ">"; }
-                    Log.LogInfo("    " + res + " -> " + (string.IsNullOrEmpty(name) ? "<empty>" : name));
-                }
-            }
-            catch (System.Exception e)
-            {
-                Log.LogWarning("Could not dump the resource icon table: " + e.Message);
-            }
         }
 
         /// <summary>
@@ -277,15 +240,6 @@ namespace NukaColaQuantumProduction
 
             __result.Clear();
             __result.Add(new GameResources(EResource.NukaColaQuantum, perSecond));
-
-            if (Plugin.LogProduction.Value)
-            {
-                Plugin.Log.LogInfo(
-                    "lvl=" + __instance.CurrentLevelNumber +
-                    " size=" + __instance.MergeLevel +
-                    " eff=" + efficiency.ToString("F2") +
-                    " -> " + (perHourUnstaffed * efficiency).ToString("F2") + "/hour");
-            }
         }
     }
 

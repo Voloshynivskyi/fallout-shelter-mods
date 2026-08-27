@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.0
+
+- **Release build: the diagnostics are gone.** Everything that existed to investigate the game
+  rather than to run the room has been removed.
+  - **The automatic save backup has been removed.** It was added while the room was still crashing
+    saves; the room is stable now, and a mod that copies your save folder on every launch is doing
+    something the game never asked it to. Existing backups in
+    `%LocalAppData%\FalloutShelter\ModBackups\` are left alone — delete them yourself when you no
+    longer want them.
+  - Removed the shader and renderer reports that fired when tinting could not find a colour slot.
+    A single warning is still logged if the room ends up untinted.
+  - Startup logging is one line. Warnings and errors are untouched — they only appear when something
+    is actually wrong.
+- No change to the room, its balance, its appearance or its save data. Upgrading from 1.2.0 is a
+  straight DLL swap.
+
+## 1.2.0
+
+- **The room no longer distorts the vault statistics screen.** Its output was being counted into the
+  production breakdown under the resource it uses internally, so the energy figures were wrong.
+- **One broken patch no longer disables the mod.** Patches are applied class by class instead of all
+  at once, so if a game update breaks one of them the rest still work and the failure is named in the
+  log.
+
 ## 1.1.0
 
 - **The room now looks like the Nuclear Reactor by default** (`VisualDonor = Energy2`) instead of

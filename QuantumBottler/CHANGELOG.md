@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.12.0
+
+- **Release build: the diagnostics are gone.** The `LogProduction` option and the resource-to-sprite
+  table dump have been removed, along with the per-room rate logging. Startup is one line; warnings
+  and errors are untouched.
+- No change to production, icons, or balance. Upgrading from 1.11.0 is a straight DLL swap.
+
+## 1.11.0
+
+- **One broken patch no longer disables the mod.** Patches are applied class by class instead of all
+  at once, so if a game update breaks one of them the rest still work and the failure is named in the
+  log.
+
 ## 1.10.5
 
 - **Fixed: CURRENT and UPGRADED showed the same number.** The figure was always computed from the
