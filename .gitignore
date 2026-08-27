@@ -1,0 +1,12 @@
+# Build output — reproducible from source with build.ps1
+build/
+dist/
+
+# The compiler emits these next to the DLL
+*.pdb
+
+# Editor and OS noise
+.vs/
+*.user
+Thumbs.db
+desktop.ini
