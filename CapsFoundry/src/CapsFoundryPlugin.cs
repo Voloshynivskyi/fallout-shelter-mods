@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.5.1";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.5.2";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -860,8 +860,16 @@ namespace CapsFoundry
         // once per room, on every frame of the tint retry loop. That is what hung the game on load.
         private static readonly Dictionary<string, MeshFilter> _templates =
             new Dictionary<string, MeshFilter>(StringComparer.OrdinalIgnoreCase);
+        // Rooms stream in over several seconds, so a name is not missing just because it was not
+        // there a moment ago. The first version tried three times in as many frames, which all
+        // landed before the vault had finished loading: anything belonging to a room that appears
+        // late could never be found. Retry over a window instead, and stop as soon as everything
+        // resolves.
         private static int _resolveAttempts;
-        private const int MaxResolveAttempts = 3;
+        private const int MaxResolveAttempts = 20;
+        private const float ResolveRetrySeconds = 2f;
+        private static float _lastResolve = -999f;
+        private static int _roomsSeenAtLastResolve;
 
         /// <summary>
         /// Resolves every configured part name in one pass, at most a few times per session.
@@ -901,10 +909,18 @@ namespace CapsFoundry
             }
 
             if (_resolveAttempts >= MaxResolveAttempts) return false;
-            _resolveAttempts++;
 
             Room[] rooms = UnityEngine.Object.FindObjectsByType<Room>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            // Space the retries out, but go again immediately whenever the vault has grown: more
+            // rooms means meshes that genuinely were not there before.
+            bool vaultGrew = rooms.Length > _roomsSeenAtLastResolve;
+            if (!vaultGrew && Time.realtimeSinceStartup - _lastResolve < ResolveRetrySeconds) return true;
+
+            _lastResolve = Time.realtimeSinceStartup;
+            _roomsSeenAtLastResolve = rooms.Length;
+            _resolveAttempts++;
 
             // Collected while searching so a miss can answer the obvious next question — which
             // parts DO exist here — instead of leaving the player to guess names.
@@ -940,7 +956,7 @@ namespace CapsFoundry
                 }
             }
 
-            // Record misses once the attempts are spent, so they are never searched for again.
+            // Record misses only once the whole window is spent, not on the first look.
             if (_resolveAttempts >= MaxResolveAttempts)
             {
                 bool anyMissing = false;
