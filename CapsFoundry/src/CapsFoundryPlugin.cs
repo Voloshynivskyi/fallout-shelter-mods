@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.5.3";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.5.4";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -683,11 +683,17 @@ namespace CapsFoundry
             if (++_partWatchFrames < PartWatchInterval) return;
             _partWatchFrames = 0;
 
+            string[] names = SplitPartNames(ExtraParts.Value);
+            bool settled = AllNamesSettled(names) || _resolveAttempts >= MaxResolveAttempts;
+
             for (int i = _ourRooms.Count - 1; i >= 0; i--)
             {
                 Room room = _ourRooms[i];
                 if (room == null) { _ourRooms.RemoveAt(i); continue; }
-                if (HasParts(room)) continue;
+
+                // Not just rooms that lost everything: a room holding one prop out of four still
+                // has work outstanding, and skipping it was why the search never ran a second time.
+                if (HasParts(room) && settled) continue;
 
                 try
                 {
@@ -707,6 +713,15 @@ namespace CapsFoundry
         // again — both to replace them and, more importantly, to get them off a room that is not
         // ours. Rooms come from a shared pool, so one of ours can come back as a Power Generator.
         private const string PartPrefix = "CapsFoundryPart_";
+
+        /// <summary>The mesh name from each entry of an ExtraParts value.</summary>
+        private static string[] SplitPartNames(string spec)
+        {
+            string[] entries = spec.Split(';');
+            string[] names = new string[entries.Length];
+            for (int i = 0; i < entries.Length; i++) names[i] = entries[i].Split('@')[0].Trim();
+            return names;
+        }
 
         /// <summary>True once every configured name has been either found or given up on.</summary>
         private static bool AllNamesSettled(string[] names)
@@ -888,6 +903,7 @@ namespace CapsFoundry
         private const float ResolveRetrySeconds = 2f;
         private static float _lastResolve = -999f;
         private static int _roomsSeenAtLastResolve;
+        private static bool _cataloguePrinted;
 
         /// <summary>
         /// Resolves every configured part name in one pass, at most a few times per session.
@@ -971,6 +987,20 @@ namespace CapsFoundry
                                 _templates[names[n]] = mf;
                         }
                     }
+                }
+            }
+
+            // Say what is on offer as soon as something is not found, rather than making the
+            // player wait out the whole retry window to learn the name was wrong.
+            if (!_cataloguePrinted)
+            {
+                for (int n = 0; n < names.Length; n++)
+                {
+                    MeshFilter hit;
+                    if (_templates.TryGetValue(names[n], out hit) && hit != null) continue;
+                    _cataloguePrinted = true;
+                    ReportAvailableParts(available);
+                    break;
                 }
             }
 
