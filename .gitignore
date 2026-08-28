@@ -10,3 +10,4 @@ dist/
 *.user
 Thumbs.db
 desktop.ini
+tools/RoomTextureDump/build/

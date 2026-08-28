@@ -46,9 +46,7 @@ $refs = @(
     (Join-Path $core    "0Harmony.dll"),
     (Join-Path $managed "Assembly-CSharp.dll"),
     (Join-Path $managed "UnityEngine.dll"),
-    (Join-Path $managed "UnityEngine.CoreModule.dll"),
-    (Join-Path $managed "UnityEngine.IMGUIModule.dll"),        # OnGUI settings window
-    (Join-Path $managed "Unity.InputSystem.dll")                # hotkey (new Input System)
+    (Join-Path $managed "UnityEngine.CoreModule.dll")
 )
 foreach ($r in $refs) { if (-not (Test-Path $r)) { throw "Missing reference: $r" } }
 $refArgs = $refs | ForEach-Object { "/reference:$_" }
