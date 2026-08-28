@@ -13,7 +13,7 @@ namespace NukaColaQuantumProduction
     {
         public const string PluginGuid = "ovolo.falloutshelter.nukaquantum";
         public const string PluginName = "Nuka-Cola Quantum Production";
-        public const string PluginVersion = "1.12.1";
+        public const string PluginVersion = "1.12.2";
 
         internal static ConfigEntry<float> HoursLevel1;
         internal static ConfigEntry<float> HoursLevel2;
@@ -57,10 +57,21 @@ namespace NukaColaQuantumProduction
             ApplyPatches();
         }
 
+        /// <summary>
+        /// Whether per-room detail is wanted. Test this BEFORE building a message: the argument to
+        /// <see cref="LogDetail"/> is concatenated whether or not the call ends up logging anything.
+        /// GetProducedResources runs constantly for every Bottler, so an unguarded call there would
+        /// allocate a string on every tick of every room to throw it away again.
+        /// </summary>
+        internal static bool Verbose
+        {
+            get { return VerboseLogging != null && VerboseLogging.Value; }
+        }
+
         /// <summary>Per-room detail, logged only when the player has asked for it.</summary>
         internal static void LogDetail(string message)
         {
-            if (VerboseLogging != null && VerboseLogging.Value) Log.LogInfo(message);
+            if (Verbose) Log.LogInfo(message);
         }
 
         /// <summary>
@@ -254,10 +265,11 @@ namespace NukaColaQuantumProduction
             __result.Clear();
             __result.Add(new GameResources(EResource.NukaColaQuantum, perSecond));
 
-            Plugin.LogDetail("lvl=" + __instance.CurrentLevelNumber +
-                             " size=" + __instance.MergeLevel +
-                             " eff=" + efficiency.ToString("F2") +
-                             " -> " + (perHourUnstaffed * efficiency).ToString("F2") + "/hour");
+            if (Plugin.Verbose)
+                Plugin.LogDetail("lvl=" + __instance.CurrentLevelNumber +
+                                 " size=" + __instance.MergeLevel +
+                                 " eff=" + efficiency.ToString("F2") +
+                                 " -> " + (perHourUnstaffed * efficiency).ToString("F2") + "/hour");
         }
     }
 

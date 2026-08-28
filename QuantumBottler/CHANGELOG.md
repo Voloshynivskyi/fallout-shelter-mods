@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.2
+
+- **Detail logging no longer costs anything when it is switched off.** `GetProducedResources` runs
+  constantly for every Bottler, and the log message there was being assembled on every call only to
+  be discarded. It is now built only when `VerboseLogging` is on.
+
 ## 1.12.1
 
 - **Logging has a policy instead of a mood.** The resolved icon sprite is logged again, since it is

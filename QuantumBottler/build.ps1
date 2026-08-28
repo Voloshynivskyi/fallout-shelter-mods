@@ -17,7 +17,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$version = "1.12.1"
+$version = "1.12.2"
 $modName = "NukaColaQuantumProduction"
 
 $managed = Join-Path $GamePath "FalloutShelter_Data\Managed"

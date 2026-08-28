@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.2
+
+- **Removed the twice-a-second re-check of painted rooms added in 1.3.1.** It was written to catch
+  mesh variants shown after the first pass, but the first pass already searches inactive renderers,
+  so the variants were never being missed. It was ongoing work on every frame for a problem that did
+  not exist.
+- **Detail logging no longer costs anything when it is switched off.** The argument to a log call is
+  built whether or not the call logs, so the repeating call sites now test first and never assemble a
+  message nobody reads.
+- The tint fix from 1.3.1 stays, and it is faster than before 1.3.0: whether a renderer still needs
+  painting is decided from `sharedMaterials`, which allocates nothing, so the retry loop no longer
+  clones every material on every frame while it waits for the room's sections to appear.
+
 ## 1.3.1
 
 - **Fixed: the room could be painted more than once, getting darker every time.** The guard against

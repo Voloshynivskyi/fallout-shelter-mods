@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.3.1";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.3.2";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -158,10 +158,21 @@ namespace CapsFoundry
             ApplyPatches();
         }
 
+        /// <summary>
+        /// Whether per-room detail is wanted. Test this BEFORE building a message: the argument to
+        /// <see cref="LogDetail"/> is concatenated whether or not the call ends up logging anything,
+        /// so an unguarded call on a path the game runs often allocates a string every time for
+        /// nothing.
+        /// </summary>
+        internal static bool Verbose
+        {
+            get { return VerboseLogging != null && VerboseLogging.Value; }
+        }
+
         /// <summary>Per-room detail, logged only when the player has asked for it.</summary>
         internal static void LogDetail(string message)
         {
-            if (VerboseLogging != null && VerboseLogging.Value) Log.LogInfo(message);
+            if (Verbose) Log.LogInfo(message);
         }
 
         private void Update()
@@ -294,7 +305,7 @@ namespace CapsFoundry
                 if (!string.IsNullOrEmpty(donorIcon))
                 {
                     TrySet(clone, "m_Icon", donorIcon);
-                    LogDetail("Build-menu thumbnail taken from " + DonorTypeName + " ('" + donorIcon + "').");
+                    if (Verbose) LogDetail("Build-menu thumbnail taken from " + DonorTypeName + " ('" + donorIcon + "').");
                 }
             }
 
@@ -450,7 +461,7 @@ namespace CapsFoundry
                     }
                 }
 
-                LogDetail("Copied upgrade costs for " + copied + " room level(s) from " +
+                if (Verbose) LogDetail("Copied upgrade costs for " + copied + " room level(s) from " +
                           source.m_eRoomType + "; sample level-1 upgrade = " + sample.ToString("0") + " caps.");
             }
             catch (Exception e)
@@ -574,19 +585,6 @@ namespace CapsFoundry
         private static readonly List<int> _tintAttempts = new List<int>();
         private const int MaxTintAttempts = 900;   // ~15 seconds at 60fps
 
-        // Rooms that have been painted at least once and are re-checked from time to time.
-        //
-        // One pass is not enough. The reactor body is built from several mesh variants — the log
-        // shows names ending _anim_a and _anim_b — and the room's animation swaps between them, so
-        // a variant that was inactive during the first pass appears later still wearing its stock
-        // colour. Alternating a painted mesh with an unpainted one is visible as flicker.
-        //
-        // Re-checking is safe because painting is now idempotent: a material is marked by name and
-        // never painted twice, so this only ever catches meshes that are genuinely new.
-        private static readonly List<Room> _paintedRooms = new List<Room>();
-        private const int RescanInterval = 30;   // frames, about twice a second
-        private static int _frames;
-
         internal static void QueueTint(Room room)
         {
             if (room == null || _tintQueue.Contains(room)) return;
@@ -611,24 +609,9 @@ namespace CapsFoundry
                     if (done && painted == 0)
                         Log.LogWarning("Gave up tinting a " + RoomName.Value +
                                        ": no colourable materials found after " + MaxTintAttempts + " attempts.");
-
-                    if (done && painted > 0 && !_paintedRooms.Contains(room)) _paintedRooms.Add(room);
                 }
 
                 if (done) { _tintQueue.RemoveAt(i); _tintAttempts.RemoveAt(i); }
-            }
-
-            if (++_frames < RescanInterval) return;
-            _frames = 0;
-
-            for (int i = _paintedRooms.Count - 1; i >= 0; i--)
-            {
-                Room room = _paintedRooms[i];
-                if (room == null) { _paintedRooms.RemoveAt(i); continue; }
-
-                int painted = TryTint(room);
-                if (painted > 0)
-                    LogDetail("Painted " + painted + " newly shown material(s) on a " + RoomName.Value + ".");
             }
         }
 
@@ -1093,7 +1076,7 @@ namespace CapsFoundry
                 ? avail[sourceIndex]
                 : ERoomBuildLockState.Unlocked;
 
-            Plugin.LogDetail("Unlock borrowed from " + source + "; state = " + avail[typeIndex] + ".");
+            if (Plugin.Verbose) Plugin.LogDetail("Unlock borrowed from " + source + "; state = " + avail[typeIndex] + ".");
         }
 
         private static void Inject(UIRoomBuildList list)
@@ -1427,7 +1410,7 @@ namespace CapsFoundry
                 // is still wearing the donor's RoomInfo, so a type check there always failed.
                 Plugin.QueueTint(__result);
 
-                Plugin.LogDetail("Restored " + Plugin.RoomName.Value + " identity on a built room " +
+                if (Plugin.Verbose) Plugin.LogDetail("Restored " + Plugin.RoomName.Value + " identity on a built room " +
                                  "(was " + Plugin.DonorTypeName + " from the shared pool).");
             }
             catch (Exception e)
@@ -1474,7 +1457,7 @@ namespace CapsFoundry
                 t.Field("m_currentRoomLevel").SetValue(level);
 
                 float cost = level.m_upgradeCost == null ? -1f : level.m_upgradeCost[EResource.Nuka];
-                Plugin.LogDetail("Rebound level data: merge " + room.MergeLevel + ", level " +
+                if (Plugin.Verbose) Plugin.LogDetail("Rebound level data: merge " + room.MergeLevel + ", level " +
                                  room.CurrentLevelNumber + ", upgrade = " + cost.ToString("0") + " caps.");
             }
             catch (Exception e)
