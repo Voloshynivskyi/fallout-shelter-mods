@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.1
+
+- **Fixed: the room could be painted more than once, getting darker every time.** The guard against
+  repainting keyed on material instance ids, but the line that writes the colour back
+  (`Renderer.materials = ...`) makes Unity mint fresh instances with fresh ids, so the next pass no
+  longer recognised its own work. Since the tint is a multiply, each repeat darkened the room
+  further. Materials are now marked by name, which survives that.
+- **The tint now also catches mesh variants that appear later.** The reactor body is several meshes
+  (`_anim_a`, `_anim_b`) that the room's animation swaps between. Painted rooms are re-checked twice
+  a second so a variant shown later is coloured too — safe now that painting cannot compound. A
+  painted mesh alternating with an unpainted one is visible as flicker.
+- **Logging has a policy instead of a mood.** One-time facts — registration, pricing, build-menu
+  injection — are always logged, so a bug report has something to go on. The lines that repeat for
+  every room and every level change now need `VerboseLogging = true`. Warnings and errors are
+  unconditional.
+- Save backups stay removed, as in 1.3.0.
+
 ## 1.3.0
 
 - **Release build: the diagnostics are gone.** Everything that existed to investigate the game

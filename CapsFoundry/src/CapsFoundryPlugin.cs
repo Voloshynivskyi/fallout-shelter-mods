@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.3.0";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.3.1";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -87,6 +87,7 @@ namespace CapsFoundry
         internal static ConfigEntry<float> TintStrength;
         internal static ConfigEntry<float> TintBrightness;
         internal static ConfigEntry<string> RoomName;
+        internal static ConfigEntry<bool> VerboseLogging;
 
         internal static ManualLogSource Log;
         internal static bool RoomRegistered;
@@ -148,7 +149,19 @@ namespace CapsFoundry
                 "Hex colour multiplied into the cloned room's materials so it reads differently " +
                 "from a Geothermal plant. Only the clone is tinted. Empty disables tinting.");
 
+            VerboseLogging = Config.Bind("Logging", "VerboseLogging", false,
+                "Log the per-room detail as well: what was painted, which room had its identity or " +
+                "level data restored, and what the upgrade costs were copied as. These lines repeat " +
+                "for every room and every level change, so they are off unless you are diagnosing " +
+                "something. One-time facts and all warnings are logged either way.");
+
             ApplyPatches();
+        }
+
+        /// <summary>Per-room detail, logged only when the player has asked for it.</summary>
+        internal static void LogDetail(string message)
+        {
+            if (VerboseLogging != null && VerboseLogging.Value) Log.LogInfo(message);
         }
 
         private void Update()
@@ -281,6 +294,7 @@ namespace CapsFoundry
                 if (!string.IsNullOrEmpty(donorIcon))
                 {
                     TrySet(clone, "m_Icon", donorIcon);
+                    LogDetail("Build-menu thumbnail taken from " + DonorTypeName + " ('" + donorIcon + "').");
                 }
             }
 
@@ -309,6 +323,9 @@ namespace CapsFoundry
             }
 
             RoomRegistered = true;
+            Log.LogInfo("Registered '" + RoomName.Value + "' as " + AdoptedType +
+                        " (cloned from " + DonorType + "); registry " +
+                        prefabs.Length + " -> " + extended.Length + " entries.");
             return true;
         }
 
@@ -351,6 +368,9 @@ namespace CapsFoundry
 
             CopyUpgradeCosts(clone, source);
 
+            Log.LogInfo("Copied pricing from " + sourceType + " (" +
+                        (price == null ? "?" : price[EResource.Nuka].ToString("0")) +
+                        " caps, escalation " + factor + ").");
         }
 
         /// <summary>
@@ -430,6 +450,8 @@ namespace CapsFoundry
                     }
                 }
 
+                LogDetail("Copied upgrade costs for " + copied + " room level(s) from " +
+                          source.m_eRoomType + "; sample level-1 upgrade = " + sample.ToString("0") + " caps.");
             }
             catch (Exception e)
             {
@@ -545,12 +567,25 @@ namespace CapsFoundry
             return perSegment * size;
         }
 
-        // Rooms waiting to be tinted, with how many frames we have tried. Their section meshes
-        // come from an object pool and are not present the instant the room starts, so a single
-        // attempt finds nothing to colour.
+        // Rooms waiting for their first coat, with how many frames we have tried. Their section
+        // meshes come from an object pool and are not present the instant the room starts, so a
+        // single attempt finds nothing to colour.
         private static readonly List<Room> _tintQueue = new List<Room>();
         private static readonly List<int> _tintAttempts = new List<int>();
         private const int MaxTintAttempts = 900;   // ~15 seconds at 60fps
+
+        // Rooms that have been painted at least once and are re-checked from time to time.
+        //
+        // One pass is not enough. The reactor body is built from several mesh variants — the log
+        // shows names ending _anim_a and _anim_b — and the room's animation swaps between them, so
+        // a variant that was inactive during the first pass appears later still wearing its stock
+        // colour. Alternating a painted mesh with an unpainted one is visible as flicker.
+        //
+        // Re-checking is safe because painting is now idempotent: a material is marked by name and
+        // never painted twice, so this only ever catches meshes that are genuinely new.
+        private static readonly List<Room> _paintedRooms = new List<Room>();
+        private const int RescanInterval = 30;   // frames, about twice a second
+        private static int _frames;
 
         internal static void QueueTint(Room room)
         {
@@ -571,17 +606,29 @@ namespace CapsFoundry
                 {
                     int painted = TryTint(room);
                     _tintAttempts[i] = _tintAttempts[i] + 1;
-
-                    // Retry only while there is still nothing to colour (sections stream in late).
-                    // Re-applying after success is what compounded the multiply into black.
                     done = painted != 0 || _tintAttempts[i] >= MaxTintAttempts;
 
                     if (done && painted == 0)
                         Log.LogWarning("Gave up tinting a " + RoomName.Value +
-                                   ": no colourable materials found after " + MaxTintAttempts + " attempts.");
+                                       ": no colourable materials found after " + MaxTintAttempts + " attempts.");
+
+                    if (done && painted > 0 && !_paintedRooms.Contains(room)) _paintedRooms.Add(room);
                 }
 
                 if (done) { _tintQueue.RemoveAt(i); _tintAttempts.RemoveAt(i); }
+            }
+
+            if (++_frames < RescanInterval) return;
+            _frames = 0;
+
+            for (int i = _paintedRooms.Count - 1; i >= 0; i--)
+            {
+                Room room = _paintedRooms[i];
+                if (room == null) { _paintedRooms.RemoveAt(i); continue; }
+
+                int painted = TryTint(room);
+                if (painted > 0)
+                    LogDetail("Painted " + painted + " newly shown material(s) on a " + RoomName.Value + ".");
             }
         }
 
@@ -606,9 +653,14 @@ namespace CapsFoundry
             "_TintColor"             // particle effects, last so the body wins
         };
 
-        // Materials already coloured, by instance id. Re-tinting must never compound: the colour
-        // is applied by multiplication, so repeating it drove the room to black.
-        private static readonly HashSet<int> _tintedMaterials = new HashSet<int>();
+        // Marker written into the name of every material this mod has coloured.
+        //
+        // The colour is applied by multiplication, so painting the same material twice compounds and
+        // drives it towards black. The guard used to be a set of material instance ids, which does
+        // not hold: assigning Renderer.materials makes Unity mint fresh instances with fresh ids, so
+        // the very next pass no longer recognised its own work. A name survives that, and survives
+        // Unity's own cloning, which only appends " (Instance)".
+        private const string TintMarker = " [CapsFoundry]";
 
         /// <summary>
         /// Colours one room's own material instances, at most once per material.
@@ -652,19 +704,24 @@ namespace CapsFoundry
                 int tinted = 0;
                 for (int i = 0; i < renderers.Length; i++)
                 {
+                    // Reading sharedMaterials does not instantiate anything, so a renderer that is
+                    // already done costs nothing. Renderer.materials is only touched when there is
+                    // actually something new to paint — it clones every material it hands back.
+                    if (!NeedsTinting(renderers[i])) continue;
+
                     Material[] mats = renderers[i].materials;
                     bool changed = false;
 
                     for (int m = 0; m < mats.Length; m++)
                     {
-                        if (mats[m] == null) continue;
-                        if (!_tintedMaterials.Add(mats[m].GetInstanceID())) continue;   // already done
+                        if (mats[m] == null || mats[m].name.Contains(TintMarker)) continue;
 
                         for (int p = 0; p < ColorProperties.Length; p++)
                         {
                             if (!mats[m].HasProperty(ColorProperties[p])) continue;
                             mats[m].SetColor(ColorProperties[p],
                                               Recolour(mats[m].GetColor(ColorProperties[p]), tint, strength, brightness));
+                            mats[m].name = mats[m].name + TintMarker;
                             tinted++;
                             changed = true;
                             break;
@@ -681,6 +738,17 @@ namespace CapsFoundry
                 Log.LogWarning("Room tinting failed (the room still works): " + e.Message);
                 return -1;
             }
+        }
+
+        /// <summary>True when this renderer has at least one material the mod has not coloured yet.</summary>
+        private static bool NeedsTinting(Renderer renderer)
+        {
+            Material[] shared = renderer.sharedMaterials;
+            for (int m = 0; m < shared.Length; m++)
+            {
+                if (shared[m] != null && !shared[m].name.Contains(TintMarker)) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -1025,6 +1093,7 @@ namespace CapsFoundry
                 ? avail[sourceIndex]
                 : ERoomBuildLockState.Unlocked;
 
+            Plugin.LogDetail("Unlock borrowed from " + source + "; state = " + avail[typeIndex] + ".");
         }
 
         private static void Inject(UIRoomBuildList list)
@@ -1086,6 +1155,8 @@ namespace CapsFoundry
             // the menu was zeroing it, and a free room is worse than a wrongly priced one.
             Plugin.VerifyPrice(clone);
 
+            Plugin.Log.LogInfo("Injected '" + Plugin.RoomName.Value + "' into the build menu (" +
+                               infos.Length + " -> " + extended.Length + " entries).");
         }
     }
 
@@ -1356,6 +1427,8 @@ namespace CapsFoundry
                 // is still wearing the donor's RoomInfo, so a type check there always failed.
                 Plugin.QueueTint(__result);
 
+                Plugin.LogDetail("Restored " + Plugin.RoomName.Value + " identity on a built room " +
+                                 "(was " + Plugin.DonorTypeName + " from the shared pool).");
             }
             catch (Exception e)
             {
@@ -1401,6 +1474,8 @@ namespace CapsFoundry
                 t.Field("m_currentRoomLevel").SetValue(level);
 
                 float cost = level.m_upgradeCost == null ? -1f : level.m_upgradeCost[EResource.Nuka];
+                Plugin.LogDetail("Rebound level data: merge " + room.MergeLevel + ", level " +
+                                 room.CurrentLevelNumber + ", upgrade = " + cost.ToString("0") + " caps.");
             }
             catch (Exception e)
             {

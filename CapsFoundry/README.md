@@ -106,6 +106,7 @@ launch. Edit it and restart the game.
 | `TintColor` | `#C0392B` | Colour applied to the room. |
 | `TintStrength` | `0.55` | How far to push towards the tint, 0–1. |
 | `TintBrightness` | `1.15` | Brightness after tinting, relative to stock. Above 1 is lighter. |
+| `VerboseLogging` | `false` | Also log the per-room detail: what was painted, which room had its identity or level data restored, what the upgrade costs were copied as. These repeat for every room and every level change. One-time facts and all warnings are logged either way. |
 
 **Appearance settings apply on the next game start.** Rooms are rebuilt from the object pool each
 time a vault loads, so changing the art or the colour restyles rooms you already have — restart the

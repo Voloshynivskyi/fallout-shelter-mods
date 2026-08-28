@@ -13,13 +13,14 @@ namespace NukaColaQuantumProduction
     {
         public const string PluginGuid = "ovolo.falloutshelter.nukaquantum";
         public const string PluginName = "Nuka-Cola Quantum Production";
-        public const string PluginVersion = "1.12.0";
+        public const string PluginVersion = "1.12.1";
 
         internal static ConfigEntry<float> HoursLevel1;
         internal static ConfigEntry<float> HoursLevel2;
         internal static ConfigEntry<float> HoursLevel3;
         internal static ConfigEntry<bool> SuppressCapsBonus;
         internal static ConfigEntry<string> QuantumIconOverride;
+        internal static ConfigEntry<bool> VerboseLogging;
 
         // UnityEngine.Debug.Log does not reach BepInEx's LogOutput.log, so diagnostics go here.
         internal static ManualLogSource Log;
@@ -48,7 +49,18 @@ namespace NukaColaQuantumProduction
                 "UI sprite name to use for the Bottler's icon. Leave empty for the built-in " +
                 "Quantum icon (Icon_NukaQuantum).");
 
+            VerboseLogging = Config.Bind("Logging", "VerboseLogging", false,
+                "Also log the computed rate for every Bottler, every time the game asks for it. " +
+                "That is several lines a second, so it is off unless you are diagnosing something. " +
+                "One-time facts and all warnings are logged either way.");
+
             ApplyPatches();
+        }
+
+        /// <summary>Per-room detail, logged only when the player has asked for it.</summary>
+        internal static void LogDetail(string message)
+        {
+            if (VerboseLogging != null && VerboseLogging.Value) Log.LogInfo(message);
         }
 
         /// <summary>
@@ -145,11 +157,12 @@ namespace NukaColaQuantumProduction
             if (!string.IsNullOrEmpty(QuantumIconOverride.Value))
             {
                 _quantumIcon = QuantumIconOverride.Value;
+                Log.LogInfo("Using QuantumIconOverride from config: " + _quantumIcon);
                 return _quantumIcon;
             }
 
             _quantumIcon = DefaultQuantumIcon;
-
+            Log.LogInfo("Using Quantum icon sprite: " + _quantumIcon);
             return _quantumIcon;
         }
 
@@ -240,6 +253,11 @@ namespace NukaColaQuantumProduction
 
             __result.Clear();
             __result.Add(new GameResources(EResource.NukaColaQuantum, perSecond));
+
+            Plugin.LogDetail("lvl=" + __instance.CurrentLevelNumber +
+                             " size=" + __instance.MergeLevel +
+                             " eff=" + efficiency.ToString("F2") +
+                             " -> " + (perHourUnstaffed * efficiency).ToString("F2") + "/hour");
         }
     }
 

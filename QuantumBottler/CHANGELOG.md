@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.1
+
+- **Logging has a policy instead of a mood.** The resolved icon sprite is logged again, since it is
+  a one-time fact worth having in a bug report. The per-room rate — several lines a second — is back
+  behind a new `VerboseLogging` switch, off by default. Warnings and errors are unconditional.
+
 ## 1.12.0
 
 - **Release build: the diagnostics are gone.** The `LogProduction` option and the resource-to-sprite

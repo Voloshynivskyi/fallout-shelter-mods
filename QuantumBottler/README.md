@@ -101,6 +101,7 @@ first launch. Edit it and restart the game.
 | `HoursLevel3` | `2` | Same for a **level 3** room. |
 | `SuppressCapsBonus` | `false` | Set to `true` to also remove the vanilla Luck-based caps bonus, making the Bottler yield Quantum and nothing else. |
 | `QuantumIconOverride` | *(empty)* | UI sprite name for the Bottler's icon. Empty uses the built-in `Icon_NukaQuantum`. |
+| `VerboseLogging` | `false` | Also log the computed rate for every Bottler, every time the game asks for it — several lines a second. One-time facts and all warnings are logged either way. |
 
 Want it faster? Lower the hour values. Want Quantum to stay rare? Raise them.
 
