@@ -17,12 +17,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$version = "1.5.4"
 $modName = "CapsFoundry"
 
 $managed = Join-Path $GamePath "FalloutShelter_Data\Managed"
 $core    = Join-Path $GamePath "BepInEx\core"
 $src     = Join-Path $PSScriptRoot "src\CapsFoundryPlugin.cs"
+
+# Read the version out of the plugin itself. Keeping a second copy here is what let a build
+# carrying unreleased code overwrite the 1.3.2 release archive: the source had moved on, this
+# had not, and the archive was rebuilt under a version number that no longer described it.
+$srcText = Get-Content $src -Raw
+if ($srcText -notmatch 'PluginVersion\s*=\s*"([0-9.]+)"') { throw "Could not read PluginVersion from $src" }
+$version = $Matches[1]
+
 $outDir  = Join-Path $PSScriptRoot "build"
 $distDir = Join-Path $PSScriptRoot "dist"
 $outDll  = Join-Path $outDir "$modName.dll"
