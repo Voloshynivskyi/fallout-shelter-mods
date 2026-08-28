@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.4.0";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.4.1";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -664,10 +664,17 @@ namespace CapsFoundry
             // frames would destroy and recreate them hundreds of times.
             if (HasParts(room)) return;
 
+            string[] entries = spec.Split(';');
+
+            string[] names = new string[entries.Length];
+            for (int e = 0; e < entries.Length; e++) names[e] = entries[e].Split('@')[0].Trim();
+
+            // Resolve first, so the frames spent waiting for sections to load cost nothing.
+            if (!ResolveTemplates(names)) return;
+
             Bounds roomBounds;
             if (!TryGetRoomBounds(room, out roomBounds)) return;   // sections not up yet; retry later
 
-            string[] entries = spec.Split(';');
             int added = 0;
 
             for (int e = 0; e < entries.Length; e++)
@@ -691,12 +698,7 @@ namespace CapsFoundry
             if (meshName.Length == 0) return false;
 
             MeshFilter template = FindTemplate(meshName);
-            if (template == null || template.sharedMesh == null)
-            {
-                Log.LogWarning("No loaded mesh matches '" + meshName + "'. It belongs to a room whose " +
-                               "assets this vault has not loaded, or the name is wrong.");
-                return false;
-            }
+            if (template == null || template.sharedMesh == null) return false;
 
             GameObject part = new GameObject(PartPrefix + meshName);
             part.transform.SetParent(room.transform, false);
@@ -743,29 +745,118 @@ namespace CapsFoundry
             return any;
         }
 
-        // Template lookup is over every loaded object, which is not cheap, so each name is resolved
-        // once. A miss is cached too: retrying it every room would repeat the whole scan for nothing.
+        // Resolved templates, hits and misses alike. A miss must be remembered as firmly as a hit:
+        // the first version only short-circuited on hits, so every miss repeated the whole search,
+        // once per room, on every frame of the tint retry loop. That is what hung the game on load.
         private static readonly Dictionary<string, MeshFilter> _templates =
             new Dictionary<string, MeshFilter>(StringComparer.OrdinalIgnoreCase);
+        private static int _resolveAttempts;
+        private const int MaxResolveAttempts = 3;
+
+        /// <summary>
+        /// Resolves every configured part name in one pass, at most a few times per session.
+        /// Returns false once there is nothing left worth trying.
+        ///
+        /// The search deliberately covers only the rooms standing in the vault rather than every
+        /// loaded object. Resources.FindObjectsOfTypeAll also hands back assets that are mid-load
+        /// and objects belonging to no scene, and walking that on every frame of a vault load is
+        /// what killed the game. Rooms in the scene are a small, fully constructed set: the cost is
+        /// bounded and nothing half-built is touched.
+        /// </summary>
+        private static bool ResolveTemplates(string[] names)
+        {
+            bool missing = false;
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (!_templates.ContainsKey(names[i])) { missing = true; break; }
+            }
+            if (!missing) return true;                              // everything already decided
+
+            if (_resolveAttempts >= MaxResolveAttempts) return false;
+            _resolveAttempts++;
+
+            Room[] rooms = UnityEngine.Object.FindObjectsByType<Room>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            // Collected while searching so a miss can answer the obvious next question — which
+            // parts DO exist here — instead of leaving the player to guess names.
+            SortedSet<string> available = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int r = 0; r < rooms.Length; r++)
+            {
+                if (rooms[r] == null) continue;
+                List<RoomSectionBase> sections = rooms[r].RoomSections;
+                if (sections == null) continue;
+
+                for (int sIdx = 0; sIdx < sections.Count; sIdx++)
+                {
+                    if (sections[sIdx] == null) continue;
+                    MeshFilter[] filters = sections[sIdx].GetComponentsInChildren<MeshFilter>(true);
+
+                    for (int f = 0; f < filters.Length; f++)
+                    {
+                        MeshFilter mf = filters[f];
+                        if (mf == null || mf.sharedMesh == null) continue;
+                        if (mf.name.StartsWith(PartPrefix, StringComparison.Ordinal)) continue;
+
+                        available.Add(mf.name);
+
+                        for (int n = 0; n < names.Length; n++)
+                        {
+                            MeshFilter already;
+                            if (_templates.TryGetValue(names[n], out already) && already != null) continue;
+                            if (mf.name.IndexOf(names[n], StringComparison.OrdinalIgnoreCase) >= 0)
+                                _templates[names[n]] = mf;
+                        }
+                    }
+                }
+            }
+
+            // Record misses once the attempts are spent, so they are never searched for again.
+            if (_resolveAttempts >= MaxResolveAttempts)
+            {
+                bool anyMissing = false;
+                for (int n = 0; n < names.Length; n++)
+                {
+                    if (_templates.ContainsKey(names[n])) continue;
+                    _templates[names[n]] = null;
+                    anyMissing = true;
+                    Log.LogWarning("No mesh named " + names[n] + " stands in this vault, so it cannot " +
+                                   "be borrowed. Parts can only come from a room type you have built.");
+                }
+
+                if (anyMissing) ReportAvailableParts(available);
+            }
+            return true;
+        }
 
         private static MeshFilter FindTemplate(string name)
         {
             MeshFilter cached;
-            if (_templates.TryGetValue(name, out cached) && cached != null) return cached;
+            return _templates.TryGetValue(name, out cached) ? cached : null;
+        }
 
-            MeshFilter[] all = Resources.FindObjectsOfTypeAll<MeshFilter>();
-            MeshFilter best = null;
-            for (int i = 0; i < all.Length; i++)
+        /// <summary>
+        /// Lists what this vault actually offers, so a missing part is a menu rather than a dead end.
+        /// Room meshes are named after their room, so the list doubles as an inventory of what has
+        /// been built. Capped: a large vault has hundreds and the log is not the place for all of them.
+        /// </summary>
+        private static void ReportAvailableParts(SortedSet<string> available)
+        {
+            const int Cap = 60;
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append("Parts available in this vault (").Append(available.Count).Append(" mesh(es)");
+            if (available.Count > Cap) sb.Append(", first ").Append(Cap);
+            sb.Append("):");
+
+            int shown = 0;
+            foreach (string name in available)
             {
-                if (all[i] == null || all[i].sharedMesh == null) continue;
-                if (all[i].name.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                if (all[i].name.StartsWith(PartPrefix, StringComparison.Ordinal)) continue;   // never clone our own
-                best = all[i];
-                break;
+                if (shown++ >= Cap) break;
+                sb.Append("\n    ").Append(name);
             }
-
-            _templates[name] = best;
-            return best;
+            Log.LogWarning(sb.ToString());
         }
 
         private static Vector3 ParseVector(string[] fields, int index, Vector3 fallback)
@@ -802,7 +893,8 @@ namespace CapsFoundry
                 if (room == null) done = true;
                 else
                 {
-                    AttachParts(room);
+                    try { AttachParts(room); }
+                    catch (Exception e) { Log.LogWarning("Attaching parts failed: " + e.Message); }
 
                     int painted = TryTint(room);
                     _tintAttempts[i] = _tintAttempts[i] + 1;

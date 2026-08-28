@@ -17,7 +17,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$version = "1.4.0"
+$version = "1.4.1"
 $modName = "CapsFoundry"
 
 $managed = Join-Path $GamePath "FalloutShelter_Data\Managed"

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.1
+
+- **Fixed: the game died while loading a save.** Two defects in 1.4.0's new part system combined
+  into one. A part name that could not be found was not remembered as unfindable, so the search ran
+  again every time; and a room with no parts attached never looked done, so it was retried on every
+  frame of the fifteen-second wait for its sections. Together that meant walking every object loaded
+  in the game, several times a second, during a vault load.
+- **The search is now bounded.** Parts are looked for among the rooms standing in the vault rather
+  than among every loaded object. `Resources.FindObjectsOfTypeAll` also returns assets that are
+  mid-load and objects belonging to no scene, which is not a safe thing to walk while a vault is
+  loading. Names are resolved once, at most three times a session, hits and misses alike.
+- **A part that cannot be found now lists what can.** The log prints the meshes this vault actually
+  offers, so choosing a part is a matter of reading a list rather than guessing a name.
+- Attaching parts can no longer throw into Unity's update loop.
+
 ## 1.4.0
 
 - **The room is built from parts of several rooms instead of wearing one room's model.** The default
