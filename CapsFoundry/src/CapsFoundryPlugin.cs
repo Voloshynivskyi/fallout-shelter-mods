@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.5.2";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.5.3";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -708,6 +708,19 @@ namespace CapsFoundry
         // ours. Rooms come from a shared pool, so one of ours can come back as a Power Generator.
         private const string PartPrefix = "CapsFoundryPart_";
 
+        /// <summary>True once every configured name has been either found or given up on.</summary>
+        private static bool AllNamesSettled(string[] names)
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                MeshFilter found;
+                if (!_templates.TryGetValue(names[i], out found)) return false;   // never looked
+                if (found == null) continue;                                       // settled: a miss
+                if (found.sharedMesh == null) return false;                        // went stale
+            }
+            return true;
+        }
+
         /// <summary>True when this room already carries meshes this mod added.</summary>
         private static bool HasParts(Room room)
         {
@@ -762,18 +775,23 @@ namespace CapsFoundry
             string spec = ExtraParts.Value;
             if (string.IsNullOrEmpty(spec.Trim())) return;
 
-            // The room itself is the record of whether this has run. Tinting retries for up to
-            // fifteen seconds while the sections load, and rebuilding the parts on each of those
-            // frames would destroy and recreate them hundreds of times.
-            if (HasParts(room)) return;
-
             string[] entries = spec.Split(';');
 
             string[] names = new string[entries.Length];
             for (int e = 0; e < entries.Length; e++) names[e] = entries[e].Split('@')[0].Trim();
 
+            // Having some parts is not the same as having them all. Attaching one of four used to
+            // count as finished, so the other three were never searched for again — and rooms load
+            // over several seconds, which is exactly when a name is missing but about to appear.
+            // Keep going while anything is still unresolved and the search has attempts left.
+            bool settled = AllNamesSettled(names) || _resolveAttempts >= MaxResolveAttempts;
+            if (HasParts(room) && settled) return;
+
             // Resolve first, so the frames spent waiting for sections to load cost nothing.
             if (!ResolveTemplates(names)) return;
+
+            // Rebuild rather than add, so a retry cannot leave two copies of the same prop.
+            if (HasParts(room)) { StripParts(room); if (!_ourRooms.Contains(room)) _ourRooms.Add(room); }
 
             Bounds roomBounds;
             if (!TryGetRoomBounds(room, out roomBounds)) return;   // sections not up yet; retry later
