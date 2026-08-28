@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.4.1";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.4.2";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -146,7 +146,7 @@ namespace CapsFoundry
                 "Brightness applied after tinting, relative to the room's original brightness. " +
                 "Above 1 makes the room lighter than stock; the tint itself no longer darkens it.");
 
-            ExtraParts = Config.Bind("Appearance", "ExtraParts", "MSH_Nuka_room_L1_ani_01",
+            ExtraParts = Config.Bind("Appearance", "ExtraParts", "",
                 "Extra meshes borrowed from other rooms and parented onto this one, so the room " +
                 "reads as something the base game does not have. Semicolon-separated; each entry is " +
                 "MeshName [@ x,y,z [@ rx,ry,rz [@ scale]]]. MeshName is matched as a " +
