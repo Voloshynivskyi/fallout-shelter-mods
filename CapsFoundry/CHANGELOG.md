@@ -2,50 +2,27 @@
 
 ## 1.3.2
 
-- **Removed the twice-a-second re-check of painted rooms added in 1.3.1.** It was written to catch
-  mesh variants shown after the first pass, but the first pass already searches inactive renderers,
-  so the variants were never being missed. It was ongoing work on every frame for a problem that did
-  not exist.
-- **Detail logging no longer costs anything when it is switched off.** The argument to a log call is
-  built whether or not the call logs, so the repeating call sites now test first and never assemble a
-  message nobody reads.
-- The tint fix from 1.3.1 stays, and it is faster than before 1.3.0: whether a renderer still needs
-  painting is decided from `sharedMaterials`, which allocates nothing, so the retry loop no longer
-  clones every material on every frame while it waits for the room's sections to appear.
+Nothing here changes the room, its balance, its appearance or its save data. Upgrading from 1.2.0 is
+a straight DLL swap. (1.3.0 and 1.3.1 were never released; this entry covers them.)
 
-## 1.3.1
-
-- **Fixed: the room could be painted more than once, getting darker every time.** The guard against
-  repainting keyed on material instance ids, but the line that writes the colour back
-  (`Renderer.materials = ...`) makes Unity mint fresh instances with fresh ids, so the next pass no
-  longer recognised its own work. Since the tint is a multiply, each repeat darkened the room
-  further. Materials are now marked by name, which survives that.
-- **The tint now also catches mesh variants that appear later.** The reactor body is several meshes
-  (`_anim_a`, `_anim_b`) that the room's animation swaps between. Painted rooms are re-checked twice
-  a second so a variant shown later is coloured too — safe now that painting cannot compound. A
-  painted mesh alternating with an unpainted one is visible as flicker.
-- **Logging has a policy instead of a mood.** One-time facts — registration, pricing, build-menu
-  injection — are always logged, so a bug report has something to go on. The lines that repeat for
-  every room and every level change now need `VerboseLogging = true`. Warnings and errors are
-  unconditional.
-- Save backups stay removed, as in 1.3.0.
-
-## 1.3.0
-
-- **Release build: the diagnostics are gone.** Everything that existed to investigate the game
-  rather than to run the room has been removed.
-  - **The automatic save backup has been removed.** It was added while the room was still crashing
-    saves; the room is stable now, and a mod that copies your save folder on every launch is doing
-    something the game never asked it to. Existing backups in
-    `%LocalAppData%\FalloutShelter\ModBackups\` are left alone — delete them yourself when you no
-    longer want them.
-  - Removed the shader and renderer reports that fired when tinting could not find a colour slot.
-    A single warning is still logged if the room ends up untinted.
-  - Startup logging is one line. Warnings and errors are untouched — they only appear when something
-    is actually wrong.
-- No change to the room, its balance, its appearance or its save data. Upgrading from 1.2.0 is a
-  straight DLL swap.
-
+- **The mod no longer copies your saves.** The automatic backup was added while the room was still
+  under construction and could corrupt a vault. It is stable now, and a mod that duplicates your
+  save folder on every launch is doing something the game never asked it to. Any folders already in
+  `%LocalAppData%\FalloutShelter\ModBackups\` are left alone — delete them when you want to.
+  **The uninstall rule has not changed: sell every Caps Foundry before removing the DLL**, or that
+  vault will not load until you put the mod back.
+- **Fixed: a room could be painted more than once and grow darker each time.** The room borrows the
+  Nuclear Reactor's model and is recoloured at runtime; the guard against recolouring the same
+  material twice keyed on an id that Unity replaces when the colour is written back, so it could
+  stop recognising its own work. As the colour is applied by multiplication, each repeat darkened
+  the room further.
+- **Faster while a room is appearing.** Whether a mesh still needs colouring is now decided without
+  cloning its materials, so the wait for a room's sections to load no longer allocates on every
+  frame.
+- **Logging is useful instead of noisy.** Four lines a session — version, registration, pricing,
+  build-menu injection — which is what a bug report needs. Everything that repeats per room or per
+  upgrade now needs `VerboseLogging = true` in the config, and costs nothing while it is off.
+  Warnings and errors are always logged.
 ## 1.2.0
 
 - **The room no longer distorts the vault statistics screen.** Its output was being counted into the

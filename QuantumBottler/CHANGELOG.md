@@ -2,23 +2,13 @@
 
 ## 1.12.2
 
-- **Detail logging no longer costs anything when it is switched off.** `GetProducedResources` runs
-  constantly for every Bottler, and the log message there was being assembled on every call only to
-  be discarded. It is now built only when `VerboseLogging` is on.
+No change to production, icons or balance. Upgrading from 1.11.0 is a straight DLL swap. (1.12.0 and
+1.12.1 were never released; this entry covers them.)
 
-## 1.12.1
-
-- **Logging has a policy instead of a mood.** The resolved icon sprite is logged again, since it is
-  a one-time fact worth having in a bug report. The per-room rate — several lines a second — is back
-  behind a new `VerboseLogging` switch, off by default. Warnings and errors are unconditional.
-
-## 1.12.0
-
-- **Release build: the diagnostics are gone.** The `LogProduction` option and the resource-to-sprite
-  table dump have been removed, along with the per-room rate logging. Startup is one line; warnings
-  and errors are untouched.
-- No change to production, icons, or balance. Upgrading from 1.11.0 is a straight DLL swap.
-
+- **Logging is useful instead of noisy.** Two lines a session — version with the configured rate, and
+  the icon sprite in use — which is what a bug report needs. The per-room rate, which the game asks
+  for constantly, now needs `VerboseLogging = true` and costs nothing while it is off. Warnings and
+  errors are always logged.
 ## 1.11.0
 
 - **One broken patch no longer disables the mod.** Patches are applied class by class instead of all
