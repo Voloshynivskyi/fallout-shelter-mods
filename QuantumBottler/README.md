@@ -33,7 +33,7 @@ Caps from the Luck bonus are left untouched, exactly as in vanilla.
 To confirm it loaded, open `BepInEx\LogOutput.log` and look for:
 
 ```
-[Info   :Nuka-Cola Quantum Production] Nuka-Cola Quantum Production <version> loaded. Hours per bottle (size 1): L1=4 L2=3 L3=2.
+[Info   :Nuka-Cola Quantum Production] Nuka-Cola Quantum Production <version> ready (11 patches). Hours per bottle at size 1: L1=4 L2=3 L3=2.
 ```
 
 ### Finding your game folder
