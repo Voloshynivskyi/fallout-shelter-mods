@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.3
+
+- **Fixed: setting `VisualDonor` to a room that is not a Production room killed the game.** The
+  setting is now checked against the room registry once at startup, and a donor of the wrong class
+  is refused with a warning naming the valid ones, rather than taken at face value. Weapon Factory
+  is a Crafting room, and choosing it made the game die on every vault load — natively, with nothing
+  in the log to say why.
+- `ExtraParts` defaults to empty. Borrowed meshes stay available but are opt-in.
+- The `VisualDonor` description no longer claims the art is fixed when a room is built. Rooms are
+  rebuilt from the pool whenever a vault loads, so a change here restyles rooms you already have.
+
 ## 1.4.1
 
 - **Fixed: the game died while loading a save.** Two defects in 1.4.0's new part system combined

@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.4.2";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.4.3";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -56,22 +56,73 @@ namespace CapsFoundry
         // Scene and prefab ids are the enum member names as strings.
         internal static readonly string AdoptedTypeName = AdoptedType.ToString();
 
+        // The visual donor, once it has been checked against the room registry. Until that check
+        // has run the structural donor is used, which is known good.
+        private static string _validatedDonorName;
+
         /// <summary>
         /// Name the scene and pool redirects point at. Comes from the VisualDonor setting so the
         /// room's art can be changed without a rebuild; falls back to the structural donor.
+        ///
+        /// The name is only trusted once <see cref="ValidateVisualDonor"/> has confirmed the room
+        /// is a Production room. Pointing these redirects at another kind of room hands back a room
+        /// object this one cannot drive, and the game dies natively while the vault loads — no
+        /// exception, nothing in the log, just gone.
         /// </summary>
         internal static string DonorTypeName
         {
-            get
+            get { return _validatedDonorName ?? DonorType.ToString(); }
+        }
+
+        /// <summary>
+        /// Decides whether the configured VisualDonor can actually be used, once per session.
+        ///
+        /// A donor has to exist in the registry and has to be a Production room. Anything else is
+        /// refused here, loudly, rather than crashing the game later: Weapon Factory is a Crafting
+        /// room, and setting it as the donor killed the game on every vault load.
+        /// </summary>
+        private static void ValidateVisualDonor(RoomInfo[] prefabs)
+        {
+            _validatedDonorName = null;
+
+            string configured = VisualDonor == null ? null : VisualDonor.Value;
+            if (string.IsNullOrEmpty(configured)) return;
+
+            ERoomType type;
+            try { type = (ERoomType)Enum.Parse(typeof(ERoomType), configured, true); }
+            catch
             {
-                string configured = VisualDonor == null ? null : VisualDonor.Value;
-                if (string.IsNullOrEmpty(configured)) return DonorType.ToString();
-
-                try { Enum.Parse(typeof(ERoomType), configured, true); }
-                catch { return DonorType.ToString(); }
-
-                return configured;
+                Log.LogWarning("VisualDonor '" + configured + "' is not a room type. Using " +
+                               DonorType + " instead.");
+                return;
             }
+
+            if (type == DonorType) return;   // already the fallback; nothing to validate
+
+            RoomInfo donor = null;
+            for (int i = 0; i < prefabs.Length; i++)
+            {
+                if (prefabs[i] != null && prefabs[i].m_eRoomType == type) { donor = prefabs[i]; break; }
+            }
+
+            if (donor == null)
+            {
+                Log.LogWarning("VisualDonor '" + configured + "' is not in the room registry. Using " +
+                               DonorType + " instead.");
+                return;
+            }
+
+            if (donor.m_roomClass != ERoomClass.Production)
+            {
+                Log.LogWarning("VisualDonor '" + configured + "' is a " + donor.m_roomClass +
+                               " room, not a Production room, so this room cannot be built from it. " +
+                               "Using " + DonorType + " instead. Production rooms include Energy2 " +
+                               "(Nuclear Reactor), Geothermal (Power Plant), NukaCola, Water2 and " +
+                               "Hydroponic.");
+                return;
+            }
+
+            _validatedDonorName = configured;
         }
 
         internal static ConfigEntry<bool> Enabled;
@@ -131,11 +182,13 @@ namespace CapsFoundry
                 "progress, so it borrows this room's. NukaCola unlocks at 100 dwellers. Leave empty " +
                 "to have the room always available.");
 
-            VisualDonor = Config.Bind("Appearance", "VisualDonor", "WeaponFactory",
+            VisualDonor = Config.Bind("Appearance", "VisualDonor", "Energy2",
                 "Room whose 3D art this room borrows, by ERoomType name. Energy2 is the Nuclear " +
-                "Reactor; Geothermal is the Power Plant. Must be a Production room, or the game " +
-                "hands back the wrong kind of room object and production never starts. The art is " +
-                "fixed when a room is built, so change this before building.");
+                "Reactor; Geothermal is the Power Plant. It MUST be a Production room — a Crafting " +
+                "or Facility room hands back a room object this one cannot drive, and the game dies " +
+                "while the vault loads. Anything else is refused and the Power Plant is used " +
+                "instead. Rooms are rebuilt from the pool whenever a vault loads, so a change here " +
+                "restyles rooms you already have on the next game start.");
 
             TintStrength = Config.Bind("Appearance", "TintStrength", 0.85f,
                 "How far the room is pushed towards TintColor, 0 to 1. Full strength on a saturated " +
@@ -303,6 +356,11 @@ namespace CapsFoundry
             TrySet(clone, "m_SpecialStatLetter", "L");
 
             _visualDonorControllers = donor.m_LevelControllers;
+
+            // Before any redirect uses it. A donor of the wrong class does not fail gracefully
+            // later; it takes the game down while the vault loads.
+            ValidateVisualDonor(prefabs);
+
             ApplyPricing(clone, prefabs);
 
             // The build-menu thumbnail must match the art the room actually gets, which comes from

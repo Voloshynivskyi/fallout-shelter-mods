@@ -102,7 +102,7 @@ launch. Edit it and restart the game.
 | `HoursLevel1` | `4` | Hours per cycle at level 1, full efficiency. |
 | `HoursLevel2` | `3` | Same at level 2. |
 | `HoursLevel3` | `2` | Same at level 3. |
-| `VisualDonor` | `Energy2` | Room whose 3D art this room borrows — `Energy2` is the Nuclear Reactor. **Must be a Production room.** |
+| `VisualDonor` | `Energy2` | Room whose 3D art this room borrows — `Energy2` is the Nuclear Reactor. **Must be a Production room**: a Crafting or Facility room hands back a room object this one cannot drive and the game dies while the vault loads, so anything else is refused with a warning and the Power Plant is used instead. Production rooms include `Energy2`, `Geothermal`, `NukaCola`, `Water2` and `Hydroponic`. |
 | `TintColor` | `#C0392B` | Colour applied to the room. |
 | `TintStrength` | `0.55` | How far to push towards the tint, 0–1. |
 | `TintBrightness` | `1.15` | Brightness after tinting, relative to stock. Above 1 is lighter. |
