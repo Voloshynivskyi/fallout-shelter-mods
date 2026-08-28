@@ -11,3 +11,4 @@ dist/
 Thumbs.db
 desktop.ini
 tools/RoomTextureDump/build/
+tools/SaveBackup/build/
