@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.4.3";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.5.1";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -203,10 +203,13 @@ namespace CapsFoundry
                 "Extra meshes borrowed from other rooms and parented onto this one, so the room " +
                 "reads as something the base game does not have. Semicolon-separated; each entry is " +
                 "MeshName [@ x,y,z [@ rx,ry,rz [@ scale]]]. MeshName is matched as a " +
-                "case-insensitive substring against the meshes the game has loaded — a mesh from a " +
-                "room type this vault has never loaded cannot be found. Position is relative to the " +
-                "centre of the room; leave it out to drop the part in the middle. Only the mesh and " +
-                "its materials are copied: no scripts and no animation come with it. Empty adds nothing.");
+                "case-insensitive substring against the meshes standing in your vault — a mesh from " +
+                "a room type you have not built cannot be borrowed, and the log lists what is " +
+                "available. Position is given as a FRACTION of the room: 0 is the middle, 1 the " +
+                "edge, -1 the opposite edge, so a layout holds up whether the room is one segment " +
+                "wide or three. Scale is a plain multiplier; around 5 to 8 reads as machinery. Only " +
+                "the mesh and its materials are copied: no scripts and no animation come with it. " +
+                "Empty adds nothing.");
 
             TintColor = Config.Bind("Appearance", "TintColor", "#E01B24",
                 "Hex colour multiplied into the cloned room's materials so it reads differently " +
@@ -243,6 +246,7 @@ namespace CapsFoundry
             if (!Enabled.Value) return;
 
             ProcessTintQueue();
+            WatchParts();
 
             if (_bootstrapped) return;
 
@@ -655,9 +659,48 @@ namespace CapsFoundry
 
         internal static void QueueTint(Room room)
         {
-            if (room == null || _tintQueue.Contains(room)) return;
+            if (room == null) return;
+
+            if (!_ourRooms.Contains(room)) _ourRooms.Add(room);
+
+            if (_tintQueue.Contains(room)) return;
             _tintQueue.Add(room);
             _tintAttempts.Add(0);
+        }
+
+        // Every room of ours seen this session, so their added meshes can be put back.
+        //
+        // Attaching once is not enough. Going on a quest and returning rebuilds the vault, and the
+        // objects hung on a room die with the old one, so the props simply vanished. Watching for
+        // that is cheap — counting a room's children costs nothing next to searching its meshes.
+        private static readonly List<Room> _ourRooms = new List<Room>();
+        private const int PartWatchInterval = 60;   // frames, about once a second
+        private static int _partWatchFrames;
+
+        private void WatchParts()
+        {
+            if (ExtraParts == null || ExtraParts.Value.Trim().Length == 0) return;
+            if (++_partWatchFrames < PartWatchInterval) return;
+            _partWatchFrames = 0;
+
+            for (int i = _ourRooms.Count - 1; i >= 0; i--)
+            {
+                Room room = _ourRooms[i];
+                if (room == null) { _ourRooms.RemoveAt(i); continue; }
+                if (HasParts(room)) continue;
+
+                try
+                {
+                    AttachParts(room);
+
+                    // If the props were lost the room was rebuilt, so its colour is likely gone too.
+                    if (HasParts(room)) QueueTint(room);
+                }
+                catch (Exception e)
+                {
+                    Log.LogWarning("Could not restore parts: " + e.Message);
+                }
+            }
         }
 
         // Every object this mod adds to a room carries this prefix, which is how they are found
@@ -686,6 +729,8 @@ namespace CapsFoundry
             if (room == null) return;
             try
             {
+                _ourRooms.Remove(room);
+
                 Transform t = room.transform;
                 for (int i = t.childCount - 1; i >= 0; i--)
                 {
@@ -768,10 +813,17 @@ namespace CapsFoundry
             MeshRenderer mr = part.AddComponent<MeshRenderer>();
             if (source != null) mr.sharedMaterials = source.sharedMaterials;
 
-            // Default to the middle of the room, so a part with no coordinates lands on the room
-            // rather than at the vault's origin where nobody would ever see it.
-            Vector3 centreLocal = room.transform.InverseTransformPoint(roomBounds.center);
-            part.transform.localPosition = centreLocal + ParseVector(fields, 1, Vector3.zero);
+            // Coordinates are fractions of the room's own size, not world units: 0 is the middle,
+            // 1 is the edge, -1 the opposite edge. A Foundry can be one, two or three segments wide,
+            // and a fixed offset that sits nicely in a wide room puts the same prop through the wall
+            // of a narrow one.
+            Vector3 fraction = ParseVector(fields, 1, Vector3.zero);
+            Vector3 extents = roomBounds.extents;
+            Vector3 target = roomBounds.center + new Vector3(fraction.x * extents.x,
+                                                             fraction.y * extents.y,
+                                                             fraction.z * extents.z);
+
+            part.transform.localPosition = room.transform.InverseTransformPoint(target);
             part.transform.localEulerAngles = ParseVector(fields, 2, Vector3.zero);
 
             float scale = ParseFloat(fields, 3, 1f);
@@ -829,6 +881,24 @@ namespace CapsFoundry
                 if (!_templates.ContainsKey(names[i])) { missing = true; break; }
             }
             if (!missing) return true;                              // everything already decided
+
+            // A cached template points at a mesh on a room that is standing right now. Rebuilding
+            // the vault destroys those, leaving entries that look resolved but are dead, so clear
+            // them out and allow the search to run again.
+            if (_templates.Count > 0)
+            {
+                bool anyDead = false;
+                foreach (KeyValuePair<string, MeshFilter> entry in _templates)
+                {
+                    if (entry.Value == null) continue;          // a recorded miss, not a dead hit
+                    if (entry.Value.sharedMesh == null) { anyDead = true; break; }
+                }
+                if (anyDead)
+                {
+                    _templates.Clear();
+                    _resolveAttempts = 0;
+                }
+            }
 
             if (_resolveAttempts >= MaxResolveAttempts) return false;
             _resolveAttempts++;
