@@ -70,8 +70,20 @@ Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Write-Host "Packaged $zip" -ForegroundColor Green
 
 if ($Install) {
+    # The game memory-maps its plugins, so copying over a loaded DLL fails with an IOException
+    # that is easy to skim past in a build log. Say so plainly instead.
+    if (Get-Process -Name "FalloutShelter*" -ErrorAction SilentlyContinue) {
+        throw "Fallout Shelter is running. Close it before installing, or the DLL cannot be replaced."
+    }
+
     $plugins = Join-Path $GamePath "BepInEx\plugins"
     if (-not (Test-Path $plugins)) { New-Item -ItemType Directory -Path $plugins | Out-Null }
     Copy-Item $outDll $plugins -Force
-    Write-Host "Installed to $plugins" -ForegroundColor Green
+
+    # Verify the artefact rather than trusting the copy: compare what landed with what was built.
+    $landed = Get-Item (Join-Path $plugins (Split-Path $outDll -Leaf))
+    if ($landed.Length -ne (Get-Item $outDll).Length) {
+        throw "Install did not take: $($landed.FullName) is $($landed.Length) bytes, expected $((Get-Item $outDll).Length)."
+    }
+    Write-Host "Installed to $plugins ($($landed.Length) bytes)" -ForegroundColor Green
 }
