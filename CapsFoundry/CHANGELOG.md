@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.0
+
+- **The room is built from parts of several rooms instead of wearing one room's model.** The default
+  body is now the Weapon Factory — presses and anvils, the closest thing the game has to a mint —
+  and meshes borrowed from other rooms are parented onto it. The result is a silhouette the base
+  game does not have, assembled entirely from stock assets.
+- **New `ExtraParts` setting.** A semicolon-separated list of `MeshName [@ x,y,z [@ rx,ry,rz [@
+  scale]]]`. Only the mesh and its materials are copied onto a bare object — no scripts, no
+  animators — so a borrowed part cannot bring another room's logic into this one. A part with no
+  coordinates lands in the middle of the room.
+- **Strong Nuka-Cola red by default** (`#E01B24` at 0.85 strength) rather than the previous muted
+  brick.
+- Added parts are removed again from any room that is not a Caps Foundry. Rooms come from a shared
+  pool, so one of ours can come back as a Power Generator, and it must not keep our machinery.
+
+Existing installs keep their old settings: BepInEx does not overwrite a config that already exists.
+Delete `BepInEx\config\ovolo.falloutshelter.capsfoundry.cfg` to pick up the new look.
+
 ## 1.3.2
 
 Nothing here changes the room, its balance, its appearance or its save data. Upgrading from 1.2.0 is

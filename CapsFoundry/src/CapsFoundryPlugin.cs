@@ -31,7 +31,7 @@ namespace CapsFoundry
     {
         public const string PluginGuid = "ovolo.falloutshelter.capsfoundry";
         public const string PluginName = "Caps Foundry";
-        public const string PluginVersion = "1.3.2";  // BepInEx parses this with System.Version — no suffixes
+        public const string PluginVersion = "1.4.0";  // BepInEx parses this with System.Version — no suffixes
 
         /// <summary>Enum value adopted for the new room. See the class remarks for why this one.</summary>
         internal const ERoomType AdoptedType = ERoomType.ProteinBar;
@@ -88,6 +88,7 @@ namespace CapsFoundry
         internal static ConfigEntry<float> TintBrightness;
         internal static ConfigEntry<string> RoomName;
         internal static ConfigEntry<bool> VerboseLogging;
+        internal static ConfigEntry<string> ExtraParts;
 
         internal static ManualLogSource Log;
         internal static bool RoomRegistered;
@@ -130,13 +131,13 @@ namespace CapsFoundry
                 "progress, so it borrows this room's. NukaCola unlocks at 100 dwellers. Leave empty " +
                 "to have the room always available.");
 
-            VisualDonor = Config.Bind("Appearance", "VisualDonor", "Energy2",
+            VisualDonor = Config.Bind("Appearance", "VisualDonor", "WeaponFactory",
                 "Room whose 3D art this room borrows, by ERoomType name. Energy2 is the Nuclear " +
                 "Reactor; Geothermal is the Power Plant. Must be a Production room, or the game " +
                 "hands back the wrong kind of room object and production never starts. The art is " +
                 "fixed when a room is built, so change this before building.");
 
-            TintStrength = Config.Bind("Appearance", "TintStrength", 0.55f,
+            TintStrength = Config.Bind("Appearance", "TintStrength", 0.85f,
                 "How far the room is pushed towards TintColor, 0 to 1. Full strength on a saturated " +
                 "colour swallows most of the light, which reads as a dark room rather than a " +
                 "coloured one.");
@@ -145,7 +146,16 @@ namespace CapsFoundry
                 "Brightness applied after tinting, relative to the room's original brightness. " +
                 "Above 1 makes the room lighter than stock; the tint itself no longer darkens it.");
 
-            TintColor = Config.Bind("Appearance", "TintColor", "#C0392B",
+            ExtraParts = Config.Bind("Appearance", "ExtraParts", "MSH_Nuka_room_L1_ani_01",
+                "Extra meshes borrowed from other rooms and parented onto this one, so the room " +
+                "reads as something the base game does not have. Semicolon-separated; each entry is " +
+                "MeshName [@ x,y,z [@ rx,ry,rz [@ scale]]]. MeshName is matched as a " +
+                "case-insensitive substring against the meshes the game has loaded — a mesh from a " +
+                "room type this vault has never loaded cannot be found. Position is relative to the " +
+                "centre of the room; leave it out to drop the part in the middle. Only the mesh and " +
+                "its materials are copied: no scripts and no animation come with it. Empty adds nothing.");
+
+            TintColor = Config.Bind("Appearance", "TintColor", "#E01B24",
                 "Hex colour multiplied into the cloned room's materials so it reads differently " +
                 "from a Geothermal plant. Only the clone is tinted. Empty disables tinting.");
 
@@ -592,6 +602,196 @@ namespace CapsFoundry
             _tintAttempts.Add(0);
         }
 
+        // Every object this mod adds to a room carries this prefix, which is how they are found
+        // again — both to replace them and, more importantly, to get them off a room that is not
+        // ours. Rooms come from a shared pool, so one of ours can come back as a Power Generator.
+        private const string PartPrefix = "CapsFoundryPart_";
+
+        /// <summary>True when this room already carries meshes this mod added.</summary>
+        private static bool HasParts(Room room)
+        {
+            Transform t = room.transform;
+            for (int i = 0; i < t.childCount; i++)
+            {
+                Transform child = t.GetChild(i);
+                if (child != null && child.name.StartsWith(PartPrefix, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Removes this mod's added meshes from a room. Called for every room the game constructs,
+        /// so a pooled room reused as something else never keeps our parts.
+        /// </summary>
+        internal static void StripParts(Room room)
+        {
+            if (room == null) return;
+            try
+            {
+                Transform t = room.transform;
+                for (int i = t.childCount - 1; i >= 0; i--)
+                {
+                    Transform child = t.GetChild(i);
+                    if (child != null && child.name.StartsWith(PartPrefix, StringComparison.Ordinal))
+                        UnityEngine.Object.Destroy(child.gameObject);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not strip added parts: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Parents extra meshes borrowed from other rooms onto this one.
+        ///
+        /// Only the mesh and its materials are copied onto a bare GameObject — no scripts, no
+        /// animators, no colliders. A borrowed object that brought its own behaviour with it would
+        /// be running another room's logic inside ours, which is exactly the kind of thing that
+        /// crashes on placement.
+        ///
+        /// Runs before tinting so the added meshes are coloured along with the rest of the room.
+        /// </summary>
+        private static void AttachParts(Room room)
+        {
+            if (room == null || ExtraParts == null) return;
+
+            string spec = ExtraParts.Value;
+            if (string.IsNullOrEmpty(spec.Trim())) return;
+
+            // The room itself is the record of whether this has run. Tinting retries for up to
+            // fifteen seconds while the sections load, and rebuilding the parts on each of those
+            // frames would destroy and recreate them hundreds of times.
+            if (HasParts(room)) return;
+
+            Bounds roomBounds;
+            if (!TryGetRoomBounds(room, out roomBounds)) return;   // sections not up yet; retry later
+
+            string[] entries = spec.Split(';');
+            int added = 0;
+
+            for (int e = 0; e < entries.Length; e++)
+            {
+                string entry = entries[e].Trim();
+                if (entry.Length == 0) continue;
+
+                try { if (AttachOne(room, entry, roomBounds)) added++; }
+                catch (Exception ex) { Log.LogWarning("Part '" + entry + "' failed: " + ex.Message); }
+            }
+
+            if (added > 0)
+                LogDetail("Attached " + added + " extra mesh(es); room bounds centre " +
+                          roomBounds.center + ", size " + roomBounds.size + ".");
+        }
+
+        private static bool AttachOne(Room room, string entry, Bounds roomBounds)
+        {
+            string[] fields = entry.Split('@');
+            string meshName = fields[0].Trim();
+            if (meshName.Length == 0) return false;
+
+            MeshFilter template = FindTemplate(meshName);
+            if (template == null || template.sharedMesh == null)
+            {
+                Log.LogWarning("No loaded mesh matches '" + meshName + "'. It belongs to a room whose " +
+                               "assets this vault has not loaded, or the name is wrong.");
+                return false;
+            }
+
+            GameObject part = new GameObject(PartPrefix + meshName);
+            part.transform.SetParent(room.transform, false);
+
+            MeshFilter mf = part.AddComponent<MeshFilter>();
+            mf.sharedMesh = template.sharedMesh;
+
+            MeshRenderer source = template.GetComponent<MeshRenderer>();
+            MeshRenderer mr = part.AddComponent<MeshRenderer>();
+            if (source != null) mr.sharedMaterials = source.sharedMaterials;
+
+            // Default to the middle of the room, so a part with no coordinates lands on the room
+            // rather than at the vault's origin where nobody would ever see it.
+            Vector3 centreLocal = room.transform.InverseTransformPoint(roomBounds.center);
+            part.transform.localPosition = centreLocal + ParseVector(fields, 1, Vector3.zero);
+            part.transform.localEulerAngles = ParseVector(fields, 2, Vector3.zero);
+
+            float scale = ParseFloat(fields, 3, 1f);
+            part.transform.localScale = new Vector3(scale, scale, scale);
+
+            return true;
+        }
+
+        /// <summary>Combined bounds of the room's own meshes, which live under its RoomSections.</summary>
+        private static bool TryGetRoomBounds(Room room, out Bounds bounds)
+        {
+            bounds = new Bounds();
+            bool any = false;
+
+            List<RoomSectionBase> sections = room.RoomSections;
+            if (sections == null) return false;
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                if (sections[i] == null) continue;
+                Renderer[] rs = sections[i].GetComponentsInChildren<Renderer>(true);
+                for (int r = 0; r < rs.Length; r++)
+                {
+                    if (rs[r] == null) continue;
+                    if (!any) { bounds = rs[r].bounds; any = true; }
+                    else bounds.Encapsulate(rs[r].bounds);
+                }
+            }
+            return any;
+        }
+
+        // Template lookup is over every loaded object, which is not cheap, so each name is resolved
+        // once. A miss is cached too: retrying it every room would repeat the whole scan for nothing.
+        private static readonly Dictionary<string, MeshFilter> _templates =
+            new Dictionary<string, MeshFilter>(StringComparer.OrdinalIgnoreCase);
+
+        private static MeshFilter FindTemplate(string name)
+        {
+            MeshFilter cached;
+            if (_templates.TryGetValue(name, out cached) && cached != null) return cached;
+
+            MeshFilter[] all = Resources.FindObjectsOfTypeAll<MeshFilter>();
+            MeshFilter best = null;
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null || all[i].sharedMesh == null) continue;
+                if (all[i].name.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (all[i].name.StartsWith(PartPrefix, StringComparison.Ordinal)) continue;   // never clone our own
+                best = all[i];
+                break;
+            }
+
+            _templates[name] = best;
+            return best;
+        }
+
+        private static Vector3 ParseVector(string[] fields, int index, Vector3 fallback)
+        {
+            if (fields.Length <= index) return fallback;
+            string[] n = fields[index].Split(',');
+            if (n.Length != 3) return fallback;
+
+            float x, y, z;
+            if (!float.TryParse(n[0].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out x)) return fallback;
+            if (!float.TryParse(n[1].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out y)) return fallback;
+            if (!float.TryParse(n[2].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out z)) return fallback;
+            return new Vector3(x, y, z);
+        }
+
+        private static float ParseFloat(string[] fields, int index, float fallback)
+        {
+            if (fields.Length <= index) return fallback;
+            float v;
+            return float.TryParse(fields[index].Trim(), System.Globalization.NumberStyles.Float,
+                                  System.Globalization.CultureInfo.InvariantCulture, out v) ? v : fallback;
+        }
+
         private void ProcessTintQueue()
         {
             for (int i = _tintQueue.Count - 1; i >= 0; i--)
@@ -602,6 +802,8 @@ namespace CapsFoundry
                 if (room == null) done = true;
                 else
                 {
+                    AttachParts(room);
+
                     int painted = TryTint(room);
                     _tintAttempts[i] = _tintAttempts[i] + 1;
                     done = painted != 0 || _tintAttempts[i] >= MaxTintAttempts;
@@ -1387,7 +1589,14 @@ namespace CapsFoundry
 
         private static void Postfix(ERoomType roomType, Room __result)
         {
-            if (!Plugin.RoomRegistered || roomType != Plugin.AdoptedType || __result == null) return;
+            if (__result == null) return;
+
+            // Rooms come from a shared pool, so one that was ours can come back as something else
+            // still carrying the meshes we hung on it. This postfix runs for every room the game
+            // builds, which makes it the one place that reliably catches that.
+            if (roomType != Plugin.AdoptedType) { Plugin.StripParts(__result); return; }
+
+            if (!Plugin.RoomRegistered) return;
 
             try
             {
