@@ -10,11 +10,20 @@ using UnityEngine;
 namespace RoomTextureDump
 {
     /// <summary>
-    /// Development tool. Writes every texture a room draws with to disk as PNG, plus a manifest
+    /// Development tool. Writes the textures rooms are drawn with to disk as PNG, plus a manifest
     /// saying which renderer, material, shader and shader property each file came from.
     ///
     /// The point is an exact repaint template: the dimensions and UV layout the game actually uses.
     /// Guessing at either produces artwork that lands in the wrong place on the mesh.
+    ///
+    /// Two modes, because they have different blind spots:
+    ///
+    ///   Scene  — walks the rooms standing in the vault. Accurate about what a real room is made
+    ///            of, but only covers the rooms, levels and widths that vault happens to contain.
+    ///
+    ///   Loaded — walks every renderer loaded in memory, including inactive ones and ones sitting
+    ///            in object pools rather than in the scene. Room sections are pooled per type and
+    ///            merge width, so this reaches levels and widths that are not built anywhere.
     ///
     /// Not shipped with either mod. It reads the game and writes files; it changes nothing.
     /// </summary>
@@ -23,16 +32,22 @@ namespace RoomTextureDump
     {
         public const string PluginGuid = "ovolo.falloutshelter.roomtexturedump";
         public const string PluginName = "Room Texture Dump";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Log;
 
         private static ConfigEntry<string> RoomTypes;
         private static ConfigEntry<string> OutputFolder;
         private static ConfigEntry<bool> DumpEveryLevel;
+        private static ConfigEntry<bool> DumpSceneRooms;
+        private static ConfigEntry<bool> DumpLoadedAssets;
+        private static ConfigEntry<string> LoadedNameFilter;
+        private static ConfigEntry<int> MaxTextures;
 
         private readonly HashSet<string> _done = new HashSet<string>();
         private readonly List<ERoomType> _wanted = new List<ERoomType>();
+        private bool _loadedDone;
+        private int _written;
         private int _frames;
         private const int PollInterval = 60;   // frames, about once a second
 
@@ -40,19 +55,38 @@ namespace RoomTextureDump
         {
             Log = Logger;
 
-            RoomTypes = Config.Bind("Dump", "RoomTypes", "Energy2",
-                "Comma-separated ERoomType names to dump, for example 'Energy2, Geothermal, NukaCola'. " +
-                "Energy2 is the Nuclear Reactor.");
+            RoomTypes = Config.Bind("Scene", "RoomTypes", "Energy2",
+                "Comma-separated ERoomType names to dump from the vault, for example " +
+                "'Energy2, Geothermal, NukaCola'. Energy2 is the Nuclear Reactor.");
 
-            DumpEveryLevel = Config.Bind("Dump", "DumpEveryLevel", true,
+            DumpSceneRooms = Config.Bind("Scene", "DumpSceneRooms", true,
+                "Dump the rooms actually standing in the vault.");
+
+            DumpEveryLevel = Config.Bind("Scene", "DumpEveryLevel", true,
                 "Dump each level and merge width separately. Room levels use different meshes, so a " +
                 "template taken from one level does not necessarily fit another.");
 
-            OutputFolder = Config.Bind("Dump", "OutputFolder", "",
+            DumpLoadedAssets = Config.Bind("Loaded", "DumpLoadedAssets", true,
+                "Also dump every renderer loaded in memory whose name matches LoadedNameFilter, " +
+                "including inactive ones and ones held in object pools. This is what reaches room " +
+                "levels and merge widths that are not built in your vault.");
+
+            LoadedNameFilter = Config.Bind("Loaded", "LoadedNameFilter", "room",
+                "Case-insensitive substring a renderer's name must contain to be dumped in Loaded " +
+                "mode. The stock room meshes are named like 'MSH_Fusion_reactor_room_L3_R3_anim_a', " +
+                "so 'room' catches them without dragging in dwellers and UI. Empty means everything, " +
+                "which is a lot.");
+
+            MaxTextures = Config.Bind("Loaded", "MaxTextures", 300,
+                "Stop after this many distinct textures have been written. A safety net: an " +
+                "unfiltered run can otherwise write a very large number of files.");
+
+            OutputFolder = Config.Bind("Output", "OutputFolder", "",
                 "Where to write the files. Empty means %LocalAppData%/FalloutShelter/RoomTextures.");
 
             ParseWantedTypes();
-            Log.LogInfo(PluginName + " " + PluginVersion + " ready. Watching for: " + RoomTypes.Value);
+            Log.LogInfo(PluginName + " " + PluginVersion + " ready. Scene types: " + RoomTypes.Value +
+                        "; loaded filter: '" + LoadedNameFilter.Value + "'.");
         }
 
         private void ParseWantedTypes()
@@ -65,12 +99,10 @@ namespace RoomTextureDump
                 try { _wanted.Add((ERoomType)Enum.Parse(typeof(ERoomType), name, true)); }
                 catch { Log.LogWarning("'" + name + "' is not a room type; ignoring it."); }
             }
-            if (_wanted.Count == 0) Log.LogWarning("No valid room types configured; nothing will be dumped.");
         }
 
         private void Update()
         {
-            if (_wanted.Count == 0) return;
             if (++_frames < PollInterval) return;
             _frames = 0;
 
@@ -87,6 +119,21 @@ namespace RoomTextureDump
                 return;
             }
 
+            // A room in the scene means we are inside a vault and the room assets are loaded, which
+            // is the only moment the Loaded pass is worth running.
+            if (rooms.Length == 0) return;
+
+            if (DumpSceneRooms.Value) DumpSceneRoomsPass(rooms);
+
+            if (DumpLoadedAssets.Value && !_loadedDone)
+            {
+                _loadedDone = true;
+                DumpLoadedPass();
+            }
+        }
+
+        private void DumpSceneRoomsPass(Room[] rooms)
+        {
             for (int i = 0; i < rooms.Length; i++)
             {
                 Room room = rooms[i];
@@ -97,45 +144,97 @@ namespace RoomTextureDump
                     : room.RoomType.ToString();
 
                 if (!_done.Add(key)) continue;
-                Dump(room, key);
-            }
-        }
 
-        private void Dump(Room room, string key)
-        {
-            try
-            {
                 List<Renderer> renderers = CollectRenderers(room);
                 if (renderers.Count == 0)
                 {
                     // Sections stream in from a pool after the room starts; try again next poll.
                     _done.Remove(key);
-                    return;
+                    continue;
                 }
 
-                string dir = Path.Combine(ResolveOutputFolder(), key);
+                StringBuilder header = new StringBuilder();
+                header.AppendLine("Source:      room standing in the vault");
+                header.AppendLine("Room:        " + room.RoomType);
+                header.AppendLine("Level:       " + room.CurrentLevelNumber);
+                header.AppendLine("Merge width: " + room.MergeLevel);
+
+                Write(Path.Combine("scene", key), renderers, header);
+            }
+        }
+
+        /// <summary>
+        /// Walks everything loaded rather than everything placed.
+        ///
+        /// Resources.FindObjectsOfTypeAll returns objects that are inactive and objects that belong
+        /// to no scene at all — which is exactly where pooled room sections live. That is how this
+        /// reaches a level-1 one-wide reactor when the vault only contains a level-3 three-wide one.
+        /// </summary>
+        private void DumpLoadedPass()
+        {
+            try
+            {
+                Renderer[] all = Resources.FindObjectsOfTypeAll<Renderer>();
+                string filter = LoadedNameFilter.Value;
+
+                List<Renderer> matched = new List<Renderer>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i] == null) continue;
+                    if (filter.Length > 0 &&
+                        all[i].name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    matched.Add(all[i]);
+                }
+
+                Log.LogInfo("Loaded pass: " + all.Length + " renderer(s) in memory, " +
+                            matched.Count + " matching '" + filter + "'.");
+                if (matched.Count == 0) return;
+
+                StringBuilder header = new StringBuilder();
+                header.AppendLine("Source:      every renderer loaded in memory, including pooled and inactive");
+                header.AppendLine("Filter:      name contains '" + filter + "'");
+                header.AppendLine("Matched:     " + matched.Count + " of " + all.Length + " renderer(s)");
+
+                Write("loaded", matched, header);
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Loaded pass failed: " + e.Message);
+            }
+        }
+
+        private void Write(string subfolder, List<Renderer> renderers, StringBuilder header)
+        {
+            try
+            {
+                string dir = Path.Combine(ResolveOutputFolder(), subfolder);
                 Directory.CreateDirectory(dir);
 
-                StringBuilder manifest = new StringBuilder();
-                manifest.AppendLine("Room:        " + room.RoomType);
-                manifest.AppendLine("Level:       " + room.CurrentLevelNumber);
-                manifest.AppendLine("Merge width: " + room.MergeLevel);
+                StringBuilder manifest = header;
                 manifest.AppendLine("Renderers:   " + renderers.Count);
                 manifest.AppendLine();
 
-                int written = 0;
+                int wroteHere = 0;
+                bool capped = false;
                 HashSet<string> seenTextures = new HashSet<string>();
+                HashSet<string> seenMaterials = new HashSet<string>();
 
-                for (int r = 0; r < renderers.Count; r++)
+                for (int r = 0; r < renderers.Count && !capped; r++)
                 {
                     Material[] mats = renderers[r].sharedMaterials;
-                    for (int m = 0; m < mats.Length; m++)
+                    for (int m = 0; m < mats.Length && !capped; m++)
                     {
                         if (mats[m] == null || mats[m].shader == null) continue;
                         Shader sh = mats[m].shader;
 
+                        // Many renderers share one material; describe each material once, but keep
+                        // listing the renderers so the mesh-to-material mapping stays visible.
+                        string matKey = mats[m].GetInstanceID().ToString();
+                        bool firstTime = seenMaterials.Add(matKey);
+
                         manifest.AppendLine("renderer " + renderers[r].name);
-                        manifest.AppendLine("    material " + mats[m].name);
+                        manifest.AppendLine("    material " + mats[m].name + (firstTime ? "" : "   (already described)"));
+                        if (!firstTime) { manifest.AppendLine(); continue; }
                         manifest.AppendLine("    shader   " + sh.name);
 
                         int count = sh.GetPropertyCount();
@@ -152,20 +251,30 @@ namespace RoomTextureDump
                                                 "  (" + tex.width + "x" + tex.height + ", " +
                                                 tex.GetType().Name + ")");
 
-                            // The same atlas is shared by many renderers; write it once.
-                            if (!seenTextures.Add(file)) continue;
-                            if (WritePng(tex, Path.Combine(dir, file))) written++;
+                            if (!seenTextures.Add(file)) continue;   // shared atlas, write it once
+
+                            if (_written >= MaxTextures.Value)
+                            {
+                                manifest.AppendLine();
+                                manifest.AppendLine("STOPPED: MaxTextures (" + MaxTextures.Value + ") reached.");
+                                Log.LogWarning("Stopped at MaxTextures (" + MaxTextures.Value +
+                                               "). Raise it or narrow LoadedNameFilter.");
+                                capped = true;
+                                break;
+                            }
+
+                            if (WritePng(tex, Path.Combine(dir, file))) { wroteHere++; _written++; }
                         }
                         manifest.AppendLine();
                     }
                 }
 
                 File.WriteAllText(Path.Combine(dir, "manifest.txt"), manifest.ToString());
-                Log.LogInfo("Dumped " + written + " texture(s) for " + key + " to " + dir);
+                Log.LogInfo("Wrote " + wroteHere + " texture(s) to " + dir);
             }
             catch (Exception e)
             {
-                Log.LogWarning("Dump of " + key + " failed: " + e.Message);
+                Log.LogWarning("Writing " + subfolder + " failed: " + e.Message);
             }
         }
 
