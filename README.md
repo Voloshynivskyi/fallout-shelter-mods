@@ -30,15 +30,23 @@ generated and stay out of version control.
 `tools\` holds two small reflection-based scripts written for this work. Fallout Shelter has no mod
 support and effectively no documentation, so almost everything here was worked out by reading IL.
 
-| Script | Purpose |
+| Tool | Purpose |
 |---|---|
 | `ildasm.ps1` | Disassembles a method of `Assembly-CSharp` to IL |
 | `findcallers.ps1` | Scans every method body for references to a member, i.e. finds callers |
+| `RoomTextureDump/` | A BepInEx plugin that writes a room's textures to PNG, with a manifest naming the renderer, material, shader and shader property behind each file |
 
 ```powershell
 .\tools\ildasm.ps1 -TypeName "ProductionRoom" -MethodFilter "^GetProducedResources$"
 .\tools\findcallers.ps1 -Pattern "GetProducedResources"
+
+cd tools\RoomTextureDump
+.\build.ps1 -Install       # then run the game and look at the room
+.\build.ps1 -Uninstall     # a dev tool, so take it back out afterwards
 ```
+
+`RoomTextureDump` exists because repainting a room means matching the UV layout the game actually
+uses; its output is the template for that. It is never shipped with either mod.
 
 ## What was learned about the game
 
