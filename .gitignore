@@ -12,3 +12,5 @@ Thumbs.db
 desktop.ini
 tools/RoomTextureDump/build/
 tools/SaveBackup/build/
+VaultAdmin/build/
+VaultAdmin/dist/

@@ -1,0 +1,67 @@
+schema: spec-driven
+
+context: |
+  Vault Admin — a BepInEx mod for Fallout Shelter (Steam PC, v2.5.1, Unity 6000.0.58, Mono).
+  A debug panel built INTO the game's own interface, able to create dwellers, weapons and pets
+  with full control over every attribute the game holds.
+
+  Stack and build
+    C# targeting the Unity Mono profile. No .NET SDK: compiled with
+    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe using /nostdlib+ /noconfig against the
+    game's own assemblies in FalloutShelter_Data\Managed. BepInEx 5.4.23.5 + HarmonyX 2.9.
+    Build with .\build.ps1; it reads PluginVersion out of the source, so the version number exists
+    in exactly one place.
+
+  The single most important constraint
+    The agent cannot run the game or see the screen. Anything needing a running game costs a round
+    trip with the user. Verify everything possible against the assemblies, the save file and the
+    compiled DLL first; batch what genuinely needs a launch.
+
+  The UI must be part of the game
+    Not an IMGUI overlay drawn on top. The panel is built from the game's own NGUI widgets —
+    UIAtlas, UISprite, UILabel, UIButton, UIPanel — parented into the game's UI hierarchy so it
+    looks and behaves like the rest of the interface.
+
+  Danger
+    This mod writes to the player's save. Writing an id or enum value the base game does not know
+    is how a save stops loading. Every value the panel offers must come from the game's own tables;
+    offer a picker over what exists, never a free-text id.
+
+  What is already known about this game
+    Saves: base64 -> AES-256-CBC -> JSON. scratchpad/fslib.py has load(), save(), the key and IV.
+    Saves live in %LocalAppData%\FalloutShelter\.
+    Lunchboxes are not a resource: they are LunchBoxesByType plus LunchBoxesCount.
+    Legacy UnityEngine.Input throws; the game uses the new Input System.
+    ParameterDataMgr.Instance holds room data; GameParameters.Instance.Resources maps resources to
+    icons, by bit flag, and a miss silently returns an unrelated sprite.
+    ../docs/room-visuals-findings.md and ../CapsFoundry/README.md hold the rest.
+
+  Tools already in the repo
+    ../tools/ildasm.ps1 disassembles a method. ../tools/findcallers.ps1 finds callers.
+    ../tools/SaveBackup is a dev-only plugin that copies saves at game start; it stays installed
+    for this entire project and is never shipped.
+
+rules:
+  proposal:
+    - State what cannot be verified without a running game, and say so explicitly.
+    - Name the game types and methods the change depends on, and how their existence was confirmed.
+    - Include a Non-goals section.
+  tasks:
+    - Every task must be checkable by the agent alone, or explicitly marked as needing a launch.
+    - Tasks that write to a save must be preceded by a task that proves the write round-trips.
+  spec:
+    - Requirements describe observable behaviour in the game, not implementation.
+    - Every requirement that writes data states what happens when the mod is later removed.
+
+operations:
+  apply:
+    guidance:
+      - Never trust a build script's success line. Read the installed DLL back and check its size,
+        its version, and a string only the new build contains.
+      - The game must be closed before installing. The build script refuses otherwise.
+      - Confirm zero compiler errors and zero warnings before moving on.
+      - Nothing goes in Update that is not bounded. No scans of all loaded objects per frame.
+  archive:
+    guidance:
+      - Record anything newly learned about the game in the repo, not only in the change.
+      - A save written by this mod must still load with the mod removed before a change is archived.
