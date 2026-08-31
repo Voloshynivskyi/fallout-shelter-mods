@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0
+
+Grants pets, with a name, a bonus and a value of your choosing.
+
+- Every pet the game holds, read from its own catalogue at runtime.
+- Before granting: a **name**, a **bonus** picked from all 37 effects the game defines, and a
+  **value**. An empty name keeps whatever the game generated.
+- Creation follows the game's own sequence, disassembled from `GenerateRandomPet`: construct the
+  item, let the game generate the pet's unique data, and only then overwrite the three chosen
+  fields. Anything the panel does not offer keeps whatever the game put there.
+
+### Why pets can be customised when weapons cannot
+
+Because the save has somewhere to put it. A real vault stores a pet like this:
+
+```json
+{ "id": "husky_c", "type": "Pet",
+  "extraData": { "uniqueName": "Biba", "bonus": "FasterWastelandReturnSpeed", "bonusValue": 1.25 } }
+```
+
+Three fields, exactly the three the panel writes. A weapon in the same save has no `extraData` at
+all — which is the whole reason weapon stats are not offered.
+
+Bonus values are left unclamped deliberately: pets already in that vault carry values from 1.25 to
+95.0, so there is no sensible range to enforce.
+
 ## 0.4.0
 
 Every item in the picker now shows its own picture.

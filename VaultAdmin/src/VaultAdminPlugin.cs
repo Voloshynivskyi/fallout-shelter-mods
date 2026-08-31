@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.4.0";
+        public const string PluginVersion = "0.5.0";
 
         internal static ManualLogSource Log;
 
@@ -46,7 +46,7 @@ namespace VaultAdmin
         // evidence needed to work out what it is failing at.
         private readonly HashSet<string> _reported = new HashSet<string>();
 
-        private Rect _window = new Rect(40f, 40f, 470f, 640f);
+        private Rect _window = new Rect(40f, 40f, 470f, 700f);
         private Vector2 _scroll;
 
         // EResource carries Lunchbox, MrHandy and PetCarrier, and granting them looks like the
@@ -75,6 +75,24 @@ namespace VaultAdmin
 
         // One atlas per family, resolved once. An atlas is a texture plus a table of rectangles.
         private readonly Dictionary<EItemType, UIAtlas> _atlases = new Dictionary<EItemType, UIAtlas>();
+
+        // Pets are the one item family that carries data of its own per copy, so they are the one
+        // the panel can genuinely customise. Weapons and outfits hold nothing per copy at all.
+        private sealed class PetEntry
+        {
+            public object Template;      // DwellerPetItem, held loosely: the catalogue is read by reflection
+            public string PetId;
+            public string Name;
+            public string Detail;
+        }
+
+        private List<PetEntry> _pets;
+        private Vector2 _petScroll;
+        private string _petName = "";
+        private string _petBonusValue = "10";
+        private int _petBonusIndex;
+        private static readonly EBonusEffect[] BonusEffects =
+            (EBonusEffect[])Enum.GetValues(typeof(EBonusEffect));
 
         private List<CatalogueEntry> _catalogue;
         private EItemType _family = EItemType.Weapon;
@@ -188,6 +206,8 @@ namespace VaultAdmin
             DrawBoxes();
             GUILayout.Space(8f);
             DrawItems();
+            GUILayout.Space(8f);
+            DrawPets();
             GUILayout.Space(8f);
             DrawDwellers();
             GUILayout.Space(8f);
@@ -449,6 +469,188 @@ namespace VaultAdmin
                 // A missing sprite leaves a gap. Hiding items that cannot be illustrated would be
                 // worse than a picker with a few blanks in it.
             }
+        }
+
+        /// <summary>
+        /// Reads the game's pet catalogue.
+        ///
+        /// Reached as Catalog.Instance.m_petsCustomizationData.PetItems — the route the game itself
+        /// takes in GenerateRandomPet. The field is public but its type does not resolve by name
+        /// from this assembly, so the list comes back through reflection.
+        /// </summary>
+        private void BuildPetCatalogue()
+        {
+            _pets = new List<PetEntry>();
+
+            try
+            {
+                Catalog catalog = Catalog.Instance;
+                if (catalog == null) { _pets = null; return; }
+
+                object customisation = catalog.m_petsCustomizationData;
+                if (customisation == null) { _pets = null; return; }
+
+                object list = ReadAny(customisation, "PetItems");
+                System.Collections.IEnumerable items = list as System.Collections.IEnumerable;
+                if (items == null)
+                {
+                    ReportOnce("petlist", "The pet catalogue is not a list this build understands.");
+                    return;
+                }
+
+                foreach (object template in items)
+                {
+                    if (template == null) continue;
+                    try
+                    {
+                        string id = ReadMember(template, "PetId");
+                        if (string.IsNullOrEmpty(id)) continue;
+
+                        PetEntry entry = new PetEntry();
+                        entry.Template = template;
+                        entry.PetId = id;
+
+                        string label = ReadMember(template, "BaseName");
+                        entry.Name = string.IsNullOrEmpty(label) ? id : label;
+
+                        object type = ReadAny(template, "Type");
+                        object breed = ReadAny(template, "Breed");
+                        entry.Detail = (type == null ? "?" : type.ToString()) + " / " +
+                                       (breed == null ? "?" : breed.ToString());
+
+                        _pets.Add(entry);
+                    }
+                    catch { }
+                }
+
+                Log.LogInfo("Pet catalogue read from the game: " + _pets.Count + " pets.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not read the pet catalogue: " + e.Message);
+            }
+        }
+
+        private void DrawPets()
+        {
+            GUILayout.Label("Pets");
+
+            if (_pets == null) BuildPetCatalogue();
+            if (_pets == null) { GUILayout.Label("    catalogue unavailable"); return; }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Name", GUILayout.Width(44f));
+            _petName = GUILayout.TextField(_petName == null ? "" : _petName, GUILayout.Width(140f));
+            GUILayout.Label("Value", GUILayout.Width(40f));
+            _petBonusValue = GUILayout.TextField(_petBonusValue == null ? "" : _petBonusValue, GUILayout.Width(50f));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Bonus", GUILayout.Width(44f));
+            if (GUILayout.Button("<", GUILayout.Width(24f)))
+                _petBonusIndex = (_petBonusIndex - 1 + BonusEffects.Length) % BonusEffects.Length;
+            GUILayout.Label(BonusEffects[_petBonusIndex].ToString(), GUILayout.Width(180f));
+            if (GUILayout.Button(">", GUILayout.Width(24f)))
+                _petBonusIndex = (_petBonusIndex + 1) % BonusEffects.Length;
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label("    An empty name keeps the one the game generates.");
+
+            _petScroll = GUILayout.BeginScrollView(_petScroll, GUILayout.Height(140f));
+            int shown = 0;
+            for (int i = 0; i < _pets.Count && shown < MaxRowsShown; i++)
+            {
+                PetEntry entry = _pets[i];
+                if (_filter.Length > 0 &&
+                    entry.Name.IndexOf(_filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                shown++;
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(entry.Name + "  (" + entry.Detail + ")", GUILayout.Width(300f));
+                if (GUILayout.Button("Grant", GUILayout.Width(60f))) GrantPet(entry);
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndScrollView();
+        }
+
+        /// <summary>
+        /// Creates a pet the way the game creates one, then overwrites the three fields the panel
+        /// offers.
+        ///
+        /// The order is the point. Letting GenerateRandomData run first means everything it fills
+        /// in stays filled in, and what lands in the save is a pet the game built with three fields
+        /// changed — not a record assembled by this mod and hoped over.
+        /// </summary>
+        private void GrantPet(PetEntry entry)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded || vault.Inventory == null) return;
+
+                if (vault.Inventory.EmptySpace() <= 0)
+                {
+                    Log.LogWarning("The inventory is full; " + entry.Name + " was not granted.");
+                    return;
+                }
+
+                DwellerItem item = new DwellerItem(EItemType.Pet, entry.PetId);
+
+                object unique = InvokeGenerateRandomData(entry.Template);
+                if (unique == null)
+                {
+                    Log.LogWarning("The game did not generate data for " + entry.Name + "; nothing granted.");
+                    return;
+                }
+
+                PetUniqueData data = unique as PetUniqueData;
+                if (data != null)
+                {
+                    if (!string.IsNullOrEmpty(_petName)) data.Name = _petName;
+
+                    data.Bonus = BonusEffects[_petBonusIndex];
+
+                    float value;
+                    if (float.TryParse(_petBonusValue, System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out value))
+                        data.BonusValue = value;
+                }
+
+                item.ExtraData = unique as ItemExtraData;
+                vault.Inventory.AddItem(item, false, false);
+
+                Log.LogInfo("Granted pet " + entry.Name + " ('" + entry.PetId + "') with bonus " +
+                            BonusEffects[_petBonusIndex] + " " + _petBonusValue + ".");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Granting pet " + entry.Name + " failed: " + e.Message);
+            }
+        }
+
+        private static object InvokeGenerateRandomData(object template)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            MethodInfo method = template.GetType().GetMethod("GenerateRandomData", Flags);
+            if (method == null) return null;
+
+            // The game passes null for the Random, so this does too.
+            return method.Invoke(template, new object[] { null });
+        }
+
+        /// <summary>Reads any member, of any type, by name. The string-only helper cannot do enums.</summary>
+        private static object ReadAny(object target, string member)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = target.GetType();
+
+            PropertyInfo prop = t.GetProperty(member, Flags);
+            if (prop != null) return prop.GetValue(target, null);
+
+            FieldInfo field = t.GetField(member, Flags);
+            if (field != null) return field.GetValue(target);
+
+            return null;
         }
 
         private void GrantItem(CatalogueEntry entry)

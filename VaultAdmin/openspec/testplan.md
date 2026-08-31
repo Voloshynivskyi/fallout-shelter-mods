@@ -209,3 +209,32 @@ matched and that the list was cut.
 Weapons, outfits and junk each use a different atlas and a differently-named sprite field, so all
 three are worth a glance. A whole family with no pictures means that family's atlas was not reached;
 a scattered blank here and there is expected and harmless.
+
+## Batch 5 — add-pet-grants
+
+### 20. The pet catalogue
+
+- [ ] Open the panel, look at the **Pets** section.
+
+**Expect** in the log, once: `Pet catalogue read from the game: N pets.`
+
+### 21. A customised pet
+
+- [ ] Type a name, step the bonus to something recognisable such as `CapsBoost`, set the value to
+      `50`, and grant a pet.
+- [ ] Open the pet in the inventory.
+
+**Expect** exactly that name, that bonus and that value on the card.
+
+The save stores these as `uniqueName`, `bonus` and `bonusValue`, and real pets in this vault already
+carry values from 1.25 to 95, so an odd number is not a problem — a *wrong* one is.
+
+### 22. The bonus works
+
+- [ ] Equip the pet on a dweller and check the effect applies.
+
+### 23. Survives the mod being removed
+
+- [ ] Save and quit, rename the DLL to `.off`, start, load.
+
+**Expect** the pet still there, still named, still carrying its bonus.
