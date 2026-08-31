@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.7.1";
+        public const string PluginVersion = "0.7.3";
 
         internal static ManualLogSource Log;
 
@@ -111,6 +111,10 @@ namespace VaultAdmin
             ESpecialStat.Charisma, ESpecialStat.Intelligence, ESpecialStat.Agility,
             ESpecialStat.Luck
         };
+
+        // Instance ids of the dwellers this session created, so the diagnostic can tell one of
+        // ours from one of the game's.
+        private readonly HashSet<int> _created = new HashSet<int>();
 
         private int _rarityIndex;
         private int _genderIndex;
@@ -850,7 +854,10 @@ namespace VaultAdmin
             }
             GUILayout.EndHorizontal();
 
+            GUILayout.BeginHorizontal();
             if (GUILayout.Button("Create dweller")) CreateDweller();
+            if (GUILayout.Button("Diagnose", GUILayout.Width(80f))) DiagnoseNewest();
+            GUILayout.EndHorizontal();
 
             GUILayout.Label("    Legendary — brings its own name, look and stats:");
             _legendScroll = GUILayout.BeginScrollView(_legendScroll, GUILayout.Height(90f));
@@ -940,6 +947,7 @@ namespace VaultAdmin
 
                 ApplySpecial(dweller);
                 SendToQueue(dweller);
+                _created.Add(dweller.GetInstanceID());
 
                 Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
                             " (" + Rarities[_rarityIndex] + ", level " + level + ") — waiting at the door.");
@@ -982,29 +990,125 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Puts the dweller in the queue at the vault door instead of dropping them into the vault.
+        /// Logs every condition that gates interaction with a dweller, for the one this mod made
+        /// last beside one that came from the game.
         ///
-        /// This does two things at once. It is what was asked for — a new arrival should be visible
-        /// and approved rather than simply appearing somewhere — and it is very likely why their
-        /// equipment slots did nothing.
+        /// Dweller.CanDoAction runs through several checks and returning false anywhere kills every
+        /// button on the dweller's card. Guessing which one fails has now cost three attempts, so
+        /// this reads them all and prints them side by side. The line that differs is the answer.
+        /// </summary>
+        private void DiagnoseNewest()
+        {
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                if (manager == null || manager.Dwellers == null || manager.Dwellers.Count == 0)
+                {
+                    Log.LogWarning("No dwellers to diagnose.");
+                    return;
+                }
+
+                Dweller mine = null;
+                Dweller theirs = null;
+
+                for (int i = 0; i < manager.Dwellers.Count; i++)
+                {
+                    Dweller d = manager.Dwellers[i];
+                    if (d == null) continue;
+                    if (_created.Contains(d.GetInstanceID())) { if (mine == null) mine = d; }
+                    else if (theirs == null) theirs = d;
+                }
+
+                if (mine == null)
+                {
+                    Log.LogWarning("Nothing created this session to compare; create a dweller first.");
+                    return;
+                }
+
+                Log.LogInfo("=== dweller gate comparison ===");
+                Log.LogInfo("  created by this mod : " + Describe(mine, manager));
+                Log.LogInfo("  made by the game    : " +
+                            (theirs == null ? "(none in the vault to compare against)" : Describe(theirs, manager)));
+                Log.LogInfo("  Any line that differs is what stops the interface working.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Diagnosing failed: " + e.Message);
+            }
+        }
+
+        private string Describe(Dweller d, DwellerManager manager)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append(Safe(d, "Name")).Append(" | ");
+            sb.Append("state=").Append(StateName(d)).Append(" | ");
+            sb.Append("canDoAction1=").Append(Try(delegate { return d.CanDoAction((EDwellerAction)1).ToString(); })).Append(" | ");
+            sb.Append("canBe3DSelected=").Append(Try(delegate { return manager.CanBe3DSelected(d).ToString(); })).Append(" | ");
+            sb.Append("canDoAnySelectionNow=").Append(Try(delegate { return manager.CanDoAnySelectionNow(d).ToString(); })).Append(" | ");
+            sb.Append("inWasteland=").Append(Try(delegate { return d.IsRegisteredInWasteland.ToString(); })).Append(" | ");
+            sb.Append("isChild=").Append(Try(delegate { return d.IsChild.ToString(); })).Append(" | ");
+            sb.Append("willBeEvicted=").Append(Field(d, "m_willBeEvicted")).Append(" | ");
+            sb.Append("savedRoomId=").Append(Field(d, "m_savedRoomId")).Append(" | ");
+            sb.Append("serializeId=").Append(Safe(d, "SerializeID")).Append(" | ");
+            sb.Append("assigned=").Append(Field(d, "m_assigned")).Append(" | ");
+            sb.Append("gameObjectActive=").Append(Try(delegate { return d.gameObject.activeInHierarchy.ToString(); }));
+            return sb.ToString();
+        }
+
+        private static string StateName(Dweller d)
+        {
+            object state = ReadAny(d, "m_currentState");
+            return state == null ? "<null>" : state.GetType().Name;
+        }
+
+        private static string Safe(Dweller d, string member)
+        {
+            object v = ReadAny(d, member);
+            return v == null ? "<null>" : v.ToString();
+        }
+
+        private static string Field(Dweller d, string member)
+        {
+            object v = ReadAny(d, member);
+            return v == null ? "<absent>" : v.ToString();
+        }
+
+        private delegate string Probe();
+
+        private static string Try(Probe probe)
+        {
+            try { return probe(); }
+            catch (Exception e) { return "<threw " + e.GetType().Name + ">"; }
+        }
+
+        /// <summary>
+        /// Settles a newly created dweller into the vault, at the door where new arrivals appear.
         ///
-        /// Dweller.CanDoAction, which gates every interaction, reads m_currentState. A dweller
-        /// straight out of CreateDweller has no state at all: not idling, not walking, not waiting.
-        /// SetWaitingApproval calls ChangeState with the waiting-approval state, so the dweller
-        /// finally is something rather than merely existing.
+        /// A dweller straight out of CreateDweller has no state at all — not idling, not walking,
+        /// not waiting — which is a condition the game never produces by itself. Giving them one is
+        /// necessary. Giving them the *waiting for approval* one is not enough, and is worse than
+        /// idle: that state expects the entrance room to have registered them, and without it they
+        /// wait at a door that does not know they exist.
         /// </summary>
         private void SendToQueue(Dweller dweller)
         {
             try
             {
-                // The game's own sequence, from the IL of FakeWastelandRoom.OnHandleDwellerArrive:
-                // put the dweller into the shelter state, then either queue them for approval or,
-                // if they are already a wasteland regular, drop them straight to idle.
+                // Deliberately NOT SetWaitingApproval.
+                //
+                // Putting a dweller into the waiting-approval state left them stuck: the gate
+                // diagnostic showed every check passing — canDoAction, canBe3DSelected,
+                // canDoAnySelectionNow all true, identical to a dweller the game made — and the
+                // only difference was the state itself. Waiting for approval is half a mechanism:
+                // the other half is the entrance room registering the dweller through a
+                // DwellerWaitingPosition, which is what draws the button that lets them in. Setting
+                // the state without that registration produces someone waiting at a door that does
+                // not know they are there, so they can neither be admitted nor do anything else.
+                //
+                // This is the other branch of the game's own arrival code, the one for a dweller
+                // who needs no approval: shelter state, then idle.
                 dweller.ChangeState(dweller.ShelterState);
-
-                if (!dweller.IsRegisteredInWasteland) dweller.SetWaitingApproval();
-                else dweller.ChangeState(dweller.IdleState);
-
+                dweller.ChangeState(dweller.IdleState);
                 dweller.SetFacingRight(true);
             }
             catch (Exception e)
@@ -1073,6 +1177,7 @@ namespace VaultAdmin
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
                 SendToQueue(dweller);
+                _created.Add(dweller.GetInstanceID());
 
                 Log.LogInfo("Created legendary dweller " + label + " — waiting at the door.");
             }
