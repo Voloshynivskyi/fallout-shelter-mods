@@ -28,7 +28,7 @@ powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' 
 
 ### 2. Enabled
 
-- [x] `Enabled = true`set in `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg`.
+- [x] `Enabled = true` set in `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg`.
 - [ ] Restart the game.
 
 **Expect**:
