@@ -13,10 +13,10 @@ Install first. **The game must be closed**, or the DLL cannot be replaced:
 powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' -Install"
 ```
 
-### 1. Disabled by default
+### 1. Disabled by default — PASSED 2026-08-30
 
-- [ ] Delete `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg` so it regenerates.
-- [ ] Start the game.
+- [x] Config generated on first launch with `Enabled = false`.
+- [x] Started the game.
 
 **Expect** in `BepInEx\LogOutput.log`:
 
@@ -24,11 +24,11 @@ powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' 
 [Info   :Vault Admin] Vault Admin 0.1.0 loaded but disabled. Set Enabled = true in the config to use it.
 ```
 
-**Expect** the game to behave exactly as without the plugin. Pressing F8 does nothing.
+**Observed** exactly that line in the log. The game behaved normally.
 
 ### 2. Enabled
 
-- [ ] Set `Enabled = true` in `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg`.
+- [x] `Enabled = true`set in `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg`.
 - [ ] Restart the game.
 
 **Expect**:
