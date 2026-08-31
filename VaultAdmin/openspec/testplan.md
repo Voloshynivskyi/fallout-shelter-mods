@@ -271,13 +271,13 @@ created.
 
 **Expect** every created dweller present, named, with their stats intact.
 
-## Batch 7 — add-ui-survey
+## Batch 7 — add-ui-survey — PASSED
 
 ### 28. The interface survey
 
-- [ ] Load a vault, open the panel, press **Survey UI** (top of the window, beside the note about
+- [x] Load a vault, open the panel, press **Survey UI** (top of the window, beside the note about
       grants).
-- [ ] Quit and send the whole `BepInEx\LogOutput.log`.
+- [x] Quit and send the whole `BepInEx\LogOutput.log`.
 
 **Expect** a block between `=== interface survey ===` and `=== end of survey ===` listing the UI
 roots, the visible panels with their depths, the game's own windows, the atlases and the fonts.
@@ -292,3 +292,34 @@ where a new one would belong.
 
 If the menu is one that opens rather than one always shown, **open it before pressing Survey UI**,
 so its buttons are on screen while the survey runs.
+
+## Batch 8 — add-hud-button
+
+### 29. A button in the corner
+
+- [ ] Load a vault. Look at the **bottom-left corner**, beside the screenshot button.
+
+**Expect** a second button there, the same size and style, and `Placed a panel button in the vault
+HUD` in the log.
+
+- [ ] Press it.
+
+**Expect** the panel to open. Press again: it closes. **F8** still does the same.
+
+### 30. It has not eaten the screenshot button
+
+- [ ] Press the original screenshot button.
+
+**Expect** a screenshot, as before. The clone was stripped of what the original did, but the
+original itself must be untouched.
+
+### 31. Only ever one
+
+- [ ] Leave the vault to the main menu and come back. Look again.
+
+**Expect** exactly one panel button, not two.
+
+### 32. If it overlaps
+
+The two buttons may sit too close. `HudButtonOffsetX` in the config moves it; raise it and restart.
+Tell me the value that looks right and it becomes the default.

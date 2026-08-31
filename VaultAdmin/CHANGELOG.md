@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.10.0
+
+The panel now opens from a button in the game's own interface, in the bottom-left corner beside the
+screenshot button. The hotkey still works.
+
+- The button is **cloned** from the screenshot button rather than built. A widget renders as nothing
+  when its depth is below what it sits on, when its parent is wrong, when its atlas lacks the sprite
+  it names, or when its label has no font — and none of those produce an error, so from outside the
+  running game they are indistinguishable. A clone inherits every one of those from a button that
+  already works.
+- Whatever the original used the button for is stripped off the clone, and what was removed is
+  logged, so a button that does nothing can be told from one that still quietly takes screenshots.
+- Placed once however often the HUD is rebuilt, by looking for it by name first.
+- `ShowHudButton` turns it off; `HudButtonOffsetX` moves it if it sits too close to its neighbour.
+
+### Not the menu on the right
+
+That was the first request, and the survey ruled it out on two counts. No type in the assembly owns
+those buttons — the menu is assembled in the scene, so it can only be reached by path. And it
+already fills the height of the screen, so another entry crowds it. The bottom-left corner holds one
+button and is otherwise empty.
+
+### Found by looking rather than guessing
+
+The paths came from the survey added in 0.9.x: one launch produced the UI roots, the anchor grid,
+every visible panel with its depth, and every button with its parent path. Reading the assembly for
+that menu had found nothing, because there was nothing in the assembly to find.
+
 ## 0.8.0
 
 Created dwellers now genuinely queue at the vault door, waiting to be let in.

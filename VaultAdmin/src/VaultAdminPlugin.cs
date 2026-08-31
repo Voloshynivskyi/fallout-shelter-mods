@@ -32,12 +32,14 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.9.1";
+        public const string PluginVersion = "0.10.0";
 
         internal static ManualLogSource Log;
 
         private static ConfigEntry<bool> Enabled;
         private static ConfigEntry<string> ToggleKey;
+        private static ConfigEntry<bool> ShowHudButton;
+        private static ConfigEntry<float> HudButtonOffsetX;
 
         private Key _toggleKey = Key.F8;
         private bool _panelOpen;
@@ -152,6 +154,14 @@ namespace VaultAdmin
                 "F8, Backquote, Insert and so on. An unrecognised name falls back to F8 with a " +
                 "warning rather than leaving the panel unreachable.");
 
+            ShowHudButton = Config.Bind("Interface", "ShowHudButton", true,
+                "Put a button in the bottom-left of the vault interface, beside the screenshot " +
+                "button, that opens this panel. The hotkey works either way.");
+
+            HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
+                "How far to the right of the screenshot button the panel button sits, in the " +
+                "interface's own units. Raise it if the two overlap.");
+
             ResolveToggleKey();
 
             Log.LogInfo(PluginName + " " + PluginVersion +
@@ -179,9 +189,131 @@ namespace VaultAdmin
             }
         }
 
+        // The name our button carries, which is also how it is found again. The HUD is rebuilt
+        // when a vault is reloaded, and a clone made each time would stack buttons on each other.
+        private const string HudButtonName = "VaultAdmin_PanelButton";
+
+        private const string CameraButtonPath =
+            "MainScene_Root/GUI/VaultHUDWindow/VaultHUDPanel/7 BottomLeft/BTN Camera";
+
+        private int _hudFrames;
+        private const int HudCheckInterval = 120;   // frames, about twice every two seconds
+        private bool _hudPathReported;
+
+        /// <summary>
+        /// Puts a button in the vault HUD that opens the panel, by cloning one the game built.
+        ///
+        /// An NGUI widget renders as nothing when its depth is below what it sits on, when its
+        /// parent is wrong, when its atlas lacks the sprite it names, or when its label has no
+        /// font — and none of those produce an error. A clone inherits all of it from a button that
+        /// already works, which is the only way to get those right without seeing the screen.
+        ///
+        /// Checked on a slow timer rather than once: the HUD does not exist at load and is rebuilt
+        /// whenever a vault is, so a single attempt would either be too early or would not survive.
+        /// </summary>
+        private void EnsureHudButton()
+        {
+            if (!ShowHudButton.Value) return;
+            if (++_hudFrames < HudCheckInterval) return;
+            _hudFrames = 0;
+
+            try
+            {
+                GameObject source = GameObject.Find(CameraButtonPath);
+                if (source == null)
+                {
+                    // Not an error: outside a vault this part of the interface simply is not there.
+                    if (!_hudPathReported)
+                    {
+                        _hudPathReported = true;
+                        Log.LogInfo("The HUD button host is not present yet. Looking for: " + CameraButtonPath);
+                    }
+                    return;
+                }
+
+                Transform parent = source.transform.parent;
+                if (parent == null) return;
+                if (parent.Find(HudButtonName) != null) return;   // already placed
+
+                GameObject clone = UnityEngine.Object.Instantiate(source);
+                clone.name = HudButtonName;
+
+                // false, because keeping world position puts the clone somewhere off screen: NGUI
+                // lays out in its own scaled space, not the world's.
+                clone.transform.SetParent(parent, false);
+                clone.transform.localPosition =
+                    source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
+                clone.transform.localRotation = source.transform.localRotation;
+                clone.transform.localScale = source.transform.localScale;
+
+                StripClonedBehaviour(clone);
+                WireButton(clone);
+
+                Log.LogInfo("Placed a panel button in the vault HUD, beside the screenshot button.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not place the HUD button: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Removes what the clone brought with it that is not ours.
+        ///
+        /// A clone carries every component the original had, including whatever takes the
+        /// screenshot. What is removed gets logged, so a button that does nothing can be told from
+        /// one that still quietly does the old thing.
+        /// </summary>
+        private void StripClonedBehaviour(GameObject clone)
+        {
+            MonoBehaviour[] parts = clone.GetComponentsInChildren<MonoBehaviour>(true);
+            System.Text.StringBuilder removed = new System.Text.StringBuilder();
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                MonoBehaviour part = parts[i];
+                if (part == null) continue;
+
+                // Everything that makes it look and behave like a button stays; anything else the
+                // original used it for goes.
+                if (part is UIButton || part is UIWidget || part is UIPanel ||
+                    part is UISprite || part is UILabel || part is UITexture ||
+                    part is UIButtonColor || part is UIButtonScale) continue;
+
+                if (removed.Length > 0) removed.Append(", ");
+                removed.Append(part.GetType().Name);
+                UnityEngine.Object.Destroy(part);
+            }
+
+            if (removed.Length > 0) Log.LogInfo("Stripped from the cloned button: " + removed);
+        }
+
+        private void WireButton(GameObject clone)
+        {
+            UIButton button = clone.GetComponent<UIButton>();
+            if (button == null)
+            {
+                Log.LogWarning("The cloned button has no UIButton; it will not respond.");
+                return;
+            }
+
+            if (button.onClick != null) button.onClick.Clear();
+            else button.onClick = new List<EventDelegate>();
+
+            button.onClick.Add(new EventDelegate(TogglePanel));
+        }
+
+        /// <summary>Opens or closes the panel. Shared by the hotkey and the HUD button.</summary>
+        public void TogglePanel()
+        {
+            _panelOpen = !_panelOpen;
+        }
+
         private void Update()
         {
             if (!Enabled.Value) return;
+
+            EnsureHudButton();
 
             try
             {
@@ -191,7 +323,7 @@ namespace VaultAdmin
                 if (keyboard == null) return;
 
                 KeyControl key = keyboard[_toggleKey];
-                if (key != null && key.wasPressedThisFrame) _panelOpen = !_panelOpen;
+                if (key != null && key.wasPressedThisFrame) TogglePanel();
             }
             catch (Exception e)
             {

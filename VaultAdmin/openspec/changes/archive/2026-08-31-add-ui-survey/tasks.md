@@ -22,16 +22,16 @@
 
 - [x] 3.1 Compile: zero errors, zero warnings
 - [x] 3.2 Still no Harmony patch targets
-- [ ] 3.3 Markers present in the installed DLL, all three decodings, with controls
-- [ ] 3.4 Hash matches the build output
+- [x] 3.3 Markers present in the installed DLL, all three decodings, with controls
+- [x] 3.4 Hash matches the build output
 - [x] 3.5 Grep: the survey creates no object and adds no component
 
 ## 4. Batch for a launch
 
-- [ ] 4.1 **[launch]** Run the survey in a loaded vault and keep the log
-- [ ] 4.2 Append to `openspec/testplan.md`
+- [x] 4.1 **[launch]** Run the survey in a loaded vault and keep the log
+- [x] 4.2 Append to `openspec/testplan.md`
 
 ## 5. Close out
 
-- [ ] 5.1 Record what the survey found in the repo, so the next change is built on it
-- [ ] 5.2 After the batch passes: archive
+- [x] 5.1 Record what the survey found in the repo, so the next change is built on it
+- [x] 5.2 After the batch passes: archive
