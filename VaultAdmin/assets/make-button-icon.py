@@ -1,12 +1,10 @@
 """Draws the 256x256 button icon, with no image library.
 
-The style is taken from the game's own HUD icons rather than invented: one bright green, a thick
-outline, and solid fills instead of outlines-with-detail. Their terminal icon fills its square
-almost edge to edge and its screen is a solid block, which is why it still reads when the HUD
-scales it down to fifty pixels. Thin lines and empty space do not survive that.
+Deliberately blunt. The HUD scales this to about fifty pixels, so anything smaller than a few
+pixels at full size disappears entirely: a stand, a bezel, thin outlines. What survives is a big
+rectangle, a handful of thick bars, and block capitals.
 
-Three colours, as the game uses: bright green, a darker green for depth, and the dark punched
-through where a shape needs separating from another.
+Two greens and a dark, matching the game's own HUD icons.
 """
 import io
 import os
@@ -15,9 +13,9 @@ import zlib
 
 S = 256
 CLEAR = (0, 0, 0, 0)
-GREEN = (61, 240, 61, 255)    # the HUD green
-DEEP = (22, 120, 22, 255)     # shadow side, as the game shades its icons
-DARK = (12, 30, 12, 255)      # punched through, separating shapes
+GREEN = (62, 255, 62, 255)    # the HUD green, brighter than it first looked against the rock
+DEEP = (26, 150, 26, 255)     # shadow, only used under the caption
+DARK = (10, 26, 10, 255)      # the screen behind the lines
 
 px = [[CLEAR] * S for _ in range(S)]
 
@@ -44,27 +42,27 @@ def rounded(x0, y0, x1, y1, r, colour):
                 px[y][x] = colour
 
 
-# ---- the monitor, filling nearly the whole square ----
-rounded(6, 2, 250, 166, 22, DEEP)       # outer body, shadow tone
-rounded(10, 2, 246, 160, 20, GREEN)     # lit face, offset up-left as the game shades
+# ---- the screen: one rectangle, a thick frame, nothing else ----
+SCREEN_TOP = 6
+SCREEN_BOTTOM = 172
+FRAME = 16
 
-rounded(28, 20, 228, 138, 12, DARK)     # bezel cut through
-rounded(36, 28, 220, 130, 8, GREEN)     # SCREEN: solid, not lines
+rounded(4, SCREEN_TOP, 252, SCREEN_BOTTOM, 16, GREEN)
+rounded(4 + FRAME, SCREEN_TOP + FRAME, 252 - FRAME, SCREEN_BOTTOM - FRAME, 8, DARK)
 
-# a single dark prompt bar keeps it reading as a terminal without going thin
-rect(52, 104, 116, 118, DARK)
-rect(126, 104, 152, 118, DARK)
+# ---- lines of "output": thick enough to still be there at fifty pixels ----
+BAR_LEFT = 40
+BAR_HEIGHT = 18
+for (top, width) in ((46, 150), (82, 176), (118, 96)):
+    rect(BAR_LEFT, top, BAR_LEFT + width, top + BAR_HEIGHT, GREEN)
 
-# ---- stand and base, chunky enough to survive shrinking ----
-rect(104, 166, 152, 184, DEEP)
-rect(110, 166, 146, 180, GREEN)
-rounded(60, 182, 196, 202, 8, DEEP)
-rounded(64, 182, 192, 198, 7, GREEN)
+# a caret after the short last line, so it reads as a terminal rather than a paragraph
+rect(BAR_LEFT + 112, 118, BAR_LEFT + 148, 118 + BAR_HEIGHT, GREEN)
 
 
 # ---- caption ----
 # A five-by-seven block font, only the letters this word needs: there is no font to measure here,
-# and block capitals are the only kind that survive being scaled to a fifty-pixel button.
+# and block capitals are the only kind that survive being scaled down this far.
 GLYPHS = {
     "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
     "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
@@ -87,13 +85,15 @@ def text(word, left, top, scale, colour):
 
 
 WORD = "ADMIN"
-SCALE = 5
+SCALE = 8            # 9 overflowed the canvas; the assertion below is what caught it
 width = (5 + 1) * SCALE * len(WORD) - SCALE
-# 7 rows at this scale is 35 pixels, so the top must sit at 256 - 35 - a margin.
-CAPTION_TOP = 212
-text(WORD, (S - width) // 2 + 2, CAPTION_TOP + 2, SCALE, DEEP)
+CAPTION_TOP = 186
+
+assert width <= S, "the caption is wider than the canvas"
+assert CAPTION_TOP + 7 * SCALE <= S, "the caption would run off the bottom"
+
+text(WORD, (S - width) // 2 + 3, CAPTION_TOP + 3, SCALE, DEEP)
 text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, GREEN)
-assert CAPTION_TOP + 7 * SCALE + 2 <= S, "the caption would run off the bottom of the canvas"
 
 
 def write_png(path):
