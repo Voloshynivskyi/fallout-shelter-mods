@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0
+
+Created dwellers now queue at the vault door instead of appearing inside.
+
+Asked for so a new arrival can be seen and approved rather than simply turning up somewhere. It also
+looks like the answer to the equipment slots, which 0.6.2 did not fix.
+
+`Dweller.CanDoAction` gates every interaction with a dweller, and among its checks it reads
+`m_currentState`. A dweller straight out of `CreateDweller` has no state at all — not idling, not
+walking, not waiting. It exists without doing anything, which is a condition the game never produces
+on its own and the interface is not written for.
+
+`SetWaitingApproval()` calls `ChangeState` with the waiting-approval state, so the dweller becomes
+something rather than merely existing — and lands in the queue at the door, which is where a
+newcomer belongs anyway.
+
+Whether this is the whole reason the slots were dead is not yet proven; the gate has several
+conditions and this is the one that was clearly wrong.
+
 ## 0.6.2
 
 Two bugs found by playing, both mine, both traced back to code.

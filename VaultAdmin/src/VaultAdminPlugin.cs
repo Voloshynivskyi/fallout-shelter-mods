@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.6.2";
+        public const string PluginVersion = "0.7.0";
 
         internal static ManualLogSource Log;
 
@@ -930,9 +930,10 @@ namespace VaultAdmin
                 if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
 
                 ApplySpecial(dweller);
+                SendToQueue(dweller);
 
                 Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
-                            " (" + Rarities[_rarityIndex] + ", level " + level + ").");
+                            " (" + Rarities[_rarityIndex] + ", level " + level + ") — waiting at the door.");
             }
             catch (Exception e)
             {
@@ -968,6 +969,30 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Could not register the dweller as active: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts the dweller in the queue at the vault door instead of dropping them into the vault.
+        ///
+        /// This does two things at once. It is what was asked for — a new arrival should be visible
+        /// and approved rather than simply appearing somewhere — and it is very likely why their
+        /// equipment slots did nothing.
+        ///
+        /// Dweller.CanDoAction, which gates every interaction, reads m_currentState. A dweller
+        /// straight out of CreateDweller has no state at all: not idling, not walking, not waiting.
+        /// SetWaitingApproval calls ChangeState with the waiting-approval state, so the dweller
+        /// finally is something rather than merely existing.
+        /// </summary>
+        private void SendToQueue(Dweller dweller)
+        {
+            try
+            {
+                dweller.SetWaitingApproval();
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not put the dweller in the queue: " + e.Message);
             }
         }
 
@@ -1030,7 +1055,9 @@ namespace VaultAdmin
 
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
-                Log.LogInfo("Created legendary dweller " + label + ".");
+                SendToQueue(dweller);
+
+                Log.LogInfo("Created legendary dweller " + label + " — waiting at the door.");
             }
             catch (Exception e)
             {
