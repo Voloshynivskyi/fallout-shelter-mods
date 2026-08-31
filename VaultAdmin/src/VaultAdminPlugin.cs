@@ -143,7 +143,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.21.0";
+        public const string PluginVersion = "0.22.0";
 
         internal static ManualLogSource Log;
 
@@ -964,7 +964,9 @@ namespace VaultAdmin
         private const int Margin = 20;
 
         private int _cursorY;
+        private int _scrollTop;
         private int _refreshFrames;
+        private UIAtlas _menuAtlas;
 
         private enum Tab { Resources, Dwellers, Things }
 
@@ -1051,6 +1053,155 @@ namespace VaultAdmin
             }
         }
 
+        // ---- scrolling ----
+
+        // The window is a third of the screen and the lists are longer than it. NGUI scrolls with a
+        // panel that clips and a scroll view that moves it; both live on the same object, which is
+        // what UIScrollView.Awake expects to find.
+        private UIScrollView BeginScroll(Transform page, int width, int top, int bottom,
+                                         out Transform content)
+        {
+            int viewHeight = Mathf.Max(80, top - bottom);
+            int centre = bottom + viewHeight / 2;
+
+            GameObject go = new GameObject("Scroll");
+            go.layer = page.gameObject.layer;
+            go.transform.SetParent(page, false);
+            go.transform.localPosition = new Vector3(0f, centre, 0f);
+            go.transform.localScale = Vector3.one;
+
+            // Built inactive so Awake sees these settings rather than the defaults. Left to itself
+            // the scroll view chooses ConstrainButDontClip, which is a list that runs off the
+            // window exactly as before.
+            go.SetActive(false);
+
+            UIPanel panel = go.AddComponent<UIPanel>();
+            panel.depth = WindowDepth + 1;
+            panel.clipping = UIDrawCall.Clipping.SoftClip;
+            panel.baseClipRegion = new Vector4(0f, 0f, width + 8, viewHeight);
+            panel.clipSoftness = new Vector2(4f, 8f);
+
+            UIScrollView view = go.AddComponent<UIScrollView>();
+            view.movement = UIScrollView.Movement.Vertical;
+            view.dragEffect = UIScrollView.DragEffect.MomentumAndSpring;
+            view.scrollWheelFactor = 0.4f;
+            view.restrictWithinPanel = true;
+            view.disableDragIfFits = true;
+
+            go.SetActive(true);
+
+            content = go.transform;
+            _scrollTop = viewHeight / 2 - 6;
+            _cursorY = _scrollTop;
+            return view;
+        }
+
+        /// <summary>
+        /// Gives the scroll view something to be dragged by.
+        ///
+        /// NGUI routes drags and the wheel through colliders, so a list of plates and labels is
+        /// inert. One collider over the whole content catches the empty space, and every collider
+        /// already there — the buttons — is taught to pass a drag along rather than swallow it.
+        /// </summary>
+        private void EndScroll(UIScrollView view, int width)
+        {
+            int used = Mathf.Max(40, _scrollTop - _cursorY);
+
+            GameObject area = new GameObject("DragArea");
+            area.layer = view.gameObject.layer;
+            area.transform.SetParent(view.transform, false);
+            // Behind the rows: NGUI takes the nearest collider, and this one must not take the
+            // presses meant for the buttons.
+            area.transform.localPosition = new Vector3(0f, _scrollTop - used / 2, 20f);
+            area.transform.localScale = Vector3.one;
+
+            BoxCollider box = area.AddComponent<BoxCollider>();
+            box.size = new Vector3(width, used, 1f);
+            box.isTrigger = true;
+
+            BoxCollider[] colliders = view.GetComponentsInChildren<BoxCollider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i].GetComponent<UIDragScrollView>() != null) continue;
+                UIDragScrollView drag = colliders[i].gameObject.AddComponent<UIDragScrollView>();
+                drag.scrollView = view;
+            }
+
+            view.ResetPosition();
+        }
+
+        // ---- icons from the game's own atlas ----
+
+        /// <summary>
+        /// The atlas the interface's own icons live in.
+        ///
+        /// Taken off the cloned HUD button, which carries the original sprite: that button is drawn,
+        /// so its atlas is one that resolves. Reading it out of Resources by name would find several.
+        /// </summary>
+        private UIAtlas MenuAtlas()
+        {
+            if (_menuAtlas != null) return _menuAtlas;
+            if (_hudButton == null) return null;
+
+            UISprite[] sprites = _hudButton.GetComponentsInChildren<UISprite>(true);
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                if (sprites[i] != null && sprites[i].atlas != null)
+                {
+                    _menuAtlas = sprites[i].atlas;
+                    Log.LogInfo("Icons will come from atlas '" + _menuAtlas.name + "'.");
+                    break;
+                }
+            }
+            return _menuAtlas;
+        }
+
+        private static string ResourceSprite(EResource resource)
+        {
+            switch (resource)
+            {
+                case EResource.Nuka:            return "Icon_nukacapsPlain";
+                case EResource.Food:            return "Icon_foodPlain";
+                case EResource.Energy:          return "Icon_energyPlain";
+                case EResource.Water:           return "Icon_WaterPlain";
+                case EResource.StimPack:        return "Icon_StimpackPlain";
+                case EResource.RadAway:         return "Icon_RadawayPlain";
+                case EResource.NukaColaQuantum: return "Icon_NukaColaQuantum";
+                default:                        return null;
+            }
+        }
+
+        private static string BoxSprite(ELunchBoxType type)
+        {
+            switch (type)
+            {
+                case ELunchBoxType.Regular:         return "Icon_LunchboxesPlain";
+                case ELunchBoxType.MrHandy:         return "Icon_MrHandyCollect";
+                case ELunchBoxType.PetCarrier:      return "PetCarrier";
+                case ELunchBoxType.NukaColaQuantum: return "Icon_NukaColaQuantum";
+                default:                            return null;
+            }
+        }
+
+        private void AddIcon(Transform parent, string name, string sprite, int x, int y, int size)
+        {
+            UIAtlas atlas = MenuAtlas();
+            if (atlas == null || string.IsNullOrEmpty(sprite)) return;
+
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UISprite drawn = go.AddComponent<UISprite>();
+            drawn.atlas = atlas;
+            drawn.spriteName = sprite;
+            drawn.width = size;
+            drawn.height = size;
+            drawn.depth = 3;
+        }
+
         private void BuildTabs(Transform parent)
         {
             Tab[] tabs = { Tab.Resources, Tab.Dwellers, Tab.Things };
@@ -1131,19 +1282,28 @@ namespace VaultAdmin
         /// </summary>
         private void BuildResourcesPage(Transform parent)
         {
-            _cursorY = _windowHeight / 2 - 96;     // below the title and the tab bar
             int contentWidth = _windowWidth - Margin * 2;
+
+            Transform content;
+            UIScrollView view = BeginScroll(parent, contentWidth, ContentTop(), ContentBottom(),
+                                            out content);
 
             foreach (EResource resource in Enum.GetValues(typeof(EResource)))
             {
                 if (resource == EResource.None || resource == EResource.Count) continue;
                 if (Array.IndexOf(NotRealResources, resource) >= 0) continue;
-                AddResourceRow(parent, resource, contentWidth);
+                AddResourceRow(content, resource, contentWidth);
             }
 
-            AddHeader(parent, "BOXES", contentWidth);
-            foreach (ELunchBoxType type in BoxTypes) AddBoxRow(parent, type, contentWidth);
+            AddHeader(content, "BOXES", contentWidth);
+            foreach (ELunchBoxType type in BoxTypes) AddBoxRow(content, type, contentWidth);
+
+            EndScroll(view, contentWidth);
         }
+
+        // Below the title and the tab bar; above the close button.
+        private int ContentTop() { return _windowHeight / 2 - 86; }
+        private int ContentBottom() { return -_windowHeight / 2 + 70; }
 
         // ---- the items and pets page ----
 
@@ -1186,7 +1346,7 @@ namespace VaultAdmin
 
         private void BuildThingsPage(Transform parent)
         {
-            _cursorY = _windowHeight / 2 - 96;
+            _cursorY = ContentTop();
             int width = _windowWidth - Margin * 2;
 
             _familyLabel = AddPickerRow(parent, width, "FAMILY",
@@ -1450,10 +1610,12 @@ namespace VaultAdmin
         private readonly UILabel[] _specialLabels = new UILabel[7];
         private int _dwellerLevelValue = 1;
 
-        private void BuildDwellersPage(Transform parent)
+        private void BuildDwellersPage(Transform page)
         {
-            _cursorY = _windowHeight / 2 - 96;
             int width = _windowWidth - Margin * 2;
+
+            Transform parent;
+            UIScrollView view = BeginScroll(page, width, ContentTop(), ContentBottom(), out parent);
 
             AddHeader(parent, "NAME", width);
 
@@ -1509,6 +1671,9 @@ namespace VaultAdmin
             MakeLabel(parent, "DwellerNote",
                       "Arrives at the vault door, waiting to be let in.",
                       0, _cursorY, width, 26, Skin.Bright, 3);
+            _cursorY -= 26 + RowGap;
+
+            EndScroll(view, width);
         }
 
         /// <summary>A label, a value, and a pair of arrows — the game's own way of offering a choice.</summary>
@@ -1540,7 +1705,9 @@ namespace VaultAdmin
             go.transform.localPosition = new Vector3(x, y, 0f);
             go.transform.localScale = Vector3.one;
 
-            UILabel label = MakeLabel(go.transform, "Text", "", 0, 0, width - 16, RowHeight - 8,
+            // The hint goes on the label, not on defaultText: UIInput.Init takes its placeholder
+            // from the label's text and overwrites whatever defaultText held.
+            UILabel label = MakeLabel(go.transform, "Text", hint, 0, 0, width - 16, RowHeight - 8,
                                       Skin.Bright, 3);
 
             // NGUI routes typing through a collider, exactly as it routes clicks.
@@ -1550,8 +1717,14 @@ namespace VaultAdmin
 
             UIInput input = go.AddComponent<UIInput>();
             input.label = label;
-            input.defaultText = hint;
             input.characterLimit = 24;
+
+            // This line is the whole reason the dwellers tab took the game down with it. UIInput.Start
+            // runs mValue.Replace(...) with no null check; on a component built here mValue is null,
+            // and the game's own inputs only escape it because a serialised field comes back as "".
+            // Nothing in the log said so — the crash reporter did.
+            input.value = "";
+
             return input;
         }
 
@@ -1596,64 +1769,94 @@ namespace VaultAdmin
             _cursorY -= 34 + RowGap;
         }
 
+        /// <summary>
+        /// One resource as a two-line cell: what it is and how much of it above, what can be done
+        /// about it below.
+        ///
+        /// A single line was written for a window twice this wide. At a third of the screen the
+        /// name, the figure and four buttons do not fit across, and squeezing them makes a row that
+        /// belongs to no interface at all.
+        /// </summary>
         private void AddResourceRow(Transform parent, EResource resource, int width)
         {
-            Plate(parent, "Row_" + resource, 0, _cursorY, width, RowHeight,
-                  Skin.Row(width, RowHeight), 1);
+            const int cell = 76;
+            int top = _cursorY - 16;
+            int bottom = _cursorY - 52;
+
+            Plate(parent, "Row_" + resource, 0, _cursorY - cell / 2, width, cell,
+                  Skin.Row(width, cell), 1);
+
+            AddIcon(parent, "Icon_" + resource, ResourceSprite(resource),
+                    -width / 2 + 26, top, 28);
 
             UILabel name = MakeLabel(parent, "Name_" + resource, resource.ToString(),
-                                     -width / 2 + 90, _cursorY, 160, RowHeight, Skin.Bright, 3);
+                                     -width / 2 + 52, top, width / 2 - 40, 26, Skin.Bright, 3);
             name.alignment = NGUIText.Alignment.Left;
 
             UILabel value = MakeLabel(parent, "Value_" + resource, "-",
-                                      -width / 2 + 250, _cursorY, 130, RowHeight, Skin.Bright, 3);
+                                      width / 2 - 88, top, 160, 26, Skin.Bright, 3);
             value.alignment = NGUIText.Alignment.Right;
             _resourceLabels[resource] = value;
 
             // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
             EResource captured = resource;
-            int buttonWidth = 74;
-            int x = width / 2 - buttonWidth / 2 - 8;
 
-            MakeButton(parent, "Fill_" + resource, "MAX", x, _cursorY, buttonWidth, 34, false,
-                       delegate { FillToCap(captured); });
-            x -= buttonWidth + 6;
+            int count = GrantAmounts.Length + 1;
+            int buttonWidth = (width - 16 - (count - 1) * 5) / count;
+            int x = -width / 2 + 8 + buttonWidth / 2;
 
-            for (int i = GrantAmounts.Length - 1; i >= 0; i--)
+            for (int i = 0; i < GrantAmounts.Length; i++)
             {
                 float amount = GrantAmounts[i];
                 MakeButton(parent, "Grant_" + resource + "_" + amount,
-                           "+" + amount.ToString("0"), x, _cursorY, buttonWidth, 34, false,
+                           "+" + Short(amount), x, bottom, buttonWidth, 30, false,
                            delegate { Grant(captured, amount); });
-                x -= buttonWidth + 6;
+                x += buttonWidth + 5;
             }
 
-            _cursorY -= RowHeight + RowGap;
+            MakeButton(parent, "Fill_" + resource, "MAX", x, bottom, buttonWidth, 30, false,
+                       delegate { FillToCap(captured); });
+
+            _cursorY -= cell + RowGap;
+        }
+
+        /// <summary>1000 is wider than the button. 1K is not.</summary>
+        private static string Short(float amount)
+        {
+            if (amount >= 1000f) return (amount / 1000f).ToString("0") + "K";
+            return amount.ToString("0");
         }
 
         private void AddBoxRow(Transform parent, ELunchBoxType type, int width)
         {
-            Plate(parent, "BoxRow_" + type, 0, _cursorY, width, RowHeight,
-                  Skin.Row(width, RowHeight), 1);
+            const int cell = 76;
+            int top = _cursorY - 16;
+            int bottom = _cursorY - 52;
+
+            Plate(parent, "BoxRow_" + type, 0, _cursorY - cell / 2, width, cell,
+                  Skin.Row(width, cell), 1);
+
+            AddIcon(parent, "BoxIcon_" + type, BoxSprite(type), -width / 2 + 26, top, 28);
 
             UILabel name = MakeLabel(parent, "BoxName_" + type, type.ToString(),
-                                     -width / 2 + 110, _cursorY, 200, RowHeight, Skin.Bright, 3);
+                                     -width / 2 + 52, top, width - 80, 26, Skin.Bright, 3);
             name.alignment = NGUIText.Alignment.Left;
 
             ELunchBoxType captured = type;
-            int buttonWidth = 74;
-            int x = width / 2 - buttonWidth / 2 - 8;
 
-            for (int i = BoxAmounts.Length - 1; i >= 0; i--)
+            int buttonWidth = (width - 16 - (BoxAmounts.Length - 1) * 5) / BoxAmounts.Length;
+            int x = -width / 2 + 8 + buttonWidth / 2;
+
+            for (int i = 0; i < BoxAmounts.Length; i++)
             {
                 int quantity = BoxAmounts[i];
                 MakeButton(parent, "Box_" + type + "_" + quantity, "+" + quantity,
-                           x, _cursorY, buttonWidth, 34, false,
+                           x, bottom, buttonWidth, 30, false,
                            delegate { GrantBoxes(captured, quantity); });
-                x -= buttonWidth + 6;
+                x += buttonWidth + 5;
             }
 
-            _cursorY -= RowHeight + RowGap;
+            _cursorY -= cell + RowGap;
         }
 
         /// <summary>Rewrites the figures while the window is open, without rebuilding anything.</summary>
