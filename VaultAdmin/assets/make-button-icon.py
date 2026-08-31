@@ -1,8 +1,12 @@
-"""Draws a 256x256 terminal icon in the game's flat style, with no image library.
+"""Draws the 256x256 button icon, with no image library.
 
-The game's HUD icons are flat: one bright fill, a darker outline, and cut-outs punched through to
-the dark. Three colours and no gradients, which is why they stay legible when the HUD scales them
-down to fifty pixels. This follows the same rule.
+The style is taken from the game's own HUD icons rather than invented: one bright green, a thick
+outline, and solid fills instead of outlines-with-detail. Their terminal icon fills its square
+almost edge to edge and its screen is a solid block, which is why it still reads when the HUD
+scales it down to fifty pixels. Thin lines and empty space do not survive that.
+
+Three colours, as the game uses: bright green, a darker green for depth, and the dark punched
+through where a shape needs separating from another.
 """
 import io
 import os
@@ -11,9 +15,9 @@ import zlib
 
 S = 256
 CLEAR = (0, 0, 0, 0)
-FILL = (255, 176, 0, 255)     # the bright body, as the camera icon uses green
-EDGE = (140, 92, 0, 255)      # darker outline, the game's second tone
-HOLE = (26, 22, 16, 255)      # punched through, the third
+GREEN = (61, 240, 61, 255)    # the HUD green
+DEEP = (22, 120, 22, 255)     # shadow side, as the game shades its icons
+DARK = (12, 30, 12, 255)      # punched through, separating shapes
 
 px = [[CLEAR] * S for _ in range(S)]
 
@@ -24,11 +28,10 @@ def rect(x0, y0, x1, y1, colour):
             px[y][x] = colour
 
 
-def rounded_rect(x0, y0, x1, y1, r, colour):
+def rounded(x0, y0, x1, y1, r, colour):
     for y in range(max(0, y0), min(S, y1)):
         for x in range(max(0, x0), min(S, x1)):
-            dx = 0
-            dy = 0
+            dx = dy = 0
             if x < x0 + r:
                 dx = x0 + r - x
             elif x >= x1 - r:
@@ -41,28 +44,27 @@ def rounded_rect(x0, y0, x1, y1, r, colour):
                 px[y][x] = colour
 
 
-# ---- monitor: outline, then body, then screen punched through ----
-rounded_rect(20, 24, 236, 172, 18, EDGE)
-rounded_rect(28, 32, 228, 164, 14, FILL)
-rounded_rect(44, 48, 212, 140, 8, HOLE)
+# ---- the monitor, filling nearly the whole square ----
+rounded(6, 2, 250, 166, 22, DEEP)       # outer body, shadow tone
+rounded(10, 2, 246, 160, 20, GREEN)     # lit face, offset up-left as the game shades
 
-# ---- terminal text on the screen: solid bars, uneven like real output ----
-for (top, left, width) in ((62, 60, 86), (82, 60, 124), (102, 60, 62)):
-    rect(left, top, left + width, top + 10, FILL)
+rounded(28, 20, 228, 138, 12, DARK)     # bezel cut through
+rounded(36, 28, 220, 130, 8, GREEN)     # SCREEN: solid, not lines
 
-# a prompt caret on the last line
-rect(132, 102, 168, 112, FILL)
+# a single dark prompt bar keeps it reading as a terminal without going thin
+rect(52, 104, 116, 118, DARK)
+rect(126, 104, 152, 118, DARK)
 
-# ---- stand and base ----
-rect(112, 164, 144, 186, EDGE)
-rect(118, 164, 138, 184, FILL)
-rounded_rect(76, 186, 180, 202, 6, EDGE)
-rounded_rect(80, 188, 176, 200, 5, FILL)
+# ---- stand and base, chunky enough to survive shrinking ----
+rect(104, 166, 152, 184, DEEP)
+rect(110, 166, 146, 180, GREEN)
+rounded(60, 182, 196, 202, 8, DEEP)
+rounded(64, 182, 192, 198, 7, GREEN)
 
 
 # ---- caption ----
-# A five-by-seven block font, only the letters this word needs. Drawn rather than measured from a
-# real font because there is no font to measure here, and block capitals survive being scaled down.
+# A five-by-seven block font, only the letters this word needs: there is no font to measure here,
+# and block capitals are the only kind that survive being scaled to a fifty-pixel button.
 GLYPHS = {
     "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
     "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
@@ -85,10 +87,13 @@ def text(word, left, top, scale, colour):
 
 
 WORD = "ADMIN"
-SCALE = 6
-width = (5 + 1) * SCALE * len(WORD) - SCALE          # last letter has no trailing gap
-text(WORD, (S - width) // 2 + 1, 213, SCALE, EDGE)   # shadow, one pixel down and right
-text(WORD, (S - width) // 2, 212, SCALE, FILL)
+SCALE = 5
+width = (5 + 1) * SCALE * len(WORD) - SCALE
+# 7 rows at this scale is 35 pixels, so the top must sit at 256 - 35 - a margin.
+CAPTION_TOP = 212
+text(WORD, (S - width) // 2 + 2, CAPTION_TOP + 2, SCALE, DEEP)
+text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, GREEN)
+assert CAPTION_TOP + 7 * SCALE + 2 <= S, "the caption would run off the bottom of the canvas"
 
 
 def write_png(path):
@@ -112,4 +117,4 @@ def write_png(path):
     print("wrote %s (%d bytes, %dx%d)" % (path, len(png), S, S))
 
 
-write_png(r"D:\FalloutShelter-Mods\VaultAdmin\assets\button.png")
+write_png(os.path.join(os.path.dirname(os.path.abspath(__file__)), "button.png"))

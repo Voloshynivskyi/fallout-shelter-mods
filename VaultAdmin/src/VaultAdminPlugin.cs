@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.12.1";
+        public const string PluginVersion = "0.12.2";
 
         internal static ManualLogSource Log;
 
@@ -181,9 +181,10 @@ namespace VaultAdmin
                 "picture can be anything — replace the file and restart. Empty uses the borrowed " +
                 "sprite instead.");
 
-            HudButtonIconScale = Config.Bind("Interface", "HudButtonIconScale", 0.85f,
-                "How large the icon is drawn relative to the button it sits on. Slightly under one " +
-                "leaves a margin, which is how the game's own icons sit.");
+            HudButtonIconScale = Config.Bind("Interface", "HudButtonIconScale", 1f,
+                "How large the icon is drawn relative to the button it sits on. The game's own HUD " +
+                "icons fill their square almost edge to edge, so a value under one only makes this " +
+                "look undersized beside them.");
 
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
@@ -220,8 +221,17 @@ namespace VaultAdmin
         // when a vault is reloaded, and a clone made each time would stack buttons on each other.
         private const string HudButtonName = "VaultAdmin_PanelButton";
 
-        private const string CameraButtonPath =
-            "MainScene_Root/GUI/VaultHUDWindow/VaultHUDPanel/7 BottomLeft/BTN Camera";
+        // The anchor is the thing to look for, not the button inside it.
+        //
+        // GameObject.Find ignores inactive objects, and the screenshot button is inactive much of
+        // the time — the survey caught it at active=False. Searching for the button itself meant
+        // ours could only appear at the moments the game happened to be showing theirs, which is
+        // exactly the delay that was noticed. The anchor stays put, and Transform.Find below does
+        // see inactive children.
+        private const string AnchorPath =
+            "MainScene_Root/GUI/VaultHUDWindow/VaultHUDPanel/7 BottomLeft";
+
+        private const string CameraButtonName = "BTN Camera";
 
         // The button once it exists. Held so the common case is a null check rather than a
         // search: looking every frame would be wasteful, and looking twice a second made the
@@ -251,23 +261,31 @@ namespace VaultAdmin
 
             try
             {
-                GameObject source = GameObject.Find(CameraButtonPath);
-                if (source == null)
+                GameObject anchorObject = GameObject.Find(AnchorPath);
+                if (anchorObject == null)
                 {
                     // Not an error: outside a vault this part of the interface simply is not there.
                     if (!_hudPathReported)
                     {
                         _hudPathReported = true;
-                        Log.LogInfo("The HUD button host is not present yet. Looking for: " + CameraButtonPath);
+                        Log.LogInfo("The HUD anchor is not present yet. Looking for: " + AnchorPath);
                     }
                     return;
                 }
 
-                Transform parent = source.transform.parent;
-                if (parent == null) return;
+                Transform parent = anchorObject.transform;
 
                 Transform existing = parent.Find(HudButtonName);
                 if (existing != null) { _hudButton = existing.gameObject; return; }
+
+                Transform found = parent.Find(CameraButtonName);
+                if (found == null)
+                {
+                    Log.LogWarning("No '" + CameraButtonName + "' under " + AnchorPath +
+                                   "; nothing to copy the button from.");
+                    return;
+                }
+                GameObject source = found.gameObject;
 
                 GameObject clone = UnityEngine.Object.Instantiate(source);
                 clone.name = HudButtonName;
