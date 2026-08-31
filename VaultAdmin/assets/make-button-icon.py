@@ -1,12 +1,15 @@
 """Draws the 256x256 button icon, with no image library.
 
-The game's HUD icons are a solid green shape with the detail punched through it in dark — the
-camera is a filled green body with a dark lens, not a dark body with green lines. The first few
-attempts here had that backwards, which is why they read as a different set of icons however
-closely the shape matched.
+Two things this gets right that earlier attempts did not.
 
-So: one solid green slab, everything else cut out of it in dark, and nothing thinner than about a
-tenth of the width. The HUD shows this at roughly fifty pixels, where anything finer is gone.
+The game's HUD icons are a solid body with the detail punched through it in dark, and an outline a
+shade darker than the fill around the whole shape — the camera is a filled green body with a dark
+lens and a dark-green rim, not a dark body with green lines. Getting that backwards is why earlier
+versions read as a different set of icons however closely the outline matched.
+
+And this is drawn in greyscale rather than in green. NGUI multiplies a UITexture by its colour, so
+white here becomes exactly whatever HudButtonTint is set to. Matching the game's green then costs a
+line of configuration instead of a redraw, which matters after three failed guesses at it.
 """
 import io
 import os
@@ -15,8 +18,9 @@ import zlib
 
 S = 256
 CLEAR = (0, 0, 0, 0)
-GREEN = (62, 255, 62, 255)    # the HUD green
-DARK = (12, 40, 12, 255)      # punched through the green, as the camera's lens is
+FILL = (255, 255, 255, 255)   # becomes the tint exactly
+RIM = (150, 150, 150, 255)    # the outline, a shade darker once tinted
+CUT = (40, 40, 40, 255)       # punched through, as the camera's lens is
 
 px = [[CLEAR] * S for _ in range(S)]
 
@@ -43,24 +47,27 @@ def rounded(x0, y0, x1, y1, r, colour):
                 px[y][x] = colour
 
 
-# ---- the slab: solid green, reaching well down the canvas so the caption fits inside it ----
-BODY_TOP = 14
-BODY_BOTTOM = 242
-rounded(6, BODY_TOP, 250, BODY_BOTTOM, 20, GREEN)
+# ---- the slab: an outline, then the fill inset into it ----
+BODY_TOP = 10
+BODY_BOTTOM = 246
+OUTLINE = 10
 
-# ---- output lines, cut out in dark ----
-BAR_LEFT = 34
+rounded(2, BODY_TOP, 254, BODY_BOTTOM, 22, RIM)
+rounded(2 + OUTLINE, BODY_TOP + OUTLINE, 254 - OUTLINE, BODY_BOTTOM - OUTLINE, 16, FILL)
+
+# ---- output lines, cut out ----
+BAR_LEFT = 38
 BAR_HEIGHT = 20
-for (top, width) in ((44, 150), (80, 188), (116, 92)):
-    rect(BAR_LEFT, top, BAR_LEFT + width, top + BAR_HEIGHT, DARK)
+for (top, width) in ((44, 142), (80, 180), (116, 88)):
+    rect(BAR_LEFT, top, BAR_LEFT + width, top + BAR_HEIGHT, CUT)
 
-# a caret after the short line, so it reads as a terminal rather than a paragraph
-rect(BAR_LEFT + 108, 116, BAR_LEFT + 148, 116 + BAR_HEIGHT, DARK)
+rect(BAR_LEFT + 104, 116, BAR_LEFT + 140, 116 + BAR_HEIGHT, CUT)   # caret after the short line
 
 
-# ---- caption, inside the slab and cut out of it like everything else ----
-# A five-by-seven block font, only the letters this word needs: there is no font to measure here,
-# and block capitals are the only kind that survive being scaled down this far.
+# ---- caption, cut out of the slab like everything else ----
+# A five-by-seven block font, only the letters this word needs. Drawn four times at one-unit
+# offsets to thicken it: at fifty pixels a single-unit stroke all but vanishes, which is what
+# "too thin" meant.
 GLYPHS = {
     "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
     "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
@@ -69,6 +76,8 @@ GLYPHS = {
     "N": ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
 }
 
+BOLD = 3   # how many units the stroke is thickened by
+
 
 def text(word, left, top, scale, colour):
     x = left
@@ -76,21 +85,22 @@ def text(word, left, top, scale, colour):
         rows = GLYPHS[ch]
         for r, row in enumerate(rows):
             for c, bit in enumerate(row):
-                if bit == "1":
-                    rect(x + c * scale, top + r * scale,
-                         x + (c + 1) * scale, top + (r + 1) * scale, colour)
+                if bit != "1":
+                    continue
+                rect(x + c * scale, top + r * scale,
+                     x + (c + 1) * scale + BOLD, top + (r + 1) * scale + BOLD, colour)
         x += (len(rows[0]) + 1) * scale
 
 
 WORD = "ADMIN"
 SCALE = 7
-width = (5 + 1) * SCALE * len(WORD) - SCALE
-CAPTION_TOP = 168
+width = (5 + 1) * SCALE * len(WORD) - SCALE + BOLD
+CAPTION_TOP = 166
 
-assert width <= S - 24, "the caption would touch the edge of the slab"
-assert CAPTION_TOP + 7 * SCALE <= BODY_BOTTOM - 12, "the caption would run out of the slab"
+assert width <= S - 40, "the caption would touch the outline"
+assert CAPTION_TOP + 7 * SCALE + BOLD <= BODY_BOTTOM - OUTLINE - 8, "the caption would reach the rim"
 
-text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, DARK)
+text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, CUT)
 
 
 def write_png(path):

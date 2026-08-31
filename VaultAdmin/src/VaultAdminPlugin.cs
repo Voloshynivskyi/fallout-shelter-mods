@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.12.2";
+        public const string PluginVersion = "0.13.1";
 
         internal static ManualLogSource Log;
 
@@ -168,12 +168,12 @@ namespace VaultAdmin
                 "first time the button is placed, so there is a list to choose from rather than a " +
                 "guess — a name the atlas does not hold renders as nothing at all.");
 
-            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "#FFB000",
-                "Colour applied to the button, so it is not mistaken for the one it was copied " +
-                "from. The colour multiplies with the sprite, so a shade close to the sprite's own " +
-                "only dims it — the screenshot button is green, which is why green was a poor " +
-                "choice. Empty leaves it alone, which is what to use once a sprite of its own is " +
-                "set.");
+            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "auto",
+                "Colour of the button icon. The icon file is greyscale and NGUI multiplies it " +
+                "by this, so white in the file becomes exactly this colour. 'auto' reads the " +
+                "colour out of the game's own screenshot icon, which is the only way to match it " +
+                "exactly rather than by eye. A hex value such as #3CE03C overrides that; empty " +
+                "leaves the icon grey.");
 
             HudButtonImage = Config.Bind("Interface", "HudButtonImage", "button.png",
                 "A PNG to use as the button's icon, looked for beside this plugin's DLL. Any size; " +
@@ -433,6 +433,33 @@ namespace VaultAdmin
                 Shader shader = Shader.Find("Unlit/Transparent Colored");
                 if (shader != null) drawn.shader = shader;
 
+                // The icon is drawn in greyscale and coloured here. NGUI multiplies a UITexture by
+                // its colour, so white in the file becomes exactly this. Matching the game's green
+                // is then a line of configuration rather than a redraw — which is worth having
+                // after three wrong guesses at the shade.
+                string hex = HudButtonTint.Value;
+                if (string.Equals(hex, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    Color sampled;
+                    if (TrySampleSpriteColour(sprite, out sampled))
+                    {
+                        drawn.color = sampled;
+                        Log.LogInfo("Icon colour taken from the game's own button: " +
+                                    ColorUtility.ToHtmlStringRGB(sampled) + ".");
+                    }
+                    else
+                    {
+                        Log.LogWarning("Could not read the game's button colour; the icon is left grey. " +
+                                       "Set HudButtonTint to a hex value to choose one.");
+                    }
+                }
+                else if (!string.IsNullOrEmpty(hex))
+                {
+                    Color tint;
+                    if (ColorUtility.TryParseHtmlString(hex, out tint)) drawn.color = tint;
+                    else Log.LogWarning("HudButtonTint '" + hex + "' is not a colour; the icon is left grey.");
+                }
+
                 sprite.alpha = 0f;                             // hidden, not removed
 
                 Log.LogInfo("Button icon loaded from " + path + " (" +
@@ -443,6 +470,93 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Could not apply the custom button image: " + e.Message);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Reads the colour straight out of the game's own icon.
+        ///
+        /// Guessing the shade by eye failed three times running, and there is no need to guess: the
+        /// pixels are right there. Atlas textures are not readable, so they are blitted through a
+        /// RenderTexture first — the same trick the room-texture work in this repo settled on.
+        ///
+        /// The colour taken is the most common opaque one inside the sprite's own rectangle, which
+        /// for a flat HUD icon is its fill. Averaging would have produced a muddy blend of the fill
+        /// and the dark cut-outs, and the brightest pixel alone would catch an antialiased edge.
+        /// </summary>
+        private bool TrySampleSpriteColour(UISprite sprite, out Color colour)
+        {
+            colour = Color.white;
+
+            RenderTexture rt = null;
+            RenderTexture previous = RenderTexture.active;
+            Texture2D readable = null;
+
+            try
+            {
+                if (sprite.atlas == null) return false;
+
+                Texture texture = sprite.atlas.texture;
+                if (texture == null || texture.width == 0) return false;
+
+                UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
+                if (data == null || data.width <= 0 || data.height <= 0) return false;
+
+                rt = RenderTexture.GetTemporary(texture.width, texture.height, 0,
+                                                RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                Graphics.Blit(texture, rt);
+                RenderTexture.active = rt;
+
+                // NGUI measures y downwards from the top of the atlas; ReadPixels measures upwards.
+                int bottom = texture.height - (data.y + data.height);
+                Rect area = new Rect(data.x, bottom, data.width, data.height);
+
+                readable = new Texture2D(data.width, data.height, TextureFormat.RGBA32, false);
+                readable.ReadPixels(area, 0, 0);
+                readable.Apply();
+
+                Dictionary<int, int> tally = new Dictionary<int, int>();
+                Color32[] pixels = readable.GetPixels32();
+
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    Color32 px = pixels[i];
+                    if (px.a < 200) continue;                       // edges and empty space
+
+                    // Quantised, so near-identical shades from antialiasing count as one.
+                    int key = ((px.r >> 3) << 10) | ((px.g >> 3) << 5) | (px.b >> 3);
+                    int seen;
+                    tally[key] = tally.TryGetValue(key, out seen) ? seen + 1 : 1;
+                }
+
+                int bestKey = -1;
+                int bestCount = 0;
+                foreach (KeyValuePair<int, int> entry in tally)
+                {
+                    if (entry.Value <= bestCount) continue;
+                    bestCount = entry.Value;
+                    bestKey = entry.Key;
+                }
+
+                if (bestKey < 0) return false;
+
+                // Back to the middle of the quantised bucket.
+                float r = (((bestKey >> 10) & 31) * 8 + 4) / 255f;
+                float g = (((bestKey >> 5) & 31) * 8 + 4) / 255f;
+                float b = ((bestKey & 31) * 8 + 4) / 255f;
+                colour = new Color(r, g, b, 1f);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not sample the button colour: " + e.Message);
+                return false;
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                if (rt != null) RenderTexture.ReleaseTemporary(rt);
+                if (readable != null) UnityEngine.Object.Destroy(readable);
             }
         }
 
