@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.3.0";
+        public const string PluginVersion = "0.4.0";
 
         internal static ManualLogSource Log;
 
@@ -70,7 +70,11 @@ namespace VaultAdmin
             public string Id;        // what the game looks the item up by — NOT its display name
             public string Name;      // for the human only
             public EItemRarity Rarity;
+            public string Sprite;    // name of this item's sprite inside its family's atlas
         }
+
+        // One atlas per family, resolved once. An atlas is a texture plus a table of rectangles.
+        private readonly Dictionary<EItemType, UIAtlas> _atlases = new Dictionary<EItemType, UIAtlas>();
 
         private List<CatalogueEntry> _catalogue;
         private EItemType _family = EItemType.Weapon;
@@ -282,9 +286,13 @@ namespace VaultAdmin
 
                 ItemParameters items = parameters.Items;
 
-                int weapons = Collect(items.WeaponsList, EItemType.Weapon, "WeaponId");
-                int outfits = Collect(items.OutfitList, EItemType.Outfit, "m_outfitId");
-                int junk = Collect(items.JunksList, EItemType.Junk, "JunkId");
+                int weapons = Collect(items.WeaponsList, EItemType.Weapon, "WeaponId", "WeaponSprite");
+                int outfits = Collect(items.OutfitList, EItemType.Outfit, "m_outfitId", "OutfitSprite");
+                int junk = Collect(items.JunksList, EItemType.Junk, "JunkId", "JunkSprite");
+
+                _atlases[EItemType.Weapon] = items.WeaponAtlas;
+                _atlases[EItemType.Outfit] = items.OutfitAtlas;
+                _atlases[EItemType.Junk] = items.JunkAtlas;
 
                 Log.LogInfo("Item catalogue read from the game: " + weapons + " weapons, " +
                             outfits + " outfits, " + junk + " junk.");
@@ -299,7 +307,7 @@ namespace VaultAdmin
         /// Pulls one family into the catalogue, taking the id off whichever member that family is
         /// keyed by. Reflection rather than a direct call because the outfit id is a private field.
         /// </summary>
-        private int Collect(Array table, EItemType type, string idMember)
+        private int Collect(Array table, EItemType type, string idMember, string spriteMember)
         {
             if (table == null) return 0;
 
@@ -326,6 +334,7 @@ namespace VaultAdmin
                     entry.Id = id;
                     entry.Name = label;
                     entry.Rarity = data.ItemRarity;
+                    entry.Sprite = ReadMember(data, spriteMember);
                     _catalogue.Add(entry);
                     added++;
                 }
@@ -385,7 +394,8 @@ namespace VaultAdmin
                 shown++;
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(entry.Name + "  (" + entry.Rarity + ")", GUILayout.Width(300f));
+                DrawIcon(entry);
+                GUILayout.Label(entry.Name + "  (" + entry.Rarity + ")", GUILayout.Width(258f));
                 if (GUILayout.Button("Grant", GUILayout.Width(60f))) GrantItem(entry);
                 GUILayout.EndHorizontal();
             }
@@ -394,6 +404,51 @@ namespace VaultAdmin
 
             if (matched > shown)
                 GUILayout.Label("    " + matched + " match; showing " + shown + ". Narrow the filter.");
+        }
+
+        /// <summary>
+        /// Draws one item's own icon out of its family's atlas.
+        ///
+        /// An atlas is a texture plus a table of pixel rectangles, which is exactly what
+        /// DrawTextureWithTexCoords takes once the rectangle is normalised. NGUI measures y
+        /// downwards from the top of the texture and the drawing call measures upwards from the
+        /// bottom, so it is flipped.
+        ///
+        /// The lookup is the part worth keeping: when the panel becomes real game UI the sprite
+        /// name and atlas go straight into a UISprite and only this drawing call is replaced.
+        /// </summary>
+        private void DrawIcon(CatalogueEntry entry)
+        {
+            Rect box = GUILayoutUtility.GetRect(40f, 40f, GUILayout.Width(40f), GUILayout.Height(40f));
+
+            try
+            {
+                if (string.IsNullOrEmpty(entry.Sprite)) return;
+
+                UIAtlas atlas;
+                if (!_atlases.TryGetValue(entry.Type, out atlas) || atlas == null) return;
+
+                Texture texture = atlas.texture;
+                if (texture == null || texture.width == 0 || texture.height == 0) return;
+
+                UISpriteData sprite = atlas.GetSprite(entry.Sprite);
+                if (sprite == null || sprite.width <= 0 || sprite.height <= 0) return;
+
+                float w = texture.width;
+                float h = texture.height;
+
+                Rect coords = new Rect(sprite.x / w,
+                                       1f - (sprite.y + sprite.height) / h,
+                                       sprite.width / w,
+                                       sprite.height / h);
+
+                GUI.DrawTextureWithTexCoords(box, texture, coords);
+            }
+            catch
+            {
+                // A missing sprite leaves a gap. Hiding items that cannot be illustrated would be
+                // worse than a picker with a few blanks in it.
+            }
         }
 
         private void GrantItem(CatalogueEntry entry)

@@ -197,3 +197,15 @@ matched and that the list was cut.
 **Expect** the vault to load with every granted item present and named.
 
 - [ ] Rename the DLL back.
+
+## Batch 4 — add-item-icons
+
+### 19. Icons
+
+- [ ] Open the item list, look at **Weapon**, then **Outfit**, then **Junk**.
+
+**Expect** each row to show that item's picture beside its name.
+
+Weapons, outfits and junk each use a different atlas and a differently-named sprite field, so all
+three are worth a glance. A whole family with no pictures means that family's atlas was not reached;
+a scattered blank here and there is expected and harmless.

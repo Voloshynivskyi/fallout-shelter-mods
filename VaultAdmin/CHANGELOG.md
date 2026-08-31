@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.0
+
+Every item in the picker now shows its own picture.
+
+- Icons are drawn straight from the game's atlases: an atlas is a texture plus a table of pixel
+  rectangles, and `WeaponSprite`, `OutfitSprite` and `JunkSprite` name the rectangle for each item.
+  Nothing is created per frame; the atlas is resolved once per family and the sprite name is stored
+  with the catalogue entry.
+- An item whose sprite is missing keeps its row and stays grantable, with a gap where the icon
+  would be. Hiding items that cannot be illustrated would be worse than a few blanks.
+
+### Why weapon stats, rarity and name are not editable
+
+This was asked for, and it is not something the game can represent. Two independent proofs:
+
+- `ItemExtraData` — the base class for anything an item carries per copy — is abstract with exactly
+  four implementors: `DwellerDecorationItem`, `PetUniqueData`, `RecipeUniqueData` and
+  `ThemeItemUniqueData`. **Weapons and outfits are absent**, so they hold no per-copy data at all.
+- A real save stores a weapon as four fields: `id`, `type`, `hasBeenAssigned`,
+  `hasRandonWeaponBeenAssigned`. There is nowhere to keep a damage figure or a custom name.
+
+Damage, rarity and name live on the shared template every copy of that weapon reads from. Writing
+them would change every copy in the game at once and would be gone on the next restart.
+
+What replaces it: the picker grants **any** weapon the game holds, at every rarity, hidden ones
+included.
+
+**Pets are the opposite.** `PetUniqueData` carries `Name`, `Bonus` and `BonusValue` per copy, across
+37 bonus types, so a pet really can be given a name, an effect and a value. Dwellers are serialised
+per copy too. Both are next.
+
 ## 0.3.0
 
 Grants weapons, outfits and junk, picked from the game's own tables.
