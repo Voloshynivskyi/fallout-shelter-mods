@@ -121,6 +121,12 @@ namespace VaultAdmin
             return Frame(width, height, 8, 3, Bright, Bright);
         }
 
+        /// <summary>A place to type: outlined bright, sunk dark, so it reads as a field.</summary>
+        public static Texture2D Field(int width, int height)
+        {
+            return Frame(width, height, 6, 2, Bright, Ink);
+        }
+
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
@@ -156,7 +162,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.26.0";
+        public const string PluginVersion = "0.27.0";
 
         internal static ManualLogSource Log;
 
@@ -1098,16 +1104,11 @@ namespace VaultAdmin
                 _frame = Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
                                Skin.Window(_windowWidth, _windowHeight), 0);
 
-                // The game's windows carry their title on a plate that straddles the top edge and
-                // covers the frame behind it. A bare label there reads as something that has come
-                // loose from the window rather than part of it.
-                int titleWidth = Mathf.Min(_windowWidth - 80, 340);
-                Plate(_nguiWindow.transform, "TitlePlate", 0, _windowHeight / 2, titleWidth, 50,
-                      Skin.Frame(titleWidth, 50, 12, 3, Skin.Bright, Skin.Bright), 2);
-
+                // Written straight onto the top edge, in the green, as the game's own windows do
+                // it — large enough to read as the window's name rather than a caption on it.
                 UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
-                                          0, _windowHeight / 2, titleWidth - 28, 44, Skin.Ink, 4);
-                title.fontSize = Mathf.RoundToInt(_fontSize * 1.5f);
+                                          0, _windowHeight / 2, _windowWidth - 60, 52, Skin.Bright, 4);
+                title.fontSize = Mathf.RoundToInt(_fontSize * 1.6f);
 
                 BuildTabs(_nguiWindow.transform);
                 BuildPages(_nguiWindow.transform);
@@ -1287,37 +1288,121 @@ namespace VaultAdmin
             return _menuAtlas;
         }
 
-        private static string ResourceSprite(EResource resource)
+        // Sprite names were taken from a dump of what the interface had on screen, which is not
+        // the same as what the atlas holds, and several of them drew nothing. Each of these is a
+        // list of candidates now, and the atlas is asked which one it actually has.
+        private static string[] ResourceSprites(EResource resource)
         {
             switch (resource)
             {
-                case EResource.Nuka:            return "Icon_nukacapsPlain";
-                case EResource.Food:            return "Icon_foodPlain";
-                case EResource.Energy:          return "Icon_energyPlain";
-                case EResource.Water:           return "Icon_WaterPlain";
-                case EResource.StimPack:        return "Icon_StimpackPlain";
-                case EResource.RadAway:         return "Icon_RadawayPlain";
-                case EResource.NukaColaQuantum: return "Icon_NukaColaQuantum";
-                default:                        return null;
+                case EResource.Nuka:
+                    return new[] { "Icon_nukacapsPlain", "Icon_nukacapsColor", "Icon_nukacaps",
+                                   "NukaCaps", "Caps" };
+                case EResource.Food:
+                    return new[] { "Icon_foodPlain", "Icon_food", "Icon_FoodWater" };
+                case EResource.Energy:
+                    return new[] { "Icon_energyPlain", "Icon_energyGreen", "Icon_energy" };
+                case EResource.Water:
+                    return new[] { "Icon_WaterPlain", "Icon_Water", "Icon_WaterColorGreen" };
+                case EResource.StimPack:
+                    return new[] { "Icon_StimpackPlain", "Icon_Stimpack", "Stimpack" };
+                case EResource.RadAway:
+                    return new[] { "Icon_RadawayPlain", "Icon_Radaway", "Radaway" };
+                case EResource.NukaColaQuantum:
+                    return new[] { "Icon_NukaColaQuantum", "Icon_NukaQuantum", "NukaQuantum",
+                                   "NukaColaQuantum002", "Icon_Nuka_Quantum_Star" };
+                default:
+                    return null;
             }
         }
 
-        private static string BoxSprite(ELunchBoxType type)
+        private static string[] BoxSprites(ELunchBoxType type)
         {
             switch (type)
             {
-                case ELunchBoxType.Regular:         return "Icon_LunchboxesPlain";
-                case ELunchBoxType.MrHandy:         return "Icon_MrHandyCollect";
-                case ELunchBoxType.PetCarrier:      return "PetCarrier";
-                case ELunchBoxType.NukaColaQuantum: return "Icon_NukaColaQuantum";
-                default:                            return null;
+                case ELunchBoxType.Regular:
+                    return new[] { "Icon_LunchboxesPlain", "LunchboxPlainColor", "Lunchbox",
+                                   "LunchBox", "Icon_LunchboxesPlain" };
+                case ELunchBoxType.MrHandy:
+                    return new[] { "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
+                case ELunchBoxType.PetCarrier:
+                    return new[] { "PetCarrier", "Pet Carrier", "Icon_PetCarrier" };
+                case ELunchBoxType.NukaColaQuantum:
+                    return new[] { "Icon_NukaColaQuantum", "Icon_NukaQuantum", "NukaQuantum",
+                                   "NukaColaQuantum002" };
+                default:
+                    return null;
             }
         }
 
-        private void AddIcon(Transform parent, string name, string sprite, int x, int y, int size)
+        /// <summary>
+        /// The first candidate the atlas actually holds.
+        ///
+        /// A UISprite given a name the atlas does not have draws nothing and says nothing about it,
+        /// which is how several rows ended up with a blank where their picture should be. Asking
+        /// first turns a silent gap into a line in the log.
+        /// </summary>
+        private string ResolveSprite(UIAtlas atlas, string[] candidates, string what)
+        {
+            if (atlas == null || candidates == null) return null;
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                if (string.IsNullOrEmpty(candidates[i])) continue;
+                if (atlas.GetSprite(candidates[i]) != null) return candidates[i];
+            }
+
+            ReportOnce("sprite_" + what,
+                       "No icon in '" + atlas.name + "' for " + what + "; tried " +
+                       string.Join(", ", candidates) + ".");
+            SuggestSprites(atlas, what);
+            return null;
+        }
+
+        /// <summary>
+        /// Writes down what the atlas does have, so the next guess is not one.
+        ///
+        /// A missing icon is worth one line in a log and nothing more, but a missing icon whose real
+        /// name is three characters away is worth knowing about before it costs another round.
+        /// </summary>
+        private void SuggestSprites(UIAtlas atlas, string what)
+        {
+            try
+            {
+                List<UISpriteData> sprites = atlas.spriteList;
+                if (sprites == null) return;
+
+                string hint = what.ToLower();
+                if (hint.StartsWith("box ")) hint = hint.Substring(4);
+                if (hint.Length > 5) hint = hint.Substring(0, 5);
+
+                string found = "";
+                int shown = 0;
+
+                for (int i = 0; i < sprites.Count && shown < 12; i++)
+                {
+                    if (sprites[i] == null || sprites[i].name == null) continue;
+                    if (sprites[i].name.ToLower().IndexOf(hint) < 0) continue;
+
+                    found += (found.Length > 0 ? ", " : "") + sprites[i].name;
+                    shown++;
+                }
+
+                Log.LogInfo("  '" + atlas.name + "' holds these matching '" + hint + "': " +
+                            (found.Length > 0 ? found : "nothing"));
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not list the atlas's sprites: " + e.Message);
+            }
+        }
+
+        private void AddIcon(Transform parent, string name, string[] candidates, string what,
+                             int x, int y, int size)
         {
             UIAtlas atlas = MenuAtlas();
-            if (atlas == null || string.IsNullOrEmpty(sprite)) return;
+            string sprite = ResolveSprite(atlas, candidates, what);
+            if (string.IsNullOrEmpty(sprite)) return;
 
             GameObject go = new GameObject(name);
             go.layer = parent.gameObject.layer;
@@ -1499,9 +1584,9 @@ namespace VaultAdmin
 
             int filterY = _cursorY - RowHeight / 2;
             Plate(parent, "FilterRow", 0, filterY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            MakeLeftLabel(parent, "FilterName", "FILTER",
-                          -width / 2 + 14, filterY, 110, RowHeight, Skin.Bright, 3);
-            _filterInput = AddInput(parent, "Filter", 34, filterY, width - 150, "ALL");
+            MakeLeftLabel(parent, "FilterName", "FIND",
+                          -width / 2 + 14, filterY, 80, RowHeight, Skin.Bright, 3);
+            _filterInput = AddInput(parent, "Filter", 30, filterY, width - 140, "SEARCH");
             _cursorY -= RowHeight + RowGap;
 
             // The list occupies whatever is left between here and the pager above the close button.
@@ -1568,6 +1653,26 @@ namespace VaultAdmin
             return row;
         }
 
+        /// <summary>
+        /// What a named dweller is called.
+        ///
+        /// Not "Name" — that member does not exist here, and asking for it returned nothing, which
+        /// is why the dweller family listed no one at all. The data calls it DwellerFullName.
+        /// </summary>
+        private static string LegendName(UniqueDwellerData data)
+        {
+            if (data == null) return null;
+
+            string full = ReadMember(data, "DwellerFullName");
+            if (!string.IsNullOrEmpty(full)) return full;
+
+            string first = ReadMember(data, "DwellerName");
+            string last = ReadMember(data, "DwellerLastName");
+            full = ((first ?? "") + " " + (last ?? "")).Trim();
+
+            return full.Length > 0 ? full : null;
+        }
+
         private void StepFamily(int by)
         {
             _familyIndex = (_familyIndex + by + Families.Length) % Families.Length;
@@ -1617,7 +1722,7 @@ namespace VaultAdmin
                     {
                         if (legends[i] == null) continue;
 
-                        string label = ReadMember(legends[i], "Name");
+                        string label = LegendName(legends[i]);
                         if (string.IsNullOrEmpty(label)) continue;
                         if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
 
@@ -1690,8 +1795,7 @@ namespace VaultAdmin
                 UniqueDwellerData legend = thing as UniqueDwellerData;
                 if (legend != null)
                 {
-                    string label = ReadMember(legend, "Name");
-                    row.Name.text = string.IsNullOrEmpty(label) ? "Legendary" : label;
+                    row.Name.text = LegendName(legend);
                     row.Stats.text = "LEGENDARY  brings its own look and stats";
                     row.Icon.atlas = null;
                     row.Icon.spriteName = "";
@@ -1703,20 +1807,7 @@ namespace VaultAdmin
                     row.Name.text = pet.Name;
                     row.Stats.text = pet.Detail;
 
-                    UIAtlas atlas = PetAtlasFor(pet.PetType);
-                    string sprite = ReadMember(pet.Template, "Sprite");
-                    if (string.IsNullOrEmpty(sprite)) sprite = ReadMember(pet.Template, "HeadSprite");
-
-                    if (atlas != null && !string.IsNullOrEmpty(sprite))
-                    {
-                        row.Icon.atlas = atlas;
-                        row.Icon.spriteName = sprite;
-                    }
-                    else
-                    {
-                        row.Icon.atlas = null;
-                        row.Icon.spriteName = "";
-                    }
+                    ShowPetIcon(row.Icon, pet);
                 }
             }
 
@@ -1799,12 +1890,58 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>
+        /// A pet's picture, or nothing with a reason written down.
+        ///
+        /// Two different things can go wrong here — the type's atlas may not have loaded yet, or the
+        /// name on the record may not be in it — and they need different fixes, so they are logged
+        /// apart rather than both leaving the same blank square.
+        /// </summary>
+        private void ShowPetIcon(UISprite icon, PetEntry pet)
+        {
+            if (icon == null || pet == null) return;
+
+            icon.atlas = null;
+            icon.spriteName = "";
+
+            UIAtlas atlas = PetAtlasFor(pet.PetType);
+            if (atlas == null) return;
+
+            string sprite = ReadMember(pet.Template, "Sprite");
+            string head = ReadMember(pet.Template, "HeadSprite");
+
+            string chosen = null;
+            if (!string.IsNullOrEmpty(sprite) && atlas.GetSprite(sprite) != null) chosen = sprite;
+            else if (!string.IsNullOrEmpty(head) && atlas.GetSprite(head) != null) chosen = head;
+
+            if (chosen == null)
+            {
+                ReportOnce("petsprite_" + pet.PetId,
+                           "Atlas '" + atlas.name + "' has no picture for " + pet.Name +
+                           " (tried '" + sprite + "' and '" + head + "').");
+                return;
+            }
+
+            icon.atlas = atlas;
+            icon.spriteName = chosen;
+        }
+
         private void ShowIcon(UISprite icon, CatalogueEntry entry)
         {
             UIAtlas atlas;
             if (string.IsNullOrEmpty(entry.Sprite) ||
                 !_atlases.TryGetValue(entry.Type, out atlas) || atlas == null)
             {
+                icon.atlas = null;
+                icon.spriteName = "";
+                return;
+            }
+
+            if (atlas.GetSprite(entry.Sprite) == null)
+            {
+                ReportOnce("itemsprite_" + entry.Type,
+                           "Atlas '" + atlas.name + "' has no picture for " + entry.Name +
+                           " ('" + entry.Sprite + "'); other " + entry.Type + " rows may be blank too.");
                 icon.atlas = null;
                 icon.spriteName = "";
                 return;
@@ -1828,8 +1965,7 @@ namespace VaultAdmin
             UniqueDwellerData legend = thing as UniqueDwellerData;
             if (legend != null)
             {
-                string label = ReadMember(legend, "Name");
-                CreateLegendary(legend, string.IsNullOrEmpty(label) ? "legendary" : label);
+                CreateLegendary(legend, LegendName(legend));
                 return;
             }
 
@@ -2001,23 +2137,7 @@ namespace VaultAdmin
             if (_petPickLabel != null)
                 _petPickLabel.text = pet.Name + "   " + (_petIndex + 1) + "/" + _pets.Count;
 
-            if (_petPickIcon != null)
-            {
-                UIAtlas atlas = PetAtlasFor(pet.PetType);
-                string sprite = ReadMember(pet.Template, "Sprite");
-                if (string.IsNullOrEmpty(sprite)) sprite = ReadMember(pet.Template, "HeadSprite");
-
-                if (atlas != null && !string.IsNullOrEmpty(sprite))
-                {
-                    _petPickIcon.atlas = atlas;
-                    _petPickIcon.spriteName = sprite;
-                }
-                else
-                {
-                    _petPickIcon.atlas = null;
-                    _petPickIcon.spriteName = "";
-                }
-            }
+            ShowPetIcon(_petPickIcon, pet);
         }
 
         private void CreatePetFromPanel()
@@ -2123,10 +2243,16 @@ namespace VaultAdmin
             go.transform.localPosition = new Vector3(x, y, 0f);
             go.transform.localScale = Vector3.one;
 
+            // A field has to look like one. Without a sunken plate behind it a place to type is
+            // indistinguishable from a label, and the search box read as the word ALL.
+            int fieldHeight = RowHeight - 12;
+            Plate(go.transform, "Field", 0, 0, width, fieldHeight,
+                  Skin.Field(width, fieldHeight), 2);
+
             // The hint goes on the label, not on defaultText: UIInput.Init takes its placeholder
             // from the label's text and overwrites whatever defaultText held.
-            UILabel label = MakeLabel(go.transform, "Text", hint, 0, 0, width - 16, RowHeight - 8,
-                                      Skin.Bright, 3);
+            UILabel label = MakeLabel(go.transform, "Text", hint, 0, 0, width - 18, fieldHeight - 6,
+                                      Skin.Bright, 4);
 
             // NGUI routes typing through a collider, exactly as it routes clicks.
             BoxCollider box = go.AddComponent<BoxCollider>();
@@ -2227,7 +2353,7 @@ namespace VaultAdmin
             Plate(parent, "Row_" + resource, 0, _cursorY - cell / 2, width, cell,
                   Skin.Row(width, cell), 1);
 
-            AddIcon(parent, "Icon_" + resource, ResourceSprite(resource),
+            AddIcon(parent, "Icon_" + resource, ResourceSprites(resource), resource.ToString(),
                     -width / 2 + 26, top, 28);
 
             MakeLeftLabel(parent, "Name_" + resource, resource.ToString(),
@@ -2274,7 +2400,8 @@ namespace VaultAdmin
             Plate(parent, "BoxRow_" + type, 0, _cursorY - cell / 2, width, cell,
                   Skin.Row(width, cell), 1);
 
-            AddIcon(parent, "BoxIcon_" + type, BoxSprite(type), -width / 2 + 26, top, 28);
+            AddIcon(parent, "BoxIcon_" + type, BoxSprites(type), "box " + type,
+                    -width / 2 + 26, top, 28);
 
             MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
                           -width / 2 + 48, top, width - 60, 26, Skin.Bright, 3);
@@ -2995,7 +3122,8 @@ namespace VaultAdmin
                     if (!string.IsNullOrEmpty(part) && part != "None") line += "  " + part.ToUpper();
                 }
 
-                if (data.SellPrice > 0) line += "  " + data.SellPrice + " CAPS";
+                // No price. Nothing here is being bought, and it crowded out the figures that
+                // actually decide which of two hundred items to pick.
                 return line;
             }
             catch
@@ -3025,13 +3153,13 @@ namespace VaultAdmin
                     object row = rows.GetValue(i);
                     if (row == null) continue;
 
-                    string stat = ReadAsText(row, "Stat");
-                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "m_stat");
-                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "SpecialStat");
+                    // SpecialStatsData calls them Type and Value. Guessing at Stat cost a round of
+                    // outfits listed with nothing but their rarity.
+                    string stat = ReadAsText(row, "Type");
+                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "m_type");
 
                     string value = ReadAsText(row, "Value");
-                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "m_value");
-                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "StatValue");
+                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "m_iValue");
 
                     if (string.IsNullOrEmpty(stat) || string.IsNullOrEmpty(value)) continue;
                     if (value == "0") continue;
