@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.10.2";
+        public const string PluginVersion = "0.11.0";
 
         internal static ManualLogSource Log;
 
@@ -40,6 +40,8 @@ namespace VaultAdmin
         private static ConfigEntry<string> ToggleKey;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
+        private static ConfigEntry<string> HudButtonSprite;
+        private static ConfigEntry<string> HudButtonTint;
 
         private Key _toggleKey = Key.F8;
         private bool _panelOpen;
@@ -158,6 +160,16 @@ namespace VaultAdmin
                 "Put a button in the bottom-left of the vault interface, beside the screenshot " +
                 "button, that opens this panel. The hotkey works either way.");
 
+            HudButtonSprite = Config.Bind("Interface", "HudButtonSprite", "",
+                "Sprite for the button, by name, from the same atlas the screenshot button uses. " +
+                "Empty keeps the borrowed one. The names available are written to the log the " +
+                "first time the button is placed, so there is a list to choose from rather than a " +
+                "guess — a name the atlas does not hold renders as nothing at all.");
+
+            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "#7FD36B",
+                "Colour applied to the button, so it is not mistaken for the one it was copied " +
+                "from. Empty leaves it alone.");
+
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
                 "interface's own units. Raise it if the two overlap.");
@@ -196,9 +208,12 @@ namespace VaultAdmin
         private const string CameraButtonPath =
             "MainScene_Root/GUI/VaultHUDWindow/VaultHUDPanel/7 BottomLeft/BTN Camera";
 
-        private int _hudFrames;
-        private const int HudCheckInterval = 120;   // frames, about twice every two seconds
+        // The button once it exists. Held so the common case is a null check rather than a
+        // search: looking every frame would be wasteful, and looking twice a second made the
+        // button visibly late.
+        private GameObject _hudButton;
         private bool _hudPathReported;
+        private bool _spriteNamesReported;
 
         /// <summary>
         /// Puts a button in the vault HUD that opens the panel, by cloning one the game built.
@@ -214,8 +229,10 @@ namespace VaultAdmin
         private void EnsureHudButton()
         {
             if (!ShowHudButton.Value) return;
-            if (++_hudFrames < HudCheckInterval) return;
-            _hudFrames = 0;
+
+            // Cheap enough to run every frame: once the button exists this is one null check, and
+            // while it does not the button should appear the moment the interface can hold it.
+            if (_hudButton != null) return;
 
             try
             {
@@ -233,7 +250,9 @@ namespace VaultAdmin
 
                 Transform parent = source.transform.parent;
                 if (parent == null) return;
-                if (parent.Find(HudButtonName) != null) return;   // already placed
+
+                Transform existing = parent.Find(HudButtonName);
+                if (existing != null) { _hudButton = existing.gameObject; return; }
 
                 GameObject clone = UnityEngine.Object.Instantiate(source);
                 clone.name = HudButtonName;
@@ -255,6 +274,9 @@ namespace VaultAdmin
                 clone.transform.localPosition =
                     source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
 
+                StyleButton(clone);
+                _hudButton = clone;
+
                 // The clone was reported placed and could not be seen, so both are described here
                 // rather than guessed at again.
                 Log.LogInfo("Placed a panel button in the vault HUD.");
@@ -264,6 +286,74 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Could not place the HUD button: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Makes the button look like ours rather than like the one it was copied from.
+        ///
+        /// A clone carries the camera's sprite, which is why it was indistinguishable. A sprite can
+        /// only be changed to a name its atlas actually holds — anything else renders as nothing —
+        /// so the names on offer are written to the log once, and the setting picks from them.
+        /// Until one is chosen, a tint is enough to tell the two apart and cannot fail.
+        /// </summary>
+        private void StyleButton(GameObject clone)
+        {
+            try
+            {
+                UISprite sprite = clone.GetComponentInChildren<UISprite>(true);
+                if (sprite == null) return;
+
+                ReportSpriteNames(sprite);
+
+                string wanted = HudButtonSprite.Value;
+                if (!string.IsNullOrEmpty(wanted))
+                {
+                    sprite.spriteName = wanted;
+                    Log.LogInfo("Button sprite set to '" + wanted + "'.");
+                }
+
+                string hex = HudButtonTint.Value;
+                if (!string.IsNullOrEmpty(hex))
+                {
+                    Color tint;
+                    if (ColorUtility.TryParseHtmlString(hex, out tint)) sprite.color = tint;
+                    else Log.LogWarning("HudButtonTint '" + hex + "' is not a colour; left as it was.");
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not style the button: " + e.Message);
+            }
+        }
+
+        /// <summary>Writes what this atlas offers, so a sprite can be chosen rather than guessed.</summary>
+        private void ReportSpriteNames(UISprite sprite)
+        {
+            if (_spriteNamesReported) return;
+            _spriteNamesReported = true;
+
+            try
+            {
+                UIAtlas atlas = sprite.atlas;
+                if (atlas == null || atlas.spriteList == null) return;
+
+                List<UISpriteData> sprites = atlas.spriteList;
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.Append("Sprites available on the button's atlas '").Append(atlas.name)
+                  .Append("' (").Append(sprites.Count).Append("), current is '")
+                  .Append(sprite.spriteName).Append("':");
+
+                for (int i = 0; i < sprites.Count && i < 120; i++)
+                {
+                    if (sprites[i] == null) continue;
+                    sb.Append("\n    ").Append(sprites[i].name);
+                }
+                Log.LogInfo(sb.ToString());
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not list the atlas sprites: " + e.Message);
             }
         }
 
