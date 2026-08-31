@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.11.1";
+        public const string PluginVersion = "0.11.2";
 
         internal static ManualLogSource Log;
 
@@ -312,8 +312,19 @@ namespace VaultAdmin
                 string wanted = HudButtonSprite.Value;
                 if (!string.IsNullOrEmpty(wanted))
                 {
-                    sprite.spriteName = wanted;
-                    Log.LogInfo("Button sprite set to '" + wanted + "'.");
+                    // Checked first: a name the atlas cannot resolve draws nothing at all, and a
+                    // blank button is worse than a borrowed icon.
+                    if (sprite.atlas != null && sprite.atlas.GetSprite(wanted) == null)
+                    {
+                        Log.LogWarning("The atlas has no sprite called '" + wanted +
+                                       "'; keeping '" + sprite.spriteName + "'. See the list above.");
+                    }
+                    else
+                    {
+                        sprite.spriteName = wanted;
+                        sprite.MakePixelPerfect();
+                        Log.LogInfo("Button sprite set to '" + wanted + "'.");
+                    }
                 }
 
                 string hex = HudButtonTint.Value;
@@ -341,25 +352,34 @@ namespace VaultAdmin
                 UIAtlas atlas = sprite.atlas;
                 if (atlas == null) return;
 
-                // Not spriteList: this atlas reported none at all, because it is a reference to
-                // another one. GetListOfSprites follows that link, which spriteList does not.
-                BetterList<string> names = atlas.GetListOfSprites();
-                if (names == null)
+                // The atlas will not list its own sprites: GetListOfSprites reads mSprites,
+                // and that is empty here even after following the replacement link, while
+                // GetSprite("Icon_Camera") plainly works. The data is not laid out where the
+                // list-reading path looks.
+                //
+                // So the names are harvested from the widgets already drawing with this atlas.
+                // Every one of those is a name the atlas resolves by definition, which is a
+                // stronger guarantee than a list would have been.
+                SortedSet<string> names = new SortedSet<string>(StringComparer.Ordinal);
+                UISprite[] all = Resources.FindObjectsOfTypeAll<UISprite>();
+
+                for (int i = 0; i < all.Length; i++)
                 {
-                    Log.LogWarning("The atlas offers no sprite list.");
-                    return;
+                    UISprite other = all[i];
+                    if (other == null || other.atlas == null) continue;
+                    // Same atlas, or one that resolves to the same texture — References is not
+                    // public, and sharing a texture means sharing a sprite table anyway.
+                    if (other.atlas != atlas && other.atlas.texture != atlas.texture) continue;
+                    if (string.IsNullOrEmpty(other.spriteName)) continue;
+                    names.Add(other.spriteName);
                 }
 
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                sb.Append("Sprites on atlas '").Append(atlas.name)
-                  .Append("' (").Append(names.size).Append("), current is '")
+                sb.Append("Sprites in use on atlas '").Append(atlas.name)
+                  .Append("' (").Append(names.Count).Append(" distinct), current is '")
                   .Append(sprite.spriteName).Append("':");
 
-                for (int i = 0; i < names.size && i < 200; i++)
-                {
-                    sb.Append("\n    ").Append(names[i]);
-                }
-                if (names.size > 200) sb.Append("\n    (").Append(names.size - 200).Append(" more)");
+                foreach (string n in names) sb.Append("\n    ").Append(n);
 
                 Log.LogInfo(sb.ToString());
             }
