@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.8.0";
+        public const string PluginVersion = "0.9.0";
 
         internal static ManualLogSource Log;
 
@@ -218,7 +218,10 @@ namespace VaultAdmin
 
         private void DrawWindow(int id)
         {
+            GUILayout.BeginHorizontal();
             GUILayout.Label("Grants go through the game's own methods.");
+            if (GUILayout.Button("Survey UI", GUILayout.Width(80f))) SurveyInterface();
+            GUILayout.EndHorizontal();
             GUILayout.Space(6f);
 
             Vault vault = SafeVault();
@@ -933,6 +936,183 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Creating a dweller failed: " + e.Message);
             }
+        }
+
+        /// <summary>
+        /// Writes a description of the game's own interface to the log.
+        ///
+        /// The panel has to become part of that interface, and an NGUI widget renders as nothing
+        /// when its depth is below what it sits on, when its parent is wrong, when its atlas lacks
+        /// the sprite it names, or when its label has no font. None of those produce an error, and
+        /// from this side of the screen they all look the same.
+        ///
+        /// The dwellers established what guessing costs: three attempts, three launches, then a
+        /// diagnostic that answered it in one. So this comes first, and reads rather than assumes —
+        /// member names are looked up and reported as found, because writing panel.depth would
+        /// compile against whatever this NGUI version happens to call it and report nothing if the
+        /// name is different.
+        ///
+        /// Reads only. Creates nothing, changes nothing, adds no component.
+        /// </summary>
+        private void SurveyInterface()
+        {
+            Log.LogInfo("=== interface survey ===");
+            SurveySection("roots", delegate { SurveyRoots(); });
+            SurveySection("panels", delegate { SurveyPanels(); });
+            SurveySection("windows", delegate { SurveyWindows(); });
+            SurveySection("atlases", delegate { SurveyAtlases(); });
+            SurveySection("fonts", delegate { SurveyFonts(); });
+            Log.LogInfo("=== end of survey ===");
+        }
+
+        private delegate void Section();
+
+        private void SurveySection(string name, Section body)
+        {
+            // One unreadable section must not cost the rest of the survey.
+            try { body(); }
+            catch (Exception e) { Log.LogWarning("  [" + name + "] could not be read: " + e.Message); }
+        }
+
+        private const int SurveyCap = 40;
+
+        private void SurveyRoots()
+        {
+            UIRoot[] roots = Resources.FindObjectsOfTypeAll<UIRoot>();
+            Log.LogInfo("  UI roots: " + roots.Length);
+
+            for (int i = 0; i < roots.Length && i < SurveyCap; i++)
+            {
+                UIRoot r = roots[i];
+                if (r == null) continue;
+                Log.LogInfo("    " + Path(r.transform) +
+                            "  scaling=" + Member(r, "scalingStyle") +
+                            "  manualHeight=" + Member(r, "manualHeight") +
+                            "  active=" + r.gameObject.activeInHierarchy);
+            }
+        }
+
+        private void SurveyPanels()
+        {
+            UIPanel[] panels = Resources.FindObjectsOfTypeAll<UIPanel>();
+            int shown = 0;
+            Log.LogInfo("  panels: " + panels.Length);
+
+            for (int i = 0; i < panels.Length; i++)
+            {
+                UIPanel p = panels[i];
+                if (p == null || !p.gameObject.activeInHierarchy) continue;   // only what is on screen
+                if (shown++ >= SurveyCap) continue;
+
+                Log.LogInfo("    " + Path(p.transform) +
+                            "  depth=" + Member(p, "depth") +
+                            "  sorting=" + Member(p, "sortingOrder") +
+                            "  clipping=" + Member(p, "clipping"));
+            }
+            if (panels.Length > shown) Log.LogInfo("    (" + (panels.Length - shown) + " more not listed)");
+        }
+
+        private void SurveyWindows()
+        {
+            // A window the game already built is what the real panel should be cloned from: it is
+            // the only way to inherit its look, depth and parenting without seeing them.
+            MonoBehaviour[] all = Resources.FindObjectsOfTypeAll<MonoBehaviour>();
+            int shown = 0;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                MonoBehaviour m = all[i];
+                if (m == null) continue;
+
+                string type = m.GetType().Name;
+                if (!type.EndsWith("Window") && !type.EndsWith("HUD") && !type.EndsWith("Popup")) continue;
+                if (shown++ >= SurveyCap) continue;
+
+                Log.LogInfo("    " + type + "  at " + Path(m.transform) +
+                            "  active=" + m.gameObject.activeInHierarchy);
+            }
+            Log.LogInfo("  windows, huds and popups listed: " + shown);
+        }
+
+        private void SurveyAtlases()
+        {
+            UIAtlas[] atlases = Resources.FindObjectsOfTypeAll<UIAtlas>();
+            Log.LogInfo("  atlases: " + atlases.Length);
+
+            for (int i = 0; i < atlases.Length && i < SurveyCap; i++)
+            {
+                UIAtlas a = atlases[i];
+                if (a == null) continue;
+
+                string size = "?";
+                try { if (a.texture != null) size = a.texture.width + "x" + a.texture.height; }
+                catch { }
+
+                string sample = "";
+                int count = 0;
+                try
+                {
+                    List<UISpriteData> sprites = a.spriteList;
+                    if (sprites != null)
+                    {
+                        count = sprites.Count;
+                        for (int k = 0; k < sprites.Count && k < 3; k++)
+                        {
+                            if (sprites[k] == null) continue;
+                            if (sample.Length > 0) sample += ", ";
+                            sample += sprites[k].name;
+                        }
+                    }
+                }
+                catch { }
+
+                Log.LogInfo("    " + a.name + "  " + size + "  sprites=" + count +
+                            (sample.Length > 0 ? "  e.g. " + sample : ""));
+            }
+        }
+
+        private void SurveyFonts()
+        {
+            UILabel[] labels = Resources.FindObjectsOfTypeAll<UILabel>();
+            HashSet<string> fonts = new HashSet<string>();
+
+            for (int i = 0; i < labels.Length; i++)
+            {
+                if (labels[i] == null) continue;
+                object bitmap = ReadAny(labels[i], "bitmapFont");
+                object dynamic = ReadAny(labels[i], "trueTypeFont");
+                if (bitmap != null) fonts.Add("bitmap:" + bitmap);
+                if (dynamic != null) fonts.Add("dynamic:" + dynamic);
+            }
+
+            Log.LogInfo("  labels: " + labels.Length + ", distinct fonts: " + fonts.Count);
+            int shown = 0;
+            foreach (string f in fonts)
+            {
+                if (shown++ >= SurveyCap) break;
+                Log.LogInfo("    " + f);
+            }
+        }
+
+        /// <summary>The transform's path, which is what tells you where to parent something.</summary>
+        private static string Path(Transform t)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(t.name);
+            Transform up = t.parent;
+            int guard = 0;
+            while (up != null && guard++ < 12)
+            {
+                sb.Insert(0, up.name + "/");
+                up = up.parent;
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Reports a member as found, or says it is not there under that name.</summary>
+        private static string Member(object target, string name)
+        {
+            object v = ReadAny(target, name);
+            return v == null ? "<no member '" + name + "'>" : v.ToString();
         }
 
         /// <summary>

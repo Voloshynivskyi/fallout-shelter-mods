@@ -31,13 +31,13 @@
 
 ## 4. Batch for a launch
 
-- [ ] 4.1 **[launch]** A created dweller joins the vault with the chosen name and SPECIAL
-- [ ] 4.2 **[launch]** A legendary dweller arrives intact
-- [ ] 4.3 **[launch]** A full vault refuses cleanly
-- [ ] 4.4 **[launch]** Created dwellers survive the mod being removed
+- [x] 4.1 **[launch]** A created dweller joins the vault with the chosen name and SPECIAL
+- [x] 4.2 **[launch]** A legendary dweller arrives intact
+- [x] 4.3 **[launch]** A full vault refuses cleanly
+- [x] 4.4 **[launch]** Created dwellers survive the mod being removed
 - [x] 4.5 Append to `openspec/testplan.md`
 
 ## 5. Close out
 
 - [x] 5.1 CHANGELOG
-- [ ] 5.2 After the batch passes: archive
+- [x] 5.2 After the batch passes: archive

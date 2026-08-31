@@ -28,12 +28,12 @@
 
 ## 4. Batch for a launch
 
-- [ ] 4.1 **[launch]** A granted pet carries its chosen name, bonus and value
-- [ ] 4.2 **[launch]** The bonus applies in play
-- [ ] 4.3 **[launch]** A save with a customised pet loads with the plugin removed
+- [x] 4.1 **[launch]** A granted pet carries its chosen name, bonus and value
+- [x] 4.2 **[launch]** The bonus applies in play
+- [x] 4.3 **[launch]** A save with a customised pet loads with the plugin removed
 - [x] 4.4 Append to `openspec/testplan.md`
 
 ## 5. Close out
 
 - [x] 5.1 CHANGELOG
-- [ ] 5.2 After the batch passes: archive
+- [x] 5.2 After the batch passes: archive

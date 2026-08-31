@@ -19,9 +19,9 @@
 - [x] 3.4 Grep: nothing per-frame in the drawing path that allocates
 
 ## 4. Batch for a launch
-- [ ] 4.1 **[launch]** Icons appear and match the items
+- [x] 4.1 **[launch]** Icons appear and match the items
 - [x] 4.2 Append to `openspec/testplan.md`
 
 ## 5. Close out
 - [x] 5.1 CHANGELOG, recording why weapon stats are not editable
-- [ ] 5.2 After the batch passes: archive
+- [x] 5.2 After the batch passes: archive

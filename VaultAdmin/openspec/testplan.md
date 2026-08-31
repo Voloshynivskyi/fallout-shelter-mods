@@ -156,7 +156,7 @@ does not.
 
 ### 13. The catalogue is read
 
-- [ ] Open the panel in a loaded vault, look at the **Items** section.
+- [x] Open the panel in a loaded vault, look at the **Items** section.
 
 **Expect** in the log, once: `Item catalogue read from the game: N weapons, M outfits, K junk.`
 
@@ -164,7 +164,7 @@ Numbers in the hundreds. Zero anywhere means the tables were not reached.
 
 ### 14. A granted weapon is a real weapon
 
-- [ ] Choose **Weapon**, type `flamer` in the filter, grant one.
+- [x] Choose **Weapon**, type `flamer` in the filter, grant one.
 
 **Expect** it in the inventory with its **proper name, icon and damage**, equippable to a dweller.
 
@@ -173,36 +173,36 @@ own data. That is the single most important thing this batch checks.
 
 ### 15. Outfits, which use a different identifier
 
-- [ ] Choose **Outfit**, grant one, equip it.
+- [x] Choose **Outfit**, grant one, equip it.
 
 Outfits are keyed differently from weapons internally, so this is a separate check, not a repeat.
 
 ### 16. Filtering
 
-- [ ] Type part of a name you know exists.
+- [x] Type part of a name you know exists.
 
 **Expect** the list to narrow. With no filter and a long family, expect a line saying how many
 matched and that the list was cut.
 
 ### 17. A full inventory
 
-- [ ] Fill the inventory, then try to grant.
+- [x] Fill the inventory, then try to grant.
 
 **Expect** `The inventory is full; <item> was not granted.` in the log, and no item lost.
 
 ### 18. Granted items survive the mod being removed
 
-- [ ] Grant several items. Save and quit. Rename the DLL to `.off`, start, load.
+- [x] Grant several items. Save and quit. Rename the DLL to `.off`, start, load.
 
 **Expect** the vault to load with every granted item present and named.
 
-- [ ] Rename the DLL back.
+- [x] Rename the DLL back.
 
-## Batch 4 — add-item-icons
+## Batch 4 — add-item-icons — PASSED
 
 ### 19. Icons
 
-- [ ] Open the item list, look at **Weapon**, then **Outfit**, then **Junk**.
+- [x] Open the item list, look at **Weapon**, then **Outfit**, then **Junk**.
 
 **Expect** each row to show that item's picture beside its name.
 
@@ -210,19 +210,19 @@ Weapons, outfits and junk each use a different atlas and a differently-named spr
 three are worth a glance. A whole family with no pictures means that family's atlas was not reached;
 a scattered blank here and there is expected and harmless.
 
-## Batch 5 — add-pet-grants
+## Batch 5 — add-pet-grants — PASSED
 
 ### 20. The pet catalogue
 
-- [ ] Open the panel, look at the **Pets** section.
+- [x] Open the panel, look at the **Pets** section.
 
 **Expect** in the log, once: `Pet catalogue read from the game: N pets.`
 
 ### 21. A customised pet
 
-- [ ] Type a name, step the bonus to something recognisable such as `CapsBoost`, set the value to
+- [x] Type a name, step the bonus to something recognisable such as `CapsBoost`, set the value to
       `50`, and grant a pet.
-- [ ] Open the pet in the inventory.
+- [x] Open the pet in the inventory.
 
 **Expect** exactly that name, that bonus and that value on the card.
 
@@ -231,19 +231,19 @@ carry values from 1.25 to 95, so an odd number is not a problem — a *wrong* on
 
 ### 22. The bonus works
 
-- [ ] Equip the pet on a dweller and check the effect applies.
+- [x] Equip the pet on a dweller and check the effect applies.
 
 ### 23. Survives the mod being removed
 
-- [ ] Save and quit, rename the DLL to `.off`, start, load.
+- [x] Save and quit, rename the DLL to `.off`, start, load.
 
 **Expect** the pet still there, still named, still carrying its bonus.
 
-## Batch 6 — add-dweller-grants
+## Batch 6 — add-dweller-grants — PASSED
 
 ### 24. A made-to-order dweller
 
-- [ ] Set a first and last name, pick a rarity, set every SPECIAL to `10`, create.
+- [x] Set a first and last name, pick a rarity, set every SPECIAL to `10`, create.
 
 **Expect** the dweller to walk into the vault carrying that name, and to show **10 in all seven
 stats** on their card.
@@ -254,19 +254,33 @@ for.
 
 ### 25. Legendary
 
-- [ ] Pick one from the legendary list and create it.
+- [x] Pick one from the legendary list and create it.
 
 **Expect** it to arrive with its own name, face and stats — not the ones set in the fields above.
 
 ### 26. A full vault
 
-- [ ] Fill the vault to its population limit, then try.
+- [x] Fill the vault to its population limit, then try.
 
 **Expect** `The vault is at its population limit; no dweller was created.` in the log, and nobody
 created.
 
 ### 27. Survives the mod being removed
 
-- [ ] Save and quit, rename the DLL to `.off`, start, load.
+- [x] Save and quit, rename the DLL to `.off`, start, load.
 
 **Expect** every created dweller present, named, with their stats intact.
+
+## Batch 7 — add-ui-survey
+
+### 28. The interface survey
+
+- [ ] Load a vault, open the panel, press **Survey UI** (top of the window, beside the note about
+      grants).
+- [ ] Quit and send the whole `BepInEx\LogOutput.log`.
+
+**Expect** a block between `=== interface survey ===` and `=== end of survey ===` listing the UI
+roots, the visible panels with their depths, the game's own windows, the atlases and the fonts.
+
+Nothing changes on screen: the survey only reads. Its whole purpose is to spend one launch learning
+the facts the real panel has to be built against, instead of several launches guessing at them.

@@ -35,13 +35,13 @@
 - [x] 5.6 Cross-check the ids the mod would use against the save's own item records
 
 ## 6. Batch for a launch
-- [ ] 6.1 **[launch]** A granted weapon shows the right name, icon and stats
-- [ ] 6.2 **[launch]** A granted outfit is equippable
-- [ ] 6.3 **[launch]** Filtering finds a known item
-- [ ] 6.4 **[launch]** A full inventory refuses rather than losing the item
-- [ ] 6.5 **[launch]** A save with granted items loads with the plugin removed
+- [x] 6.1 **[launch]** A granted weapon shows the right name, icon and stats
+- [x] 6.2 **[launch]** A granted outfit is equippable
+- [x] 6.3 **[launch]** Filtering finds a known item
+- [x] 6.4 **[launch]** A full inventory refuses rather than losing the item
+- [x] 6.5 **[launch]** A save with granted items loads with the plugin removed
 - [x] 6.6 Append to `openspec/testplan.md`
 
 ## 7. Close out
 - [x] 7.1 README and CHANGELOG
-- [ ] 7.2 After the batch passes: `openspec archive add-item-grants`
+- [x] 7.2 After the batch passes: `openspec archive add-item-grants`
