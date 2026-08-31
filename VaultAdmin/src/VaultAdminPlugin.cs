@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.7.0";
+        public const string PluginVersion = "0.7.1";
 
         internal static ManualLogSource Log;
 
@@ -874,13 +874,21 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// A world position the game already considers valid.
+        /// Where a newcomer appears: the room by the vault door.
         ///
-        /// CreateDweller takes coordinates, and inventing them means guessing at the vault's
-        /// geometry. A dweller already standing in the vault is by definition somewhere acceptable.
+        /// This is where the game puts an arrival — FakeWastelandRoom.OnHandleDwellerArrive is what
+        /// runs when someone comes back from the wasteland, and the queue forms there. Falls back to
+        /// an existing dweller's position, which is by definition somewhere the game accepts.
         /// </summary>
         private Vector3 SpawnPosition(DwellerManager dwellers)
         {
+            try
+            {
+                Room door = ManagersHandler.WastelandRoom;
+                if (door != null) return door.transform.position;
+            }
+            catch { }
+
             try
             {
                 if (dwellers.Dwellers != null && dwellers.Dwellers.Count > 0)
@@ -890,6 +898,7 @@ namespace VaultAdmin
                 }
             }
             catch { }
+
             return Vector3.zero;
         }
 
@@ -988,7 +997,15 @@ namespace VaultAdmin
         {
             try
             {
-                dweller.SetWaitingApproval();
+                // The game's own sequence, from the IL of FakeWastelandRoom.OnHandleDwellerArrive:
+                // put the dweller into the shelter state, then either queue them for approval or,
+                // if they are already a wasteland regular, drop them straight to idle.
+                dweller.ChangeState(dweller.ShelterState);
+
+                if (!dweller.IsRegisteredInWasteland) dweller.SetWaitingApproval();
+                else dweller.ChangeState(dweller.IdleState);
+
+                dweller.SetFacingRight(true);
             }
             catch (Exception e)
             {
