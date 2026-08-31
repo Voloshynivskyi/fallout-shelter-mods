@@ -143,7 +143,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.20.0";
+        public const string PluginVersion = "0.21.0";
 
         internal static ManualLogSource Log;
 
@@ -928,12 +928,22 @@ namespace VaultAdmin
             _panelOpen = !_panelOpen;
 
             if (_nguiWindow == null) BuildWindow();
+
+            if (_panelOpen)
+            {
+                _drawChecked = false;
+                _drawCheckFrames = 0;
+            }
             if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
         }
 
         // ---- the window, built from the game's own widget types ----
 
         private GameObject _nguiWindow;
+        private UITexture _frame;      // the window's own backing, and the proof it is being drawn
+        private int _drawCheckFrames;
+        private bool _drawChecked;
+        private bool _nguiDrawing;     // false until the frame is seen with a draw call
         private UIPanel _windowPanel;
         private object _font;            // UIFont or Font, whichever the game's labels use
         private int _fontSize = 28;
@@ -1013,8 +1023,8 @@ namespace VaultAdmin
                 _windowPanel = _nguiWindow.AddComponent<UIPanel>();
                 _windowPanel.depth = WindowDepth;
 
-                Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
-                      Skin.Window(_windowWidth, _windowHeight), 0);
+                _frame = Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
+                               Skin.Window(_windowWidth, _windowHeight), 0);
 
                 // The title sits on the top edge rather than inside the frame, as the game's do.
                 MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
@@ -1673,20 +1683,100 @@ namespace VaultAdmin
             }
         }
 
-        private static UIRoot FindUiRoot()
+        /// <summary>Says whether the window reached the screen, and what stopped it if it did not.</summary>
+        private void ReportDrawing()
         {
+            try
+            {
+                if (_frame == null)
+                {
+                    Log.LogWarning("The window has no frame widget; falling back to the scaffold.");
+                    return;
+                }
+
+                bool drawn = _frame.drawCall != null;
+                _nguiDrawing = drawn && _frame.isVisible;
+
+                Log.LogInfo("Window drawing check: drawCall=" + (drawn ? "yes" : "NO") +
+                            " isVisible=" + _frame.isVisible +
+                            " alpha=" + _frame.alpha +
+                            " depth=" + _frame.depth +
+                            " size=" + _frame.width + "x" + _frame.height +
+                            " texture=" + (_frame.mainTexture != null ? "yes" : "NO") +
+                            " material=" + (_frame.material != null ? _frame.material.name : "none") +
+                            " shader=" + (_frame.shader != null ? _frame.shader.name : "none") +
+                            " layer=" + LayerMask.LayerToName(_frame.gameObject.layer) +
+                            " under " + Path(_nguiWindow));
+
+                if (!_nguiDrawing)
+                    Log.LogWarning("The window is not reaching the screen; the scaffold will be " +
+                                   "drawn instead so the panel stays usable.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("The drawing check itself failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Finds the root the vault interface is actually drawn under.
+        ///
+        /// Matching on the name was wrong and cost a launch: the survey named the branch
+        /// MainScene_Root, but the UIRoot component sits on a child called "UI Root", so the name
+        /// test never matched and the search settled for whichever root came last — one nothing
+        /// renders. The HUD button is the answer, because it is the one thing here already proven
+        /// to be on screen: whatever root it hangs off is the root that draws.
+        /// </summary>
+        private UIRoot FindUiRoot()
+        {
+            if (_hudButton != null)
+            {
+                UIRoot fromButton = NGUITools.FindInParents<UIRoot>(_hudButton);
+                if (fromButton != null)
+                {
+                    Log.LogInfo("Root taken from the HUD button: '" + Path(fromButton.gameObject) + "'.");
+                    return fromButton;
+                }
+            }
+
+            // No button to follow. Report every candidate rather than settling silently, so a wrong
+            // choice is visible in the log instead of being an invisible window.
             UIRoot[] roots = Resources.FindObjectsOfTypeAll<UIRoot>();
             UIRoot best = null;
 
             for (int i = 0; i < roots.Length; i++)
             {
-                if (roots[i] == null || !roots[i].gameObject.activeInHierarchy) continue;
-                // The scene root, not the world-space one the dweller icons hang off.
+                if (roots[i] == null) continue;
+                bool live = roots[i].gameObject.activeInHierarchy;
+                Log.LogInfo("  candidate root '" + Path(roots[i].gameObject) + "' active=" + live +
+                            " layer=" + LayerMask.LayerToName(roots[i].gameObject.layer) +
+                            " activeHeight=" + roots[i].activeHeight);
+
+                if (!live) continue;
                 if (roots[i].name.IndexOf("World", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-                best = roots[i];
-                if (roots[i].name.IndexOf("MainScene", StringComparison.OrdinalIgnoreCase) >= 0) break;
+                if (best == null) best = roots[i];
+
+                if (Path(roots[i].gameObject).IndexOf("MainScene", StringComparison.OrdinalIgnoreCase) >= 0)
+                    best = roots[i];
             }
+
+            if (best != null) Log.LogInfo("Root chosen by search: '" + Path(best.gameObject) + "'.");
             return best;
+        }
+
+        /// <summary>The full path of an object, which is the only way to tell two 'UI Root's apart.</summary>
+        private static string Path(GameObject go)
+        {
+            if (go == null) return "(none)";
+
+            string path = go.name;
+            Transform t = go.transform.parent;
+            while (t != null)
+            {
+                path = t.name + "/" + path;
+                t = t.parent;
+            }
+            return path;
         }
 
         /// <summary>
@@ -1812,6 +1902,16 @@ namespace VaultAdmin
 
             EnsureHudButton();
 
+            // A window that builds without error and draws nothing is the failure this mod has
+            // already paid for once. Rather than trust that it appeared, look: a widget that is
+            // being drawn has a draw call. If it has none after a few frames, say so and let the
+            // scaffold take over, so the panel is never simply missing.
+            if (_panelOpen && _nguiWindow != null && !_drawChecked && ++_drawCheckFrames >= 10)
+            {
+                _drawChecked = true;
+                ReportDrawing();
+            }
+
             if (_panelOpen && _nguiWindow != null && ++_refreshFrames >= 30)
             {
                 _refreshFrames = 0;
@@ -1857,9 +1957,9 @@ namespace VaultAdmin
             if (!Enabled.Value || !_panelOpen) return;
 
             // The panel proper is the NGUI window; this scaffold is what is left of the one that
-            // came before it, and it stays only for the case where the window could not be built —
-            // no UI root, no font — so the mod is never unreachable.
-            if (_nguiWindow != null) return;
+            // came before it. It stays for the case where the window cannot be built or, having
+            // been built, never reaches the screen — so the mod is never simply unreachable.
+            if (_nguiWindow != null && (!_drawChecked || _nguiDrawing)) return;
 
             try
             {
