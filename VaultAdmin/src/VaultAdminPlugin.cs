@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.10.1";
+        public const string PluginVersion = "0.10.2";
 
         internal static ManualLogSource Log;
 
@@ -247,8 +247,13 @@ namespace VaultAdmin
                 clone.transform.localScale = source.transform.localScale;
 
                 StripClonedBehaviour(clone);
+                ReleaseAnchors(clone);
                 WireButton(clone);
                 MakeVisible(clone, source);
+
+                // After the anchors are gone, so the position actually holds.
+                clone.transform.localPosition =
+                    source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
 
                 // The clone was reported placed and could not be seen, so both are described here
                 // rather than guessed at again.
@@ -259,6 +264,51 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Could not place the HUD button: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Cuts the clone loose from NGUI's anchoring.
+        ///
+        /// A UIWidget carries four anchors, and when any of them names a target NGUI recomputes the
+        /// widget's position every update and overwrites whatever localPosition was set. A clone
+        /// inherits those targets, so it snaps back to exactly where the button it was copied from
+        /// sits — which puts it directly behind that button, where it cannot be seen and cannot be
+        /// clicked. That matches the symptom exactly: reported placed, nowhere to be found.
+        ///
+        /// Clearing the targets hands position back to the transform.
+        /// </summary>
+        private void ReleaseAnchors(GameObject clone)
+        {
+            try
+            {
+                UIWidget[] widgets = clone.GetComponentsInChildren<UIWidget>(true);
+                int released = 0;
+
+                for (int i = 0; i < widgets.Length; i++)
+                {
+                    UIWidget w = widgets[i];
+                    if (w == null) continue;
+
+                    bool was = w.isAnchored;
+
+                    if (w.leftAnchor != null) w.leftAnchor.target = null;
+                    if (w.rightAnchor != null) w.rightAnchor.target = null;
+                    if (w.bottomAnchor != null) w.bottomAnchor.target = null;
+                    if (w.topAnchor != null) w.topAnchor.target = null;
+
+                    // Only OnEnable and OnUpdate exist; with the targets cleared anchoring
+                    // is inactive either way, and OnEnable does not recompute every frame.
+                    w.updateAnchors = UIRect.AnchorUpdate.OnEnable;
+                    if (was) released++;
+                }
+
+                Log.LogInfo("Released anchors on " + released + " of " + widgets.Length +
+                            " widget(s) in the cloned button.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not release the cloned button's anchors: " + e.Message);
             }
         }
 
@@ -310,6 +360,8 @@ namespace VaultAdmin
 
                 UIWidget[] widgets = go.GetComponentsInChildren<UIWidget>(true);
                 sb.Append(" widgets=").Append(widgets.Length);
+                sb.Append(" anchored=").Append(go.GetComponent<UIWidget>() != null &&
+                                               go.GetComponent<UIWidget>().isAnchored);
 
                 for (int i = 0; i < widgets.Length && i < 4; i++)
                 {
