@@ -53,7 +53,9 @@ $refs = @(
     (Join-Path $managed "UnityEngine.CoreModule.dll"),
     (Join-Path $managed "UnityEngine.IMGUIModule.dll"),   # scaffold panel; goes when NGUI lands
     (Join-Path $managed "Unity.InputSystem.dll"),         # legacy UnityEngine.Input throws here
-    (Join-Path $managed "UnityEngine.ImageConversionModule.dll")   # PNG -> Texture2D for the button icon
+    (Join-Path $managed "UnityEngine.ImageConversionModule.dll"),  # PNG -> Texture2D for the button icon
+    (Join-Path $managed "UnityEngine.TextRenderingModule.dll"),   # Font, for borrowing the game's
+    (Join-Path $managed "UnityEngine.PhysicsModule.dll")          # BoxCollider: NGUI routes clicks through colliders
 )
 foreach ($r in $refs) { if (-not (Test-Path $r)) { throw "Missing reference: $r" } }
 $refArgs = $refs | ForEach-Object { "/reference:$_" }

@@ -11,6 +11,117 @@ using System.Reflection;
 namespace VaultAdmin
 {
     /// <summary>
+    /// Draws the panel's shapes at runtime, at the exact size each one needs.
+    ///
+    /// The alternative was nine-slicing a sprite out of the game's atlas, which this build makes
+    /// impossible in two ways at once: the atlas lists no sprites and exposes no texture. Drawing
+    /// instead means no atlas dependency at all, and a rectangle drawn at its final size has no
+    /// stretched corners to get wrong.
+    ///
+    /// Every result is cached: the panel asks for the same handful of sizes every frame it is open,
+    /// and a texture per frame would be a leak with extra steps.
+    /// </summary>
+    internal static class Skin
+    {
+        // Measured from the game, not matched by eye.
+        public static readonly Color Bright = new Color32(0x14, 0xFF, 0x17, 0xFF);
+        public static readonly Color Rim = new Color32(0x08, 0x60, 0x0A, 0xFF);
+        public static readonly Color Ink = new Color32(0x04, 0x28, 0x04, 0xFF);
+
+        // A window is a dimmed plate, not an opaque one: the vault shows through the game's own.
+        public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xC8);
+        public static readonly Color Clear = new Color(0f, 0f, 0f, 0f);
+
+        private static readonly Dictionary<string, Texture2D> _cache = new Dictionary<string, Texture2D>();
+
+        public static Texture2D Frame(int width, int height, int radius, int thickness,
+                                      Color edge, Color inside)
+        {
+            width = Mathf.Max(1, width);
+            height = Mathf.Max(1, height);
+            radius = Mathf.Clamp(radius, 0, Mathf.Min(width, height) / 2);
+
+            string key = width + "x" + height + "r" + radius + "t" + thickness +
+                         "e" + ColorUtility.ToHtmlStringRGBA(edge) +
+                         "i" + ColorUtility.ToHtmlStringRGBA(inside);
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            texture.filterMode = FilterMode.Bilinear;
+            texture.wrapMode = TextureWrapMode.Clamp;
+
+            Color[] pixels = new Color[width * height];
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    // How far this pixel lies outside the rounded core, in pixels.
+                    float dx = 0f;
+                    float dy = 0f;
+                    if (x < radius) dx = radius - x;
+                    else if (x >= width - radius) dx = x - (width - radius - 1);
+                    if (y < radius) dy = radius - y;
+                    else if (y >= height - radius) dy = y - (height - radius - 1);
+
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+
+                    Color colour;
+                    if (d > radius)
+                    {
+                        colour = Clear;                       // outside the rounded corner
+                    }
+                    else
+                    {
+                        int near = Mathf.Min(Mathf.Min(x, y), Mathf.Min(width - 1 - x, height - 1 - y));
+                        bool onEdge = near < thickness || d > radius - thickness;
+                        colour = onEdge ? edge : inside;
+                    }
+
+                    pixels[y * width + x] = colour;
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply();
+            _cache[key] = texture;
+            return texture;
+        }
+
+        /// <summary>The window plate: bright outline, dimmed interior.</summary>
+        public static Texture2D Window(int width, int height)
+        {
+            return Frame(width, height, 18, 3, Bright, Plate);
+        }
+
+        /// <summary>An ordinary button: outlined, nothing behind it. Frequent, reversible actions.</summary>
+        public static Texture2D Button(int width, int height)
+        {
+            return Frame(width, height, 8, 3, Bright, Clear);
+        }
+
+        /// <summary>An emphasis button: solid, with dark text on it. Close, save, confirm.</summary>
+        public static Texture2D SolidButton(int width, int height)
+        {
+            return Frame(width, height, 8, 3, Bright, Bright);
+        }
+
+        /// <summary>A content row: a quieter outline, dimmed inside.</summary>
+        public static Texture2D Row(int width, int height)
+        {
+            return Frame(width, height, 6, 2, Rim, Plate);
+        }
+
+        /// <summary>A section header: solid, inverted against the rows beneath it.</summary>
+        public static Texture2D Header(int width, int height)
+        {
+            return Frame(width, height, 6, 2, Bright, Bright);
+        }
+    }
+
+    /// <summary>
     /// Vault Admin — a debug panel for Fallout Shelter.
     ///
     /// Reads live vault state, and grants resources and boxes.
@@ -32,7 +143,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.14.0";
+        public const string PluginVersion = "0.20.0";
 
         internal static ManualLogSource Log;
 
@@ -815,6 +926,884 @@ namespace VaultAdmin
         public void TogglePanel()
         {
             _panelOpen = !_panelOpen;
+
+            if (_nguiWindow == null) BuildWindow();
+            if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
+        }
+
+        // ---- the window, built from the game's own widget types ----
+
+        private GameObject _nguiWindow;
+        private UIPanel _windowPanel;
+        private object _font;            // UIFont or Font, whichever the game's labels use
+        private int _fontSize = 28;
+
+        private const int WindowDepth = 5000;   // above everything the game draws
+
+        // Measured from the interface rather than fixed, so the panel keeps its proportions on any
+        // screen: a third of the width, down the left, and short of the full height so the game's
+        // own controls along the top and bottom of the overlay stay reachable.
+        private int _windowWidth = 520;
+        private int _windowHeight = 620;
+        private int _windowX;
+
+        private const int EdgeMargin = 20;
+        private const int VerticalInset = 90;   // room for the game's top and bottom controls
+        private const int RowHeight = 44;
+        private const int RowGap = 5;
+        private const int Margin = 20;
+
+        private int _cursorY;
+        private int _refreshFrames;
+
+        private enum Tab { Resources, Dwellers, Things }
+
+        private Tab _tab = Tab.Resources;
+        private readonly Dictionary<Tab, GameObject> _tabPages = new Dictionary<Tab, GameObject>();
+        private readonly Dictionary<Tab, GameObject> _tabButtons = new Dictionary<Tab, GameObject>();
+
+        // Value labels that have to keep up with the vault, kept so they can be rewritten rather
+        // than the row rebuilt. Rebuilding widgets to change a number turns a panel into a source
+        // of garbage.
+        private readonly Dictionary<EResource, UILabel> _resourceLabels =
+            new Dictionary<EResource, UILabel>();
+
+        private void MeasureWindow(UIRoot root)
+        {
+            int virtualHeight = root.activeHeight > 0 ? root.activeHeight : 720;
+            float aspect = Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
+            int virtualWidth = Mathf.RoundToInt(virtualHeight * aspect);
+
+            _windowWidth = Mathf.Clamp(virtualWidth / 3, 380, 900);
+            _windowHeight = Mathf.Max(320, virtualHeight - VerticalInset * 2);
+            _windowX = -virtualWidth / 2 + _windowWidth / 2 + EdgeMargin;
+
+            Log.LogInfo("Window sized to " + _windowWidth + "x" + _windowHeight +
+                        " within a " + virtualWidth + "x" + virtualHeight + " interface.");
+        }
+
+        /// <summary>
+        /// Builds the window once, out of textures drawn at runtime rather than atlas sprites.
+        ///
+        /// Parented under the game's own UI root so it inherits the scaling that makes the interface
+        /// the same size on every screen. Depth is set far above the game's panels: a widget behind
+        /// another is invisible with no error, and that has already cost a round of guessing here.
+        /// </summary>
+        private bool BuildWindow()
+        {
+            try
+            {
+                UIRoot root = FindUiRoot();
+                if (root == null)
+                {
+                    ReportOnce("uiroot", "No UI root yet; the window cannot be built.");
+                    return false;
+                }
+
+                BorrowFont();
+
+                MeasureWindow(root);
+
+                _nguiWindow = new GameObject("VaultAdmin_Window");
+                _nguiWindow.layer = root.gameObject.layer;
+                _nguiWindow.transform.SetParent(root.transform, false);
+                _nguiWindow.transform.localPosition = new Vector3(_windowX, 0f, 0f);
+                _nguiWindow.transform.localScale = Vector3.one;
+
+                _windowPanel = _nguiWindow.AddComponent<UIPanel>();
+                _windowPanel.depth = WindowDepth;
+
+                Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
+                      Skin.Window(_windowWidth, _windowHeight), 0);
+
+                // The title sits on the top edge rather than inside the frame, as the game's do.
+                MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
+                          0, _windowHeight / 2, _windowWidth, 40, Skin.Bright, 2);
+
+                BuildTabs(_nguiWindow.transform);
+                BuildPages(_nguiWindow.transform);
+                ShowTab(_tab);
+            RefreshThings();
+
+                MakeButton(_nguiWindow.transform, "Close", "CLOSE",
+                           _windowWidth / 2 - 78, -_windowHeight / 2 + 34, 128, 46,
+                           true, TogglePanel);
+
+                _nguiWindow.SetActive(false);
+                Log.LogInfo("Built the panel window under " + root.name + ".");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not build the window: " + e.Message);
+                _nguiWindow = null;
+                return false;
+            }
+        }
+
+        private void BuildTabs(Transform parent)
+        {
+            Tab[] tabs = { Tab.Resources, Tab.Dwellers, Tab.Things };
+            string[] names = { "RESOURCES", "DWELLERS", "ITEMS" };
+
+            int usable = _windowWidth - Margin * 2;
+            int width = (usable - 12) / 3;
+            int y = _windowHeight / 2 - 58;
+            int x = -usable / 2 + width / 2;
+
+            for (int i = 0; i < tabs.Length; i++)
+            {
+                Tab captured = tabs[i];
+                _tabButtons[tabs[i]] = MakeButton(parent, "Tab_" + tabs[i], names[i],
+                                                  x, y, width, 42, false,
+                                                  delegate { ShowTab(captured); });
+                x += width + 6;
+            }
+        }
+
+        private void BuildPages(Transform parent)
+        {
+            foreach (Tab tab in new[] { Tab.Resources, Tab.Dwellers, Tab.Things })
+            {
+                GameObject page = new GameObject("Page_" + tab);
+                page.layer = parent.gameObject.layer;
+                page.transform.SetParent(parent, false);
+                page.transform.localPosition = Vector3.zero;
+                page.transform.localScale = Vector3.one;
+                _tabPages[tab] = page;
+            }
+
+            BuildResourcesPage(_tabPages[Tab.Resources].transform);
+            BuildDwellersPage(_tabPages[Tab.Dwellers].transform);
+            BuildThingsPage(_tabPages[Tab.Things].transform);
+        }
+
+        /// <summary>
+        /// Shows one page and hides the rest.
+        ///
+        /// Pages are built once and switched by activation rather than rebuilt: constructing
+        /// widgets on every tab press would make a panel meant to be opened often into a source of
+        /// garbage.
+        /// </summary>
+        private void ShowTab(Tab tab)
+        {
+            _tab = tab;
+
+            foreach (KeyValuePair<Tab, GameObject> entry in _tabPages)
+            {
+                if (entry.Value != null) entry.Value.SetActive(entry.Key == tab);
+            }
+
+            // The chosen tab is solid, the rest outlined — the game's own distinction between an
+            // emphasised control and an ordinary one.
+            foreach (KeyValuePair<Tab, GameObject> entry in _tabButtons)
+            {
+                if (entry.Value == null) continue;
+
+                UITexture face = entry.Value.GetComponent<UITexture>();
+                UILabel text = entry.Value.GetComponentInChildren<UILabel>();
+                if (face == null) continue;
+
+                bool active = entry.Key == tab;
+                face.mainTexture = active
+                    ? Skin.SolidButton(face.width, face.height)
+                    : Skin.Button(face.width, face.height);
+                if (text != null) text.color = active ? Skin.Ink : Skin.Bright;
+            }
+        }
+
+        /// <summary>
+        /// Lays a page out from the top down.
+        ///
+        /// The game's windows put content in outlined rows under a solid header, never loose on the
+        /// background. Positions are computed once: there is no layout pass here, and recomputing
+        /// geometry every frame would cost more than the rest of this mod put together.
+        /// </summary>
+        private void BuildResourcesPage(Transform parent)
+        {
+            _cursorY = _windowHeight / 2 - 96;     // below the title and the tab bar
+            int contentWidth = _windowWidth - Margin * 2;
+
+            foreach (EResource resource in Enum.GetValues(typeof(EResource)))
+            {
+                if (resource == EResource.None || resource == EResource.Count) continue;
+                if (Array.IndexOf(NotRealResources, resource) >= 0) continue;
+                AddResourceRow(parent, resource, contentWidth);
+            }
+
+            AddHeader(parent, "BOXES", contentWidth);
+            foreach (ELunchBoxType type in BoxTypes) AddBoxRow(parent, type, contentWidth);
+        }
+
+        // ---- the items and pets page ----
+
+        // A row is built once and rewritten as the list is paged through. Rebuilding widgets to
+        // turn a page would make the longest list in the game the most expensive thing here.
+        private sealed class ItemRow
+        {
+            public GameObject Root;
+            public UISprite Icon;
+            public UILabel Name;
+            public GameObject Give;
+        }
+
+        private static readonly EItemType[] Families =
+        {
+            EItemType.Weapon, EItemType.Outfit, EItemType.Junk, EItemType.Pet
+        };
+
+        private readonly List<ItemRow> _itemRows = new List<ItemRow>();
+
+        // Holds CatalogueEntry for the three item families and PetEntry for pets, so one list and
+        // one set of rows serve all four.
+        private readonly List<object> _shown = new List<object>();
+
+        private GameObject _petStrip;
+        private UIInput _filterInput;
+        private UIInput _petNameInput;
+        private UIInput _petValueInput;
+        private UILabel _familyLabel;
+        private UILabel _bonusLabel;
+        private UILabel _pageLabel;
+
+        private int _familyIndex;
+        private int _itemPage;
+        private int _rowsPerPage;
+        private string _appliedFilter = "";
+
+        private const int ItemRowHeight = 40;
+        private const int MaxItemRows = 9;
+
+        private void BuildThingsPage(Transform parent)
+        {
+            _cursorY = _windowHeight / 2 - 96;
+            int width = _windowWidth - Margin * 2;
+
+            _familyLabel = AddPickerRow(parent, width, "FAMILY",
+                                        delegate { StepFamily(-1); }, delegate { StepFamily(1); },
+                                        Families[_familyIndex].ToString().ToUpper());
+
+            Plate(parent, "FilterRow", 0, _cursorY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            UILabel filterName = MakeLabel(parent, "FilterName", "FILTER",
+                                           -width / 2 + 70, _cursorY, 120, RowHeight, Skin.Bright, 3);
+            filterName.alignment = NGUIText.Alignment.Left;
+            _filterInput = AddInput(parent, "Filter", 30, _cursorY, width - 160, "ALL");
+            _cursorY -= RowHeight + RowGap;
+
+            // The list occupies whatever is left between here and the pager above the close button.
+            int listTop = _cursorY;
+            int listBottom = -_windowHeight / 2 + 96;
+
+            _rowsPerPage = Mathf.Clamp((listTop - listBottom) / (ItemRowHeight + RowGap), 1, MaxItemRows);
+
+            for (int i = 0; i < _rowsPerPage; i++)
+                _itemRows.Add(BuildItemRow(parent, i, width, listTop - i * (ItemRowHeight + RowGap)));
+
+            BuildPetStrip(parent, width, listBottom + 2 * (ItemRowHeight + RowGap));
+
+            // The pager sits at the foot of the page, clear of the window's close button.
+            int pagerY = listBottom - 8;
+            MakeButton(parent, "PagePrev", "<", -width / 2 + 40, pagerY, 70, 34, false,
+                       delegate { StepPage(-1); });
+            _pageLabel = MakeLabel(parent, "PageLabel", "-", 0, pagerY, width - 200, 34, Skin.Bright, 3);
+            MakeButton(parent, "PageNext", ">", width / 2 - 40, pagerY, 70, 34, false,
+                       delegate { StepPage(1); });
+        }
+
+        private ItemRow BuildItemRow(Transform parent, int index, int width, int y)
+        {
+            ItemRow row = new ItemRow();
+
+            row.Root = new GameObject("ItemRow" + index);
+            row.Root.layer = parent.gameObject.layer;
+            row.Root.transform.SetParent(parent, false);
+            row.Root.transform.localPosition = new Vector3(0f, y, 0f);
+            row.Root.transform.localScale = Vector3.one;
+
+            Plate(row.Root.transform, "Plate", 0, 0, width, ItemRowHeight,
+                  Skin.Row(width, ItemRowHeight), 1);
+
+            // The game's own art, out of the game's own atlas: a UISprite needs nothing but the
+            // atlas and the sprite's name, which the catalogue already carries.
+            GameObject iconGo = new GameObject("Icon");
+            iconGo.layer = parent.gameObject.layer;
+            iconGo.transform.SetParent(row.Root.transform, false);
+            iconGo.transform.localPosition = new Vector3(-width / 2 + 28, 0f, 0f);
+            iconGo.transform.localScale = Vector3.one;
+
+            row.Icon = iconGo.AddComponent<UISprite>();
+            row.Icon.width = 34;
+            row.Icon.height = 34;
+            row.Icon.depth = 3;
+
+            row.Name = MakeLabel(row.Root.transform, "Name", "", 20, 0, width - 190, ItemRowHeight,
+                                 Skin.Bright, 3);
+            row.Name.alignment = NGUIText.Alignment.Left;
+
+            int captured = index;
+            row.Give = MakeButton(row.Root.transform, "Give", "GIVE", width / 2 - 48, 0, 84, 32,
+                                  false, delegate { GiveRow(captured); });
+
+            return row;
+        }
+
+        /// <summary>
+        /// The two controls that only mean anything for a pet.
+        ///
+        /// Pets are the one family that carries data per copy, so they are the one the panel can
+        /// name and tune. The strip appears only for them, and the list gives up its last two rows
+        /// to make room rather than the page growing past the window.
+        /// </summary>
+        private void BuildPetStrip(Transform parent, int width, int y)
+        {
+            _petStrip = new GameObject("PetStrip");
+            _petStrip.layer = parent.gameObject.layer;
+            _petStrip.transform.SetParent(parent, false);
+            _petStrip.transform.localPosition = new Vector3(0f, y, 0f);
+            _petStrip.transform.localScale = Vector3.one;
+
+            Plate(_petStrip.transform, "NamePlate", 0, 0, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            UILabel caption = MakeLabel(_petStrip.transform, "NameCaption", "PET NAME",
+                                        -width / 2 + 80, 0, 150, RowHeight, Skin.Bright, 3);
+            caption.alignment = NGUIText.Alignment.Left;
+            _petNameInput = AddInput(_petStrip.transform, "PetName", 40, 0, width - 180, "RANDOM");
+
+            int second = -(RowHeight + RowGap);
+            Plate(_petStrip.transform, "BonusPlate", 0, second, width, RowHeight,
+                  Skin.Row(width, RowHeight), 1);
+
+            MakeButton(_petStrip.transform, "BonusBack", "<", -width / 2 + 34, second, 44, 32, false,
+                       delegate { StepBonus(-1); });
+            _bonusLabel = MakeLabel(_petStrip.transform, "BonusName",
+                                    BonusEffects[_petBonusIndex].ToString(),
+                                    -20, second, width - 220, RowHeight, Skin.Bright, 3);
+            MakeButton(_petStrip.transform, "BonusFwd", ">", -width / 2 + 82, second, 44, 32, false,
+                       delegate { StepBonus(1); });
+
+            _petValueInput = AddInput(_petStrip.transform, "PetValue", width / 2 - 60, second, 96, "10");
+
+            _petStrip.SetActive(false);
+        }
+
+        private void StepFamily(int by)
+        {
+            _familyIndex = (_familyIndex + by + Families.Length) % Families.Length;
+            _family = Families[_familyIndex];
+            _itemPage = 0;
+            if (_familyLabel != null) _familyLabel.text = _family.ToString().ToUpper();
+            RefreshThings();
+        }
+
+        private void StepBonus(int by)
+        {
+            _petBonusIndex = (_petBonusIndex + by + BonusEffects.Length) % BonusEffects.Length;
+            if (_bonusLabel != null) _bonusLabel.text = BonusEffects[_petBonusIndex].ToString();
+        }
+
+        private void StepPage(int by)
+        {
+            int rows = VisibleRowCount();
+            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
+            _itemPage = Mathf.Clamp(_itemPage + by, 0, pages - 1);
+            FillRows();
+        }
+
+        private int VisibleRowCount()
+        {
+            bool pets = _family == EItemType.Pet;
+            return Mathf.Max(1, pets ? _rowsPerPage - 2 : _rowsPerPage);
+        }
+
+        /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
+        private void RefreshThings()
+        {
+            _shown.Clear();
+
+            string filter = _filter == null ? "" : _filter.Trim().ToLower();
+
+            if (_family == EItemType.Pet)
+            {
+                if (_pets == null) BuildPetCatalogue();
+                if (_pets != null)
+                {
+                    for (int i = 0; i < _pets.Count; i++)
+                    {
+                        if (filter.Length > 0 &&
+                            _pets[i].Name.ToLower().IndexOf(filter) < 0) continue;
+                        _shown.Add(_pets[i]);
+                    }
+                }
+            }
+            else
+            {
+                if (_catalogue == null) BuildCatalogue();
+                if (_catalogue != null)
+                {
+                    for (int i = 0; i < _catalogue.Count; i++)
+                    {
+                        CatalogueEntry entry = _catalogue[i];
+                        if (entry.Type != _family) continue;
+                        if (filter.Length > 0 && entry.Name.ToLower().IndexOf(filter) < 0) continue;
+                        _shown.Add(entry);
+                    }
+                }
+            }
+
+            int rows = VisibleRowCount();
+            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
+            _itemPage = Mathf.Clamp(_itemPage, 0, pages - 1);
+
+            if (_petStrip != null) _petStrip.SetActive(_family == EItemType.Pet);
+            FillRows();
+        }
+
+        /// <summary>Writes this page of the list into rows that already exist.</summary>
+        private void FillRows()
+        {
+            int rows = VisibleRowCount();
+            int first = _itemPage * rows;
+
+            for (int i = 0; i < _itemRows.Count; i++)
+            {
+                ItemRow row = _itemRows[i];
+                if (row == null || row.Root == null) continue;
+
+                int index = first + i;
+                bool used = i < rows && index < _shown.Count;
+                row.Root.SetActive(used);
+                if (!used) continue;
+
+                object thing = _shown[index];
+
+                CatalogueEntry item = thing as CatalogueEntry;
+                if (item != null)
+                {
+                    row.Name.text = item.Name;
+                    ShowIcon(row.Icon, item);
+                }
+                else
+                {
+                    PetEntry pet = (PetEntry)thing;
+                    row.Name.text = pet.Name;
+                    // Pet art loads per type on demand, so there is nothing to show here until the
+                    // pet is granted and the game fetches its atlas.
+                    row.Icon.atlas = null;
+                    row.Icon.spriteName = "";
+                }
+            }
+
+            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
+            if (_pageLabel != null)
+                _pageLabel.text = _shown.Count == 0
+                    ? "NOTHING MATCHES"
+                    : (_itemPage + 1) + " / " + pages + "   (" + _shown.Count + ")";
+        }
+
+        private void ShowIcon(UISprite icon, CatalogueEntry entry)
+        {
+            UIAtlas atlas;
+            if (string.IsNullOrEmpty(entry.Sprite) ||
+                !_atlases.TryGetValue(entry.Type, out atlas) || atlas == null)
+            {
+                icon.atlas = null;
+                icon.spriteName = "";
+                return;
+            }
+
+            icon.atlas = atlas;
+            icon.spriteName = entry.Sprite;
+        }
+
+        /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
+        private void GiveRow(int rowIndex)
+        {
+            int index = _itemPage * VisibleRowCount() + rowIndex;
+            if (index < 0 || index >= _shown.Count) return;
+
+            object thing = _shown[index];
+
+            CatalogueEntry item = thing as CatalogueEntry;
+            if (item != null) { GrantItem(item); return; }
+
+            if (_petNameInput != null) _petName = _petNameInput.value;
+            if (_petValueInput != null && !string.IsNullOrEmpty(_petValueInput.value))
+                _petBonusValue = _petValueInput.value;
+
+            GrantPet((PetEntry)thing);
+        }
+
+        private UIInput _firstNameInput;
+        private UIInput _lastNameInput;
+        private UILabel _rarityLabel;
+        private UILabel _genderLabel;
+        private UILabel _levelLabel;
+        private readonly UILabel[] _specialLabels = new UILabel[7];
+        private int _dwellerLevelValue = 1;
+
+        private void BuildDwellersPage(Transform parent)
+        {
+            _cursorY = _windowHeight / 2 - 96;
+            int width = _windowWidth - Margin * 2;
+
+            AddHeader(parent, "NAME", width);
+
+            Plate(parent, "NameRow", 0, _cursorY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            _firstNameInput = AddInput(parent, "First", -width / 4, _cursorY, width / 2 - 12, "FIRST");
+            _lastNameInput = AddInput(parent, "Last", width / 4, _cursorY, width / 2 - 12, "LAST");
+            _cursorY -= RowHeight + RowGap;
+
+            AddHeader(parent, "RARITY, GENDER, LEVEL", width);
+
+            _rarityLabel = AddPickerRow(parent, width, "RARITY",
+                                        delegate { StepRarity(-1); }, delegate { StepRarity(1); },
+                                        Rarities[_rarityIndex].ToString());
+
+            _genderLabel = AddPickerRow(parent, width, "GENDER",
+                                        delegate { StepGender(-1); }, delegate { StepGender(1); },
+                                        Genders[_genderIndex].ToString());
+
+            _levelLabel = AddPickerRow(parent, width, "LEVEL",
+                                       delegate { StepLevel(-1); }, delegate { StepLevel(1); },
+                                       _dwellerLevelValue.ToString());
+
+            AddHeader(parent, "SPECIAL", width);
+
+            // Seven stats across one row: a row apiece would not fit, and the letters are the
+            // game's own shorthand for them.
+            int cell = (width - 16) / 7;
+            Plate(parent, "SpecialRow", 0, _cursorY, width, RowHeight + 22,
+                  Skin.Row(width, RowHeight + 22), 1);
+
+            for (int i = 0; i < Specials.Length; i++)
+            {
+                int index = i;
+                int x = -width / 2 + cell / 2 + 8 + i * cell;
+
+                MakeLabel(parent, "SpecLetter" + i, Specials[i].ToString().Substring(0, 1),
+                          x, _cursorY + 20, cell, 24, Skin.Bright, 3);
+
+                _specialLabels[i] = MakeLabel(parent, "SpecValue" + i, _special[i].ToString(),
+                                              x, _cursorY - 2, cell, 24, Skin.Bright, 3);
+
+                MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, _cursorY - 24, cell / 2 - 4, 26,
+                           false, delegate { StepSpecial(index, -1); });
+                MakeButton(parent, "SpecUp" + i, "+", x + cell / 4, _cursorY - 24, cell / 2 - 4, 26,
+                           false, delegate { StepSpecial(index, 1); });
+            }
+            _cursorY -= RowHeight + 22 + RowGap;
+
+            MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY, width, 44, true,
+                       CreateDwellerFromPanel);
+            _cursorY -= 44 + RowGap;
+
+            MakeLabel(parent, "DwellerNote",
+                      "Arrives at the vault door, waiting to be let in.",
+                      0, _cursorY, width, 26, Skin.Bright, 3);
+        }
+
+        /// <summary>A label, a value, and a pair of arrows — the game's own way of offering a choice.</summary>
+        private UILabel AddPickerRow(Transform parent, int width, string caption,
+                                     EventDelegate.Callback back, EventDelegate.Callback forward,
+                                     string initial)
+        {
+            Plate(parent, "Pick_" + caption, 0, _cursorY, width, RowHeight,
+                  Skin.Row(width, RowHeight), 1);
+
+            UILabel name = MakeLabel(parent, "PickName_" + caption, caption,
+                                     -width / 2 + 90, _cursorY, 160, RowHeight, Skin.Bright, 3);
+            name.alignment = NGUIText.Alignment.Left;
+
+            MakeButton(parent, "PickBack_" + caption, "<", width / 2 - 190, _cursorY, 44, 34, false, back);
+            UILabel value = MakeLabel(parent, "PickValue_" + caption, initial,
+                                      width / 2 - 118, _cursorY, 120, RowHeight, Skin.Bright, 3);
+            MakeButton(parent, "PickFwd_" + caption, ">", width / 2 - 46, _cursorY, 44, 34, false, forward);
+
+            _cursorY -= RowHeight + RowGap;
+            return value;
+        }
+
+        private UIInput AddInput(Transform parent, string name, int x, int y, int width, string hint)
+        {
+            GameObject go = new GameObject("Input_" + name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UILabel label = MakeLabel(go.transform, "Text", "", 0, 0, width - 16, RowHeight - 8,
+                                      Skin.Bright, 3);
+
+            // NGUI routes typing through a collider, exactly as it routes clicks.
+            BoxCollider box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(width, RowHeight - 8, 1f);
+            box.isTrigger = true;
+
+            UIInput input = go.AddComponent<UIInput>();
+            input.label = label;
+            input.defaultText = hint;
+            input.characterLimit = 24;
+            return input;
+        }
+
+        private void StepRarity(int by)
+        {
+            _rarityIndex = (_rarityIndex + by + Rarities.Length) % Rarities.Length;
+            if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString();
+        }
+
+        private void StepGender(int by)
+        {
+            _genderIndex = (_genderIndex + by + Genders.Length) % Genders.Length;
+            if (_genderLabel != null) _genderLabel.text = Genders[_genderIndex].ToString();
+        }
+
+        private void StepLevel(int by)
+        {
+            _dwellerLevelValue = Mathf.Clamp(_dwellerLevelValue + by, 1, 50);
+            _dwellerLevel = _dwellerLevelValue.ToString();
+            if (_levelLabel != null) _levelLabel.text = _dwellerLevel;
+        }
+
+        private void StepSpecial(int index, int by)
+        {
+            _special[index] = Mathf.Clamp(_special[index] + by, 1, 10);
+            if (_specialLabels[index] != null) _specialLabels[index].text = _special[index].ToString();
+        }
+
+        /// <summary>Reads the panel's fields and hands them to the creation the game already uses.</summary>
+        private void CreateDwellerFromPanel()
+        {
+            if (_firstNameInput != null) _dwellerFirst = _firstNameInput.value;
+            if (_lastNameInput != null) _dwellerLast = _lastNameInput.value;
+            _dwellerLevel = _dwellerLevelValue.ToString();
+            CreateDweller();
+        }
+
+        private void AddHeader(Transform parent, string text, int width)
+        {
+            Plate(parent, "Header_" + text, 0, _cursorY, width, 34, Skin.Header(width, 34), 1);
+            MakeLabel(parent, "HeaderText_" + text, text, 0, _cursorY, width - 20, 34, Skin.Ink, 3);
+            _cursorY -= 34 + RowGap;
+        }
+
+        private void AddResourceRow(Transform parent, EResource resource, int width)
+        {
+            Plate(parent, "Row_" + resource, 0, _cursorY, width, RowHeight,
+                  Skin.Row(width, RowHeight), 1);
+
+            UILabel name = MakeLabel(parent, "Name_" + resource, resource.ToString(),
+                                     -width / 2 + 90, _cursorY, 160, RowHeight, Skin.Bright, 3);
+            name.alignment = NGUIText.Alignment.Left;
+
+            UILabel value = MakeLabel(parent, "Value_" + resource, "-",
+                                      -width / 2 + 250, _cursorY, 130, RowHeight, Skin.Bright, 3);
+            value.alignment = NGUIText.Alignment.Right;
+            _resourceLabels[resource] = value;
+
+            // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
+            EResource captured = resource;
+            int buttonWidth = 74;
+            int x = width / 2 - buttonWidth / 2 - 8;
+
+            MakeButton(parent, "Fill_" + resource, "MAX", x, _cursorY, buttonWidth, 34, false,
+                       delegate { FillToCap(captured); });
+            x -= buttonWidth + 6;
+
+            for (int i = GrantAmounts.Length - 1; i >= 0; i--)
+            {
+                float amount = GrantAmounts[i];
+                MakeButton(parent, "Grant_" + resource + "_" + amount,
+                           "+" + amount.ToString("0"), x, _cursorY, buttonWidth, 34, false,
+                           delegate { Grant(captured, amount); });
+                x -= buttonWidth + 6;
+            }
+
+            _cursorY -= RowHeight + RowGap;
+        }
+
+        private void AddBoxRow(Transform parent, ELunchBoxType type, int width)
+        {
+            Plate(parent, "BoxRow_" + type, 0, _cursorY, width, RowHeight,
+                  Skin.Row(width, RowHeight), 1);
+
+            UILabel name = MakeLabel(parent, "BoxName_" + type, type.ToString(),
+                                     -width / 2 + 110, _cursorY, 200, RowHeight, Skin.Bright, 3);
+            name.alignment = NGUIText.Alignment.Left;
+
+            ELunchBoxType captured = type;
+            int buttonWidth = 74;
+            int x = width / 2 - buttonWidth / 2 - 8;
+
+            for (int i = BoxAmounts.Length - 1; i >= 0; i--)
+            {
+                int quantity = BoxAmounts[i];
+                MakeButton(parent, "Box_" + type + "_" + quantity, "+" + quantity,
+                           x, _cursorY, buttonWidth, 34, false,
+                           delegate { GrantBoxes(captured, quantity); });
+                x -= buttonWidth + 6;
+            }
+
+            _cursorY -= RowHeight + RowGap;
+        }
+
+        /// <summary>Rewrites the figures while the window is open, without rebuilding anything.</summary>
+        private void RefreshValues()
+        {
+            Vault vault = SafeVault();
+            if (vault == null || !vault.Loaded || vault.Storage == null) return;
+
+            GameResources held = vault.Storage.Resources;
+            GameResources cap = vault.Storage.MaxResources;
+            if (held == null) return;
+
+            foreach (KeyValuePair<EResource, UILabel> entry in _resourceLabels)
+            {
+                if (entry.Value == null) continue;
+                try
+                {
+                    string line = held[entry.Key].ToString("0");
+                    if (cap != null)
+                    {
+                        float max = cap[entry.Key];
+                        if (max > 0f) line += " / " + max.ToString("0");
+                    }
+                    entry.Value.text = line;
+                }
+                catch { entry.Value.text = "-"; }
+            }
+        }
+
+        private static UIRoot FindUiRoot()
+        {
+            UIRoot[] roots = Resources.FindObjectsOfTypeAll<UIRoot>();
+            UIRoot best = null;
+
+            for (int i = 0; i < roots.Length; i++)
+            {
+                if (roots[i] == null || !roots[i].gameObject.activeInHierarchy) continue;
+                // The scene root, not the world-space one the dweller icons hang off.
+                if (roots[i].name.IndexOf("World", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                best = roots[i];
+                if (roots[i].name.IndexOf("MainScene", StringComparison.OrdinalIgnoreCase) >= 0) break;
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Takes a font off a label the game already draws.
+        ///
+        /// A UILabel with no font renders nothing at all and says nothing about it, and there is no
+        /// font of ours to give it. Borrowing one also means the panel reads in the game's own face
+        /// rather than in something that looks imported.
+        /// </summary>
+        private void BorrowFont()
+        {
+            if (_font != null) return;
+
+            UILabel[] labels = Resources.FindObjectsOfTypeAll<UILabel>();
+            for (int i = 0; i < labels.Length; i++)
+            {
+                UILabel label = labels[i];
+                if (label == null) continue;
+
+                object bitmap = ReadAny(label, "bitmapFont");
+                object dynamic = ReadAny(label, "trueTypeFont");
+                if (bitmap == null && dynamic == null) continue;
+
+                _font = bitmap != null ? bitmap : dynamic;
+                _fontSize = label.fontSize > 0 ? label.fontSize : _fontSize;
+                Log.LogInfo("Borrowed a font from '" + label.name + "': " +
+                            _font.GetType().Name + ", size " + _fontSize + ".");
+                return;
+            }
+
+            Log.LogWarning("No font found on any label; the panel's text will not draw.");
+        }
+
+        /// <summary>A drawn texture, positioned in the window's own space.</summary>
+        private UITexture Plate(Transform parent, string name, int x, int y, int width, int height,
+                                Texture2D texture, int depthOffset)
+        {
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UITexture drawn = go.AddComponent<UITexture>();
+            drawn.mainTexture = texture;
+            drawn.width = width;
+            drawn.height = height;
+            drawn.depth = depthOffset;
+
+            Shader shader = Shader.Find("Unlit/Transparent Colored");
+            if (shader != null) drawn.shader = shader;
+
+            return drawn;
+        }
+
+        private UILabel MakeLabel(Transform parent, string name, string text,
+                                  int x, int y, int width, int height, Color colour, int depthOffset)
+        {
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UILabel label = go.AddComponent<UILabel>();
+
+            UIFont bitmap = _font as UIFont;
+            if (bitmap != null) label.bitmapFont = bitmap;
+            else
+            {
+                Font dynamic = _font as Font;
+                if (dynamic != null) label.trueTypeFont = dynamic;
+            }
+
+            label.text = text;
+            label.color = colour;
+            label.width = width;
+            label.height = height;
+            label.depth = depthOffset;
+            label.alignment = NGUIText.Alignment.Center;
+            label.overflowMethod = UILabel.Overflow.ShrinkContent;
+
+            return label;
+        }
+
+        private GameObject MakeButton(Transform parent, string name, string text,
+                                      int x, int y, int width, int height,
+                                      bool solid, EventDelegate.Callback onClick)
+        {
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UITexture face = go.AddComponent<UITexture>();
+            face.mainTexture = solid ? Skin.SolidButton(width, height) : Skin.Button(width, height);
+            face.width = width;
+            face.height = height;
+            face.depth = 4;
+
+            Shader shader = Shader.Find("Unlit/Transparent Colored");
+            if (shader != null) face.shader = shader;
+
+            // NGUI routes clicks through colliders; without one the button is decoration.
+            BoxCollider box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(width, height, 1f);
+            box.isTrigger = true;
+
+            UIButton button = go.AddComponent<UIButton>();
+            button.tweenTarget = go;
+            button.onClick.Add(new EventDelegate(onClick));
+
+            MakeLabel(go.transform, "Text", text, 0, 0, width - 16, height,
+                      solid ? Skin.Ink : Skin.Bright, 6);
+
+            return go;
         }
 
         private void Update()
@@ -822,6 +1811,28 @@ namespace VaultAdmin
             if (!Enabled.Value) return;
 
             EnsureHudButton();
+
+            if (_panelOpen && _nguiWindow != null && ++_refreshFrames >= 30)
+            {
+                _refreshFrames = 0;
+                try
+                {
+                    RefreshValues();
+
+                    if (_filterInput != null)
+                    {
+                        string typed = _filterInput.value == null ? "" : _filterInput.value;
+                        if (typed != _appliedFilter)
+                        {
+                            _appliedFilter = typed;
+                            _filter = typed;
+                            _itemPage = 0;
+                            RefreshThings();
+                        }
+                    }
+                }
+                catch (Exception e) { ReportOnce("refresh", "Refreshing the figures failed: " + e.Message); }
+            }
 
             try
             {
@@ -844,6 +1855,11 @@ namespace VaultAdmin
         private void OnGUI()
         {
             if (!Enabled.Value || !_panelOpen) return;
+
+            // The panel proper is the NGUI window; this scaffold is what is left of the one that
+            // came before it, and it stays only for the case where the window could not be built —
+            // no UI root, no font — so the mod is never unreachable.
+            if (_nguiWindow != null) return;
 
             try
             {
