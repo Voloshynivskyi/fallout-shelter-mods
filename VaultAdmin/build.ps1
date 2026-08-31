@@ -52,7 +52,8 @@ $refs = @(
     (Join-Path $managed "UnityEngine.dll"),
     (Join-Path $managed "UnityEngine.CoreModule.dll"),
     (Join-Path $managed "UnityEngine.IMGUIModule.dll"),   # scaffold panel; goes when NGUI lands
-    (Join-Path $managed "Unity.InputSystem.dll")          # legacy UnityEngine.Input throws here
+    (Join-Path $managed "Unity.InputSystem.dll"),         # legacy UnityEngine.Input throws here
+    (Join-Path $managed "UnityEngine.ImageConversionModule.dll")   # PNG -> Texture2D for the button icon
 )
 foreach ($r in $refs) { if (-not (Test-Path $r)) { throw "Missing reference: $r" } }
 $refArgs = $refs | ForEach-Object { "/reference:$_" }
@@ -66,6 +67,10 @@ $stage = Join-Path $outDir "stage"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $stage "BepInEx\plugins") | Out-Null
 Copy-Item $outDll (Join-Path $stage "BepInEx\plugins") -Force
+
+# The button icon travels with the DLL: the plugin looks for it beside itself.
+$assets = Join-Path $PSScriptRoot "assets"
+if (Test-Path $assets) { Get-ChildItem $assets -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage "BepInEx\plugins") -Force } }
 foreach ($doc in @("README.md", "CHANGELOG.md", "LICENSE")) {
     $p = Join-Path $PSScriptRoot $doc
     if (Test-Path $p) { Copy-Item $p $stage -Force }
@@ -86,6 +91,7 @@ if ($Install) {
     $plugins = Join-Path $GamePath "BepInEx\plugins"
     if (-not (Test-Path $plugins)) { New-Item -ItemType Directory -Path $plugins | Out-Null }
     Copy-Item $outDll $plugins -Force
+    if (Test-Path $assets) { Get-ChildItem $assets -File | ForEach-Object { Copy-Item $_.FullName $plugins -Force } }
 
     # Verify the artefact rather than trusting the copy: a success line has been wrong here before.
     $landed = Get-Item (Join-Path $plugins "$modName.dll")

@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.11.2";
+        public const string PluginVersion = "0.12.0";
 
         internal static ManualLogSource Log;
 
@@ -42,6 +42,7 @@ namespace VaultAdmin
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
         private static ConfigEntry<string> HudButtonTint;
+        private static ConfigEntry<string> HudButtonImage;
 
         private Key _toggleKey = Key.F8;
         private bool _panelOpen;
@@ -172,6 +173,12 @@ namespace VaultAdmin
                 "only dims it — the screenshot button is green, which is why green was a poor " +
                 "choice. Empty leaves it alone, which is what to use once a sprite of its own is " +
                 "set.");
+
+            HudButtonImage = Config.Bind("Interface", "HudButtonImage", "button.png",
+                "A PNG to use as the button's icon, looked for beside this plugin's DLL. Any size; " +
+                "square reads best. This does not go through the game's atlas at all, so the " +
+                "picture can be anything — replace the file and restart. Empty uses the borrowed " +
+                "sprite instead.");
 
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
@@ -309,6 +316,10 @@ namespace VaultAdmin
 
                 ReportSpriteNames(sprite);
 
+                // A picture of our own, if there is one. Tried first: when it works the borrowed
+                // sprite underneath is hidden and the tint stops mattering.
+                if (ApplyCustomImage(clone, sprite)) return;
+
                 string wanted = HudButtonSprite.Value;
                 if (!string.IsNullOrEmpty(wanted))
                 {
@@ -338,6 +349,71 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Could not style the button: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts a picture of our own on the button, loaded from a PNG beside the DLL.
+        ///
+        /// This deliberately does not touch the atlas. An atlas draws from one packed texture, so a
+        /// new sprite would mean new pixels inside a texture the game owns — and this build will not
+        /// even list what that atlas already holds. A UITexture draws a plain Texture2D with no
+        /// atlas involved, which sidesteps all of it.
+        ///
+        /// The existing UISprite is kept and merely made transparent rather than removed: UIButton
+        /// holds references to it for its pressed and hover states, and tearing it out would break
+        /// the button to change its picture.
+        /// </summary>
+        private bool ApplyCustomImage(GameObject clone, UISprite sprite)
+        {
+            try
+            {
+                string file = HudButtonImage.Value;
+                if (string.IsNullOrEmpty(file)) return false;
+
+                string path = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(Info.Location), file);
+
+                if (!System.IO.File.Exists(path))
+                {
+                    ReportOnce("buttonimage", "No button image at " + path + "; keeping the borrowed sprite.");
+                    return false;
+                }
+
+                Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!ImageConversion.LoadImage(texture, System.IO.File.ReadAllBytes(path)))
+                {
+                    Log.LogWarning("Could not read " + path + " as an image; keeping the borrowed sprite.");
+                    return false;
+                }
+                texture.filterMode = FilterMode.Bilinear;
+                texture.wrapMode = TextureWrapMode.Clamp;
+
+                GameObject holder = new GameObject("VaultAdmin_Icon");
+                holder.layer = clone.layer;                    // NGUI draws by layer; a wrong one is invisible
+                holder.transform.SetParent(clone.transform, false);
+                holder.transform.localPosition = Vector3.zero;
+                holder.transform.localScale = Vector3.one;
+
+                UITexture drawn = holder.AddComponent<UITexture>();
+                drawn.mainTexture = texture;
+                drawn.width = sprite.width;
+                drawn.height = sprite.height;
+                drawn.depth = sprite.depth + 1;                // in front of the sprite it replaces
+
+                Shader shader = Shader.Find("Unlit/Transparent Colored");
+                if (shader != null) drawn.shader = shader;
+
+                sprite.alpha = 0f;                             // hidden, not removed
+
+                Log.LogInfo("Button icon loaded from " + path + " (" +
+                            texture.width + "x" + texture.height + ").");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not apply the custom button image: " + e.Message);
+                return false;
             }
         }
 
