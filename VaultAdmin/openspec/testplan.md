@@ -238,3 +238,35 @@ carry values from 1.25 to 95, so an odd number is not a problem — a *wrong* on
 - [ ] Save and quit, rename the DLL to `.off`, start, load.
 
 **Expect** the pet still there, still named, still carrying its bonus.
+
+## Batch 6 — add-dweller-grants
+
+### 24. A made-to-order dweller
+
+- [ ] Set a first and last name, pick a rarity, set every SPECIAL to `10`, create.
+
+**Expect** the dweller to walk into the vault carrying that name, and to show **10 in all seven
+stats** on their card.
+
+The stats are the part worth staring at: the save keeps each stat's value and its experience side by
+side, and they must agree. A stat showing 10 with the experience of a 1 is the failure this looks
+for.
+
+### 25. Legendary
+
+- [ ] Pick one from the legendary list and create it.
+
+**Expect** it to arrive with its own name, face and stats — not the ones set in the fields above.
+
+### 26. A full vault
+
+- [ ] Fill the vault to its population limit, then try.
+
+**Expect** `The vault is at its population limit; no dweller was created.` in the log, and nobody
+created.
+
+### 27. Survives the mod being removed
+
+- [ ] Save and quit, rename the DLL to `.off`, start, load.
+
+**Expect** every created dweller present, named, with their stats intact.

@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.5.0";
+        public const string PluginVersion = "0.6.0";
 
         internal static ManualLogSource Log;
 
@@ -93,6 +93,31 @@ namespace VaultAdmin
         private int _petBonusIndex;
         private static readonly EBonusEffect[] BonusEffects =
             (EBonusEffect[])Enum.GetValues(typeof(EBonusEffect));
+
+        // Dwellers are serialised in full, so unlike a weapon every attribute here reaches the save.
+        private static readonly EDwellerRarity[] Rarities =
+        {
+            EDwellerRarity.Common, EDwellerRarity.Normal,
+            EDwellerRarity.Rare, EDwellerRarity.Legendary
+        };
+
+        private static readonly EGender[] Genders = { EGender.Male, EGender.Female };
+
+        // None and Max bracket the seven real stats in the enum; neither is a stat.
+        private static readonly ESpecialStat[] Specials =
+        {
+            ESpecialStat.Strength, ESpecialStat.Perception, ESpecialStat.Endurance,
+            ESpecialStat.Charisma, ESpecialStat.Intelligence, ESpecialStat.Agility,
+            ESpecialStat.Luck
+        };
+
+        private int _rarityIndex;
+        private int _genderIndex;
+        private string _dwellerFirst = "";
+        private string _dwellerLast = "";
+        private string _dwellerLevel = "1";
+        private readonly int[] _special = { 1, 1, 1, 1, 1, 1, 1 };
+        private Vector2 _legendScroll;
 
         private List<CatalogueEntry> _catalogue;
         private EItemType _family = EItemType.Weapon;
@@ -753,6 +778,185 @@ namespace VaultAdmin
 
             GUILayout.Label("    in vault: " + dwellers.Dwellers.Count +
                             " / " + dwellers.MaximumDwellerCount);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Name", GUILayout.Width(44f));
+            _dwellerFirst = GUILayout.TextField(_dwellerFirst == null ? "" : _dwellerFirst, GUILayout.Width(110f));
+            _dwellerLast = GUILayout.TextField(_dwellerLast == null ? "" : _dwellerLast, GUILayout.Width(110f));
+            GUILayout.Label("Lvl", GUILayout.Width(28f));
+            _dwellerLevel = GUILayout.TextField(_dwellerLevel == null ? "" : _dwellerLevel, GUILayout.Width(36f));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("<", GUILayout.Width(24f)))
+                _rarityIndex = (_rarityIndex - 1 + Rarities.Length) % Rarities.Length;
+            GUILayout.Label(Rarities[_rarityIndex].ToString(), GUILayout.Width(80f));
+            if (GUILayout.Button(">", GUILayout.Width(24f)))
+                _rarityIndex = (_rarityIndex + 1) % Rarities.Length;
+
+            if (GUILayout.Button("<", GUILayout.Width(24f)))
+                _genderIndex = (_genderIndex - 1 + Genders.Length) % Genders.Length;
+            GUILayout.Label(Genders[_genderIndex].ToString(), GUILayout.Width(60f));
+            if (GUILayout.Button(">", GUILayout.Width(24f)))
+                _genderIndex = (_genderIndex + 1) % Genders.Length;
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < Specials.Length; i++)
+            {
+                GUILayout.Label(Specials[i].ToString().Substring(0, 1), GUILayout.Width(12f));
+                string text = GUILayout.TextField(_special[i].ToString(), GUILayout.Width(26f));
+                int parsed;
+                if (int.TryParse(text, out parsed)) _special[i] = parsed;
+            }
+            GUILayout.EndHorizontal();
+
+            if (GUILayout.Button("Create dweller")) CreateDweller();
+
+            GUILayout.Label("    Legendary — brings its own name, look and stats:");
+            _legendScroll = GUILayout.BeginScrollView(_legendScroll, GUILayout.Height(90f));
+            UniqueDwellerData[] legends = dwellers.LegendaryDwellers;
+            if (legends != null)
+            {
+                for (int i = 0; i < legends.Length; i++)
+                {
+                    if (legends[i] == null) continue;
+
+                    string label = ReadMember(legends[i], "Name");
+                    if (string.IsNullOrEmpty(label)) label = "legendary " + i;
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(label, GUILayout.Width(300f));
+                    if (GUILayout.Button("Create", GUILayout.Width(60f))) CreateLegendary(legends[i], label);
+                    GUILayout.EndHorizontal();
+                }
+            }
+            GUILayout.EndScrollView();
+        }
+
+        /// <summary>
+        /// A world position the game already considers valid.
+        ///
+        /// CreateDweller takes coordinates, and inventing them means guessing at the vault's
+        /// geometry. A dweller already standing in the vault is by definition somewhere acceptable.
+        /// </summary>
+        private Vector3 SpawnPosition(DwellerManager dwellers)
+        {
+            try
+            {
+                if (dwellers.Dwellers != null && dwellers.Dwellers.Count > 0)
+                {
+                    Dweller existing = dwellers.Dwellers[0];
+                    if (existing != null) return existing.transform.position;
+                }
+            }
+            catch { }
+            return Vector3.zero;
+        }
+
+        private void CreateDweller()
+        {
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                if (manager == null) return;
+
+                // The creation call admits the dweller itself, so a full vault has to be caught
+                // before creating rather than by a refusal afterwards.
+                if (manager.VaultIsWithMaxPopulation)
+                {
+                    Log.LogWarning("The vault is at its population limit; no dweller was created.");
+                    return;
+                }
+
+                int level;
+                if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
+
+                Dweller dweller = manager.CreateDweller(
+                    Rarities[_rarityIndex], Genders[_genderIndex],
+                    SpawnPosition(manager), Quaternion.identity,
+                    level, null, null);
+
+                if (dweller == null)
+                {
+                    Log.LogWarning("The game did not create a dweller; nothing was added.");
+                    return;
+                }
+
+                // Created, edited, and only then admitted — which is what makes naming and SPECIAL
+                // possible at all.
+                if (!string.IsNullOrEmpty(_dwellerFirst)) dweller.Name = _dwellerFirst;
+                if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
+                dweller.Rarity = Rarities[_rarityIndex];
+
+                ApplySpecial(dweller);
+
+                Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
+                            " (" + Rarities[_rarityIndex] + ", level " + level + ").");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Creating a dweller failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Writes the seven SPECIAL values.
+        ///
+        /// SpecialStat.Value cannot be assigned. Of the methods that can change it,
+        /// SetValueAndMinExp moves the stored experience along with the value; SetValueOnly leaves
+        /// it behind. The save keeps both side by side, so moving only one produces a record
+        /// describing two different things.
+        /// </summary>
+        private void ApplySpecial(Dweller dweller)
+        {
+            DwellerStats stats = dweller.Stats;
+            if (stats == null) return;
+
+            for (int i = 0; i < Specials.Length; i++)
+            {
+                try
+                {
+                    SpecialStat stat = stats.GetStat(Specials[i]);
+                    if (stat != null) stat.SetValueAndMinExp(_special[i]);
+                }
+                catch (Exception e)
+                {
+                    Log.LogWarning("Setting " + Specials[i] + " failed: " + e.Message);
+                }
+            }
+        }
+
+        private void CreateLegendary(UniqueDwellerData data, string label)
+        {
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                if (manager == null) return;
+
+                if (manager.VaultIsWithMaxPopulation)
+                {
+                    Log.LogWarning("The vault is at its population limit; " + label + " was not created.");
+                    return;
+                }
+
+                Dweller dweller = manager.CreateSpecialDweller(
+                    data, SpawnPosition(manager), Quaternion.identity, null, null);
+
+                if (dweller == null)
+                {
+                    Log.LogWarning("The game did not create " + label + "; nothing was added.");
+                    return;
+                }
+
+                // Deliberately not edited: a legendary dweller brings its own name, look and stats,
+                // and overwriting them produces something that looks legendary and is not.
+                Log.LogInfo("Created legendary dweller " + label + ".");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Creating " + label + " failed: " + e.Message);
+            }
         }
 
         private void DrawInventory(Vault vault)

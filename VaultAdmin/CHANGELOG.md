@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0
+
+Creates dwellers, with a name, a rarity, a level and all seven SPECIAL values — plus any legendary
+dweller the game defines.
+
+- Rarity, gender and starting level; first and last name, where an empty field keeps whatever the
+  game generated; and the seven SPECIAL values.
+- Legendary dwellers are listed from the game's own `LegendaryDwellers` and created through the call
+  the game uses for them. They are deliberately left unedited: a legendary brings its own name, look
+  and stats, and overwriting those produces something that looks legendary and is not.
+
+### SPECIAL is set the way that keeps the record consistent
+
+`SpecialStat.Value` cannot be assigned, and of the methods that can change it the choice matters.
+The save stores a value and an experience figure side by side — `{"value": 5, "mod": 0, "exp":
+72084.23}` — so `SetValueOnly` would move one and leave the other, producing a record describing two
+different things. `SetValueAndMinExp` moves both.
+
+### Creation admits the dweller by itself
+
+The first draft called `AddDweller` after creating. It is private, which is how the mistake
+surfaced — but reading the IL showed it was also redundant: both `CreateDweller` and
+`CreateSpecialDweller` end in a call to it. The dweller is in the vault by the time the call
+returns.
+
+That is also why a full vault is now caught with `VaultIsWithMaxPopulation` **before** creating.
+Waiting for a refusal afterwards is not possible when there is nothing left to refuse.
+
 ## 0.5.0
 
 Grants pets, with a name, a bonus and a value of your choosing.
