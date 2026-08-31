@@ -37,18 +37,18 @@
 
 - [x] 5.1 Take a working copy of a real save
 - [x] 5.2 Record what the game's own format holds for resources and lunchboxes, from the copy
-- [ ] 5.3 Full-document diff of a save before and after granting: only intended keys change
-- [ ] 5.4 **[launch]** A granted vault loads with the plugin removed
+- [x] 5.3 Full-document diff of a save before and after granting: only intended keys change
+- [x] 5.4 **[launch]** A granted vault loads with the plugin removed
 
 ## 6. Batch for a launch
 
-- [ ] 6.1 **[launch]** Grants appear in the game's own interface immediately
-- [ ] 6.2 **[launch]** Granting past a cap stops at the cap
-- [ ] 6.3 **[launch]** Granted boxes can actually be opened
+- [x] 6.1 **[launch]** Grants appear in the game's own interface immediately
+- [x] 6.2 **[launch]** Granting past a cap stops at the cap
+- [x] 6.3 **[launch]** Granted boxes can actually be opened
 - [x] 6.4 Append all of the above to `openspec/testplan.md`
 
 ## 7. Close out
 
 - [x] 7.1 README and CHANGELOG updated
 - [x] 7.2 Record the two disproved hypotheses where the next person will find them
-- [ ] 7.3 After the batch passes: `openspec archive add-resource-grants`
+- [x] 7.3 After the batch passes: `openspec archive add-resource-grants`

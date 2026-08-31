@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+Grants weapons, outfits and junk, picked from the game's own tables.
+
+- An item section with a family selector, a filter box and a scrolling list. Every entry is read
+  from `GameParameters.Instance.Items` at runtime; **no item identifier is hardcoded anywhere**, so
+  a game update that changes the item set is picked up without touching the mod.
+- Items the game marks hidden are skipped.
+- Granting refuses, and says so, when the inventory is full — rather than calling into an add that
+  might quietly drop the item.
+
+### The identifier is not the name, and differs by family
+
+An item is stored as an id and a type, and resolves its data later by looking that id up. Which
+string it must be was read out of the game's IL, not guessed:
+
+- **Weapons** are found by a search comparing `WeaponId`.
+- **Outfits** are found in a dictionary keyed on `m_outfitId` — a private field with no
+  `Id`-suffixed property, so listing properties finds `CodeId` and misses it entirely.
+
+Both types also carry `Name` and `CodeId`, and both are wrong for this. A real save settles it: the
+game writes `{"id": "Flamer_Rusty", "type": "Weapon"}` — an internal id, never the display name.
+
+`Inventory.HandleItem(string, ItemExtraData)` reads like the factory for this. Its IL is a search
+over the existing inventory returning an item or null: it finds, it does not create.
+
 ## 0.2.0
 
 Grants resources and boxes. Everything goes through the game's own methods.

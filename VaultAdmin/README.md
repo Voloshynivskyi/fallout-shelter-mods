@@ -5,7 +5,7 @@
 Create dwellers, weapons and pets with full control over every attribute the game holds — names,
 SPECIAL, appearance — and grant resources, boxes and items besides.
 
-> **Status: 0.2.0.** Grants resources and boxes. Dwellers, weapons and items are still to come, and
+> **Status: 0.3.0.** Grants resources, boxes, weapons, outfits and junk. Dwellers are still to come, and
 > the panel is a plain scaffold rather than game UI — that lands in its own change, so a failure
 > there is a UI failure and nothing else.
 

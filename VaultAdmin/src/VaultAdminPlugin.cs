@@ -6,6 +6,7 @@ using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
+using System.Reflection;
 
 namespace VaultAdmin
 {
@@ -31,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.2.0";
+        public const string PluginVersion = "0.3.0";
 
         internal static ManualLogSource Log;
 
@@ -45,7 +46,7 @@ namespace VaultAdmin
         // evidence needed to work out what it is failing at.
         private readonly HashSet<string> _reported = new HashSet<string>();
 
-        private Rect _window = new Rect(40f, 40f, 460f, 560f);
+        private Rect _window = new Rect(40f, 40f, 470f, 640f);
         private Vector2 _scroll;
 
         // EResource carries Lunchbox, MrHandy and PetCarrier, and granting them looks like the
@@ -60,6 +61,24 @@ namespace VaultAdmin
 
         private static readonly float[] GrantAmounts = { 100f, 1000f, 10000f };
         private static readonly int[] BoxAmounts = { 1, 5, 25 };
+
+        // The item catalogue, read from the game once and kept. The tables do not change during a
+        // session, and rebuilding them per frame would allocate for nothing.
+        private sealed class CatalogueEntry
+        {
+            public EItemType Type;
+            public string Id;        // what the game looks the item up by — NOT its display name
+            public string Name;      // for the human only
+            public EItemRarity Rarity;
+        }
+
+        private List<CatalogueEntry> _catalogue;
+        private EItemType _family = EItemType.Weapon;
+        private string _filter = "";
+        private Vector2 _itemScroll;
+
+        // A long list drawn in full costs a frame. The filter is how you reach the rest.
+        private const int MaxRowsShown = 40;
 
         private static readonly ELunchBoxType[] BoxTypes =
         {
@@ -164,6 +183,8 @@ namespace VaultAdmin
             GUILayout.Space(8f);
             DrawBoxes();
             GUILayout.Space(8f);
+            DrawItems();
+            GUILayout.Space(8f);
             DrawDwellers();
             GUILayout.Space(8f);
             DrawInventory(vault);
@@ -233,6 +254,170 @@ namespace VaultAdmin
                 }
 
                 GUILayout.EndHorizontal();
+            }
+        }
+
+        /// <summary>
+        /// Reads the game's own item tables.
+        ///
+        /// The identifier differs per family and neither Name nor CodeId is it. Weapons are found
+        /// by a search comparing WeaponId; outfits by a dictionary keyed on the private field
+        /// m_outfitId, which has no Id-suffixed property at all. Both were read out of the IL of
+        /// ItemParameters rather than guessed, because an id the game cannot resolve produces an
+        /// item with no data behind it.
+        /// </summary>
+        private void BuildCatalogue()
+        {
+            _catalogue = new List<CatalogueEntry>();
+
+            try
+            {
+                GameParameters parameters = GameParameters.Instance;
+                if (parameters == null || parameters.Items == null)
+                {
+                    ReportOnce("catalogue", "The game's item tables are not available yet.");
+                    _catalogue = null;   // try again next time the section is drawn
+                    return;
+                }
+
+                ItemParameters items = parameters.Items;
+
+                int weapons = Collect(items.WeaponsList, EItemType.Weapon, "WeaponId");
+                int outfits = Collect(items.OutfitList, EItemType.Outfit, "m_outfitId");
+                int junk = Collect(items.JunksList, EItemType.Junk, "JunkId");
+
+                Log.LogInfo("Item catalogue read from the game: " + weapons + " weapons, " +
+                            outfits + " outfits, " + junk + " junk.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not read the item catalogue: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Pulls one family into the catalogue, taking the id off whichever member that family is
+        /// keyed by. Reflection rather than a direct call because the outfit id is a private field.
+        /// </summary>
+        private int Collect(Array table, EItemType type, string idMember)
+        {
+            if (table == null) return 0;
+
+            int added = 0;
+            for (int i = 0; i < table.Length; i++)
+            {
+                try
+                {
+                    DwellerBaseItem data = table.GetValue(i) as DwellerBaseItem;
+                    if (data == null || data.IsHiddenItem) continue;
+
+                    string id = ReadMember(data, idMember);
+                    if (string.IsNullOrEmpty(id)) continue;
+
+                    // Name is a non-public property, so it comes through the same reflection
+                    // helper as the id. CodeId is public and readable, and stands in when the
+                    // display name is missing.
+                    string label = ReadMember(data, "Name");
+                    if (string.IsNullOrEmpty(label)) label = data.CodeId;
+                    if (string.IsNullOrEmpty(label)) label = id;
+
+                    CatalogueEntry entry = new CatalogueEntry();
+                    entry.Type = type;
+                    entry.Id = id;
+                    entry.Name = label;
+                    entry.Rarity = data.ItemRarity;
+                    _catalogue.Add(entry);
+                    added++;
+                }
+                catch { }   // one unreadable row must not cost the whole family
+            }
+            return added;
+        }
+
+        private static string ReadMember(object target, string member)
+        {
+            Type t = target.GetType();
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+            PropertyInfo prop = t.GetProperty(member, Flags);
+            if (prop != null) return prop.GetValue(target, null) as string;
+
+            FieldInfo field = t.GetField(member, Flags);
+            if (field != null) return field.GetValue(target) as string;
+
+            return null;
+        }
+
+        private void DrawItems()
+        {
+            GUILayout.Label("Items");
+
+            if (_catalogue == null) BuildCatalogue();
+            if (_catalogue == null) { GUILayout.Label("    catalogue unavailable"); return; }
+
+            GUILayout.BeginHorizontal();
+            foreach (EItemType type in new[] { EItemType.Weapon, EItemType.Outfit, EItemType.Junk })
+            {
+                bool active = _family == type;
+                if (GUILayout.Toggle(active, type.ToString(), "Button", GUILayout.Width(80f)) && !active)
+                    _family = type;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Filter", GUILayout.Width(44f));
+            _filter = GUILayout.TextField(_filter == null ? "" : _filter);
+            GUILayout.EndHorizontal();
+
+            _itemScroll = GUILayout.BeginScrollView(_itemScroll, GUILayout.Height(200f));
+
+            int shown = 0;
+            int matched = 0;
+            for (int i = 0; i < _catalogue.Count; i++)
+            {
+                CatalogueEntry entry = _catalogue[i];
+                if (entry.Type != _family) continue;
+                if (_filter.Length > 0 &&
+                    entry.Name.IndexOf(_filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                matched++;
+                if (shown >= MaxRowsShown) continue;
+                shown++;
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(entry.Name + "  (" + entry.Rarity + ")", GUILayout.Width(300f));
+                if (GUILayout.Button("Grant", GUILayout.Width(60f))) GrantItem(entry);
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndScrollView();
+
+            if (matched > shown)
+                GUILayout.Label("    " + matched + " match; showing " + shown + ". Narrow the filter.");
+        }
+
+        private void GrantItem(CatalogueEntry entry)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded || vault.Inventory == null) return;
+
+                if (vault.Inventory.EmptySpace() <= 0)
+                {
+                    // Say so rather than calling into an add that may quietly drop it.
+                    Log.LogWarning("The inventory is full; " + entry.Name + " was not granted.");
+                    return;
+                }
+
+                DwellerItem item = new DwellerItem(entry.Type, entry.Id);
+                vault.Inventory.AddItem(item, false, false);
+
+                Log.LogInfo("Granted " + entry.Name + " (" + entry.Type + " '" + entry.Id + "').");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Granting " + entry.Name + " failed: " + e.Message);
             }
         }
 
