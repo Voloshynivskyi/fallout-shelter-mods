@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.10.0";
+        public const string PluginVersion = "0.10.1";
 
         internal static ManualLogSource Log;
 
@@ -248,13 +248,83 @@ namespace VaultAdmin
 
                 StripClonedBehaviour(clone);
                 WireButton(clone);
+                MakeVisible(clone, source);
 
-                Log.LogInfo("Placed a panel button in the vault HUD, beside the screenshot button.");
+                // The clone was reported placed and could not be seen, so both are described here
+                // rather than guessed at again.
+                Log.LogInfo("Placed a panel button in the vault HUD.");
+                Log.LogInfo("    original : " + DescribeWidget(source));
+                Log.LogInfo("    clone    : " + DescribeWidget(clone));
             }
             catch (Exception e)
             {
                 Log.LogWarning("Could not place the HUD button: " + e.Message);
             }
+        }
+
+        /// <summary>
+        /// Forces the clone into a state where it can actually be seen.
+        ///
+        /// It reported itself placed and was not visible. A widget is invisible when its alpha is
+        /// zero, when its game object is inactive, or when its depth puts it behind what it sits
+        /// on — and none of those complain. Rather than work out which one it was from here, all
+        /// three are set, and the result is logged.
+        /// </summary>
+        private void MakeVisible(GameObject clone, GameObject source)
+        {
+            try
+            {
+                clone.SetActive(true);
+
+                UIWidget[] mine = clone.GetComponentsInChildren<UIWidget>(true);
+                UIWidget[] theirs = source.GetComponentsInChildren<UIWidget>(true);
+
+                int highest = 0;
+                for (int i = 0; i < theirs.Length; i++)
+                {
+                    if (theirs[i] != null && theirs[i].depth > highest) highest = theirs[i].depth;
+                }
+
+                for (int i = 0; i < mine.Length; i++)
+                {
+                    if (mine[i] == null) continue;
+                    mine[i].alpha = 1f;
+                    mine[i].depth = highest + 1;   // in front of the button it was copied from
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not force the cloned button visible: " + e.Message);
+            }
+        }
+
+        /// <summary>Everything about a widget that decides whether it can be seen.</summary>
+        private static string DescribeWidget(GameObject go)
+        {
+            try
+            {
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.Append("active=").Append(go.activeInHierarchy);
+                sb.Append(" localPos=").Append(go.transform.localPosition);
+                sb.Append(" localScale=").Append(go.transform.localScale);
+
+                UIWidget[] widgets = go.GetComponentsInChildren<UIWidget>(true);
+                sb.Append(" widgets=").Append(widgets.Length);
+
+                for (int i = 0; i < widgets.Length && i < 4; i++)
+                {
+                    UIWidget w = widgets[i];
+                    if (w == null) continue;
+                    sb.Append(" [").Append(w.GetType().Name)
+                      .Append(" ").Append(w.width).Append("x").Append(w.height)
+                      .Append(" alpha=").Append(w.alpha.ToString("0.00"))
+                      .Append(" depth=").Append(w.depth)
+                      .Append(" visible=").Append(w.isVisible)
+                      .Append("]");
+                }
+                return sb.ToString();
+            }
+            catch (Exception e) { return "<could not describe: " + e.Message + ">"; }
         }
 
         /// <summary>
@@ -278,7 +348,8 @@ namespace VaultAdmin
                 // original used it for goes.
                 if (part is UIButton || part is UIWidget || part is UIPanel ||
                     part is UISprite || part is UILabel || part is UITexture ||
-                    part is UIButtonColor || part is UIButtonScale) continue;
+                    part is UIButtonColor || part is UIButtonScale ||
+                    part is UIPlayAnimation) continue;   // click feedback, harmless to keep
 
                 if (removed.Length > 0) removed.Append(", ");
                 removed.Append(part.GetType().Name);
