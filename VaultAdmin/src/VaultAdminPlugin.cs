@@ -156,7 +156,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.24.0";
+        public const string PluginVersion = "0.26.0";
 
         internal static ManualLogSource Log;
 
@@ -184,9 +184,15 @@ namespace VaultAdmin
         // reached through Vault.AddLunchBox. Leaving them in the resource rows would give the panel
         // two routes to the same thing, one of which silently fails, so they are excluded here and
         // offered in the box section instead.
+        // The enum counts several things that are not resources a vault holds: the box types are
+        // counted separately below, and the crafted-item tallies, the poker chips and the dummy are
+        // bookkeeping the player never sees. Listing them was noise in the one place that has least
+        // room for it.
         private static readonly EResource[] NotRealResources =
         {
-            EResource.Lunchbox, EResource.MrHandy, EResource.PetCarrier
+            EResource.Lunchbox, EResource.MrHandy, EResource.PetCarrier,
+            EResource.CraftedOutfit, EResource.CraftedWeapon, EResource.CraftedTheme,
+            EResource.DummyUltracite, EResource.PokerChip
         };
 
         private static readonly float[] GrantAmounts = { 100f, 1000f, 10000f };
@@ -936,10 +942,45 @@ namespace VaultAdmin
             button.onClick.Add(new EventDelegate(TogglePanel));
         }
 
+        private bool _cameraHeld;
+
+        /// <summary>
+        /// Stops the vault camera reading the mouse while the panel is open.
+        ///
+        /// NGUI only sees what its own colliders catch; the camera reads the wheel and the drag for
+        /// itself, so scrolling a list zoomed the vault at the same time. The camera is a
+        /// MonoSingleton and its behaviour can simply be switched off and back on, which needs no
+        /// patching of the game at all.
+        /// </summary>
+        private void HoldCamera(bool held)
+        {
+            try
+            {
+                CameraController camera = CameraController.Instance;
+                if (camera == null) return;
+
+                if (held == _cameraHeld) return;
+
+                camera.enabled = !held;
+                _cameraHeld = held;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("camera", "Could not hold the vault camera: " + e.Message);
+            }
+        }
+
+        private void OnDisable()
+        {
+            // Leaving the camera switched off because the mod went away would be unforgivable.
+            HoldCamera(false);
+        }
+
         /// <summary>Opens or closes the panel. Shared by the hotkey and the HUD button.</summary>
         public void TogglePanel()
         {
             _panelOpen = !_panelOpen;
+            HoldCamera(_panelOpen);
 
             if (_nguiWindow == null) BuildWindow();
 
@@ -982,7 +1023,15 @@ namespace VaultAdmin
         private int _refreshFrames;
         private UIAtlas _menuAtlas;
 
-        private enum Tab { Resources, Dwellers, Things }
+        // What the panel does falls into three jobs, not three kinds of thing: top the vault up,
+        // hand something over, or build something that does not exist yet. A dweller belongs in two
+        // of those, which is why splitting by kind put its two halves in one place and nothing in
+        // the other.
+        private enum Tab { Resources, Grant, Create }
+
+        // Dwellers are handed out from the same list as items even though the game does not count
+        // them as one, so the picker has a family of its own for them.
+        private enum Family { Weapon, Outfit, Junk, Pet, Dweller }
 
         private Tab _tab = Tab.Resources;
         private readonly Dictionary<Tab, GameObject> _tabPages = new Dictionary<Tab, GameObject>();
@@ -1049,9 +1098,16 @@ namespace VaultAdmin
                 _frame = Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
                                Skin.Window(_windowWidth, _windowHeight), 0);
 
-                // The title sits on the top edge rather than inside the frame, as the game's do.
-                MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
-                          0, _windowHeight / 2, _windowWidth, 40, Skin.Bright, 2);
+                // The game's windows carry their title on a plate that straddles the top edge and
+                // covers the frame behind it. A bare label there reads as something that has come
+                // loose from the window rather than part of it.
+                int titleWidth = Mathf.Min(_windowWidth - 80, 340);
+                Plate(_nguiWindow.transform, "TitlePlate", 0, _windowHeight / 2, titleWidth, 50,
+                      Skin.Frame(titleWidth, 50, 12, 3, Skin.Bright, Skin.Bright), 2);
+
+                UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
+                                          0, _windowHeight / 2, titleWidth - 28, 44, Skin.Ink, 4);
+                title.fontSize = Mathf.RoundToInt(_fontSize * 1.5f);
 
                 BuildTabs(_nguiWindow.transform);
                 BuildPages(_nguiWindow.transform);
@@ -1154,8 +1210,11 @@ namespace VaultAdmin
             UITexture track = Plate(go.transform, "Track", 0, 0, 10, viewHeight,
                                     Skin.Frame(10, viewHeight, 5, 1, Skin.Rim, Skin.Plate), 2);
 
+            // The scroll view resizes this one to say how much of the list is in view, so its
+            // texture has to survive being stretched: a nearly square source with a small radius
+            // stays a bar, where a long rounded one turns into a smear.
             UITexture thumb = Plate(go.transform, "Thumb", 0, 0, 10, viewHeight,
-                                    Skin.Frame(10, 64, 5, 1, Skin.Bright, Skin.Bright), 3);
+                                    Skin.Frame(10, 12, 4, 4, Skin.Bright, Skin.Bright), 3);
 
             BoxCollider box = go.AddComponent<BoxCollider>();
             box.size = new Vector3(22f, viewHeight, 1f);
@@ -1276,8 +1335,8 @@ namespace VaultAdmin
 
         private void BuildTabs(Transform parent)
         {
-            Tab[] tabs = { Tab.Resources, Tab.Dwellers, Tab.Things };
-            string[] names = { "RESOURCES", "DWELLERS", "ITEMS" };
+            Tab[] tabs = { Tab.Resources, Tab.Grant, Tab.Create };
+            string[] names = { "RESOURCES", "GRANT", "CREATE" };
 
             int usable = _windowWidth - Margin * 2;
             int width = (usable - 12) / 3;
@@ -1296,7 +1355,7 @@ namespace VaultAdmin
 
         private void BuildPages(Transform parent)
         {
-            foreach (Tab tab in new[] { Tab.Resources, Tab.Dwellers, Tab.Things })
+            foreach (Tab tab in new[] { Tab.Resources, Tab.Grant, Tab.Create })
             {
                 GameObject page = new GameObject("Page_" + tab);
                 page.layer = parent.gameObject.layer;
@@ -1307,8 +1366,8 @@ namespace VaultAdmin
             }
 
             BuildResourcesPage(_tabPages[Tab.Resources].transform);
-            BuildDwellersPage(_tabPages[Tab.Dwellers].transform);
-            BuildThingsPage(_tabPages[Tab.Things].transform);
+            BuildGrantPage(_tabPages[Tab.Grant].transform);
+            BuildCreatePage(_tabPages[Tab.Create].transform);
         }
 
         /// <summary>
@@ -1390,10 +1449,23 @@ namespace VaultAdmin
             public GameObject Give;
         }
 
-        private static readonly EItemType[] Families =
+        private static readonly Family[] Families =
         {
-            EItemType.Weapon, EItemType.Outfit, EItemType.Junk, EItemType.Pet
+            Family.Weapon, Family.Outfit, Family.Junk, Family.Pet, Family.Dweller
         };
+
+        private Family _grantFamily = Family.Weapon;
+
+        private static EItemType ItemTypeOf(Family family)
+        {
+            switch (family)
+            {
+                case Family.Outfit: return EItemType.Outfit;
+                case Family.Junk:   return EItemType.Junk;
+                case Family.Pet:    return EItemType.Pet;
+                default:            return EItemType.Weapon;
+            }
+        }
 
         private readonly List<ItemRow> _itemRows = new List<ItemRow>();
 
@@ -1401,7 +1473,6 @@ namespace VaultAdmin
         // one set of rows serve all four.
         private readonly List<object> _shown = new List<object>();
 
-        private GameObject _petStrip;
         private UIInput _filterInput;
         private UIInput _petNameInput;
         private UIInput _petValueInput;
@@ -1417,7 +1488,7 @@ namespace VaultAdmin
         private const int ItemRowHeight = 58;
         private const int MaxItemRows = 9;
 
-        private void BuildThingsPage(Transform parent)
+        private void BuildGrantPage(Transform parent)
         {
             _cursorY = ContentTop();
             int width = _windowWidth - Margin * 2;
@@ -1428,9 +1499,8 @@ namespace VaultAdmin
 
             int filterY = _cursorY - RowHeight / 2;
             Plate(parent, "FilterRow", 0, filterY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            UILabel filterName = MakeLabel(parent, "FilterName", "FILTER",
-                                           -width / 2 + 64, filterY, 120, RowHeight, Skin.Bright, 3);
-            filterName.alignment = NGUIText.Alignment.Left;
+            MakeLeftLabel(parent, "FilterName", "FILTER",
+                          -width / 2 + 14, filterY, 110, RowHeight, Skin.Bright, 3);
             _filterInput = AddInput(parent, "Filter", 34, filterY, width - 150, "ALL");
             _cursorY -= RowHeight + RowGap;
 
@@ -1443,8 +1513,6 @@ namespace VaultAdmin
             for (int i = 0; i < _rowsPerPage; i++)
                 _itemRows.Add(BuildItemRow(parent, i, width,
                                            listTop - ItemRowHeight / 2 - i * (ItemRowHeight + RowGap)));
-
-            BuildPetStrip(parent, width, listBottom + 2 * (ItemRowHeight + RowGap));
 
             // The pager sits at the foot of the page, clear of the window's close button.
             int pagerY = listBottom - 8;
@@ -1484,16 +1552,14 @@ namespace VaultAdmin
             int textLeft = -width / 2 + 52;
             int textWidth = width - 150;
 
-            row.Name = MakeLabel(row.Root.transform, "Name", "",
-                                 textLeft + textWidth / 2, 11, textWidth, 24, Skin.Bright, 3);
-            row.Name.alignment = NGUIText.Alignment.Left;
+            row.Name = MakeLeftLabel(row.Root.transform, "Name", "",
+                                     textLeft, 11, textWidth, 24, Skin.Bright, 3);
 
             // The figures beneath the name, quieter than it: what the item does and what it is
             // worth is the reason to pick one item out of two hundred.
-            row.Stats = MakeLabel(row.Root.transform, "Stats", "",
-                                  textLeft + textWidth / 2, -12, textWidth, 20, Skin.Bright, 3);
-            row.Stats.alignment = NGUIText.Alignment.Left;
-            row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.65f);
+            row.Stats = MakeLeftLabel(row.Root.transform, "Stats", "",
+                                      textLeft, -12, textWidth, 20, Skin.Bright, 3);
+            row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
 
             int captured = index;
             row.Give = MakeButton(row.Root.transform, "Give", "GIVE", width / 2 - 44, 0, 76, 34,
@@ -1502,50 +1568,13 @@ namespace VaultAdmin
             return row;
         }
 
-        /// <summary>
-        /// The two controls that only mean anything for a pet.
-        ///
-        /// Pets are the one family that carries data per copy, so they are the one the panel can
-        /// name and tune. The strip appears only for them, and the list gives up its last two rows
-        /// to make room rather than the page growing past the window.
-        /// </summary>
-        private void BuildPetStrip(Transform parent, int width, int y)
-        {
-            _petStrip = new GameObject("PetStrip");
-            _petStrip.layer = parent.gameObject.layer;
-            _petStrip.transform.SetParent(parent, false);
-            _petStrip.transform.localPosition = new Vector3(0f, y, 0f);
-            _petStrip.transform.localScale = Vector3.one;
-
-            Plate(_petStrip.transform, "NamePlate", 0, 0, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            UILabel caption = MakeLabel(_petStrip.transform, "NameCaption", "PET NAME",
-                                        -width / 2 + 80, 0, 150, RowHeight, Skin.Bright, 3);
-            caption.alignment = NGUIText.Alignment.Left;
-            _petNameInput = AddInput(_petStrip.transform, "PetName", 40, 0, width - 180, "RANDOM");
-
-            int second = -(RowHeight + RowGap);
-            Plate(_petStrip.transform, "BonusPlate", 0, second, width, RowHeight,
-                  Skin.Row(width, RowHeight), 1);
-
-            MakeButton(_petStrip.transform, "BonusBack", "<", -width / 2 + 34, second, 44, 32, false,
-                       delegate { StepBonus(-1); });
-            _bonusLabel = MakeLabel(_petStrip.transform, "BonusName",
-                                    BonusEffects[_petBonusIndex].ToString(),
-                                    -20, second, width - 220, RowHeight, Skin.Bright, 3);
-            MakeButton(_petStrip.transform, "BonusFwd", ">", -width / 2 + 82, second, 44, 32, false,
-                       delegate { StepBonus(1); });
-
-            _petValueInput = AddInput(_petStrip.transform, "PetValue", width / 2 - 60, second, 96, "10");
-
-            _petStrip.SetActive(false);
-        }
-
         private void StepFamily(int by)
         {
             _familyIndex = (_familyIndex + by + Families.Length) % Families.Length;
-            _family = Families[_familyIndex];
+            _grantFamily = Families[_familyIndex];
+            _family = ItemTypeOf(_grantFamily);
             _itemPage = 0;
-            if (_familyLabel != null) _familyLabel.text = _family.ToString().ToUpper();
+            if (_familyLabel != null) _familyLabel.text = _grantFamily.ToString().ToUpper();
             RefreshThings();
         }
 
@@ -1565,8 +1594,7 @@ namespace VaultAdmin
 
         private int VisibleRowCount()
         {
-            bool pets = _family == EItemType.Pet;
-            return Mathf.Max(1, pets ? _rowsPerPage - 2 : _rowsPerPage);
+            return Mathf.Max(1, _rowsPerPage);
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -1576,7 +1604,28 @@ namespace VaultAdmin
 
             string filter = _filter == null ? "" : _filter.Trim().ToLower();
 
-            if (_family == EItemType.Pet)
+            if (_grantFamily == Family.Dweller)
+            {
+                // The named dwellers the game ships: each brings its own look, stats and story, so
+                // this list hands them over whole rather than offering to edit them.
+                DwellerManager manager = SafeDwellerManager();
+                UniqueDwellerData[] legends = manager != null ? manager.LegendaryDwellers : null;
+
+                if (legends != null)
+                {
+                    for (int i = 0; i < legends.Length; i++)
+                    {
+                        if (legends[i] == null) continue;
+
+                        string label = ReadMember(legends[i], "Name");
+                        if (string.IsNullOrEmpty(label)) continue;
+                        if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
+
+                        _shown.Add(legends[i]);
+                    }
+                }
+            }
+            else if (_grantFamily == Family.Pet)
             {
                 if (_pets == null) BuildPetCatalogue();
                 if (_pets != null)
@@ -1608,7 +1657,6 @@ namespace VaultAdmin
             int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
             _itemPage = Mathf.Clamp(_itemPage, 0, pages - 1);
 
-            if (_petStrip != null) _petStrip.SetActive(_family == EItemType.Pet);
             FillRows();
         }
 
@@ -1636,8 +1684,20 @@ namespace VaultAdmin
                     row.Name.text = item.Name;
                     row.Stats.text = item.Stats;
                     ShowIcon(row.Icon, item);
+                    continue;
                 }
-                else
+
+                UniqueDwellerData legend = thing as UniqueDwellerData;
+                if (legend != null)
+                {
+                    string label = ReadMember(legend, "Name");
+                    row.Name.text = string.IsNullOrEmpty(label) ? "Legendary" : label;
+                    row.Stats.text = "LEGENDARY  brings its own look and stats";
+                    row.Icon.atlas = null;
+                    row.Icon.spriteName = "";
+                    continue;
+                }
+
                 {
                     PetEntry pet = (PetEntry)thing;
                     row.Name.text = pet.Name;
@@ -1765,11 +1825,17 @@ namespace VaultAdmin
             CatalogueEntry item = thing as CatalogueEntry;
             if (item != null) { GrantItem(item); return; }
 
-            if (_petNameInput != null) _petName = _petNameInput.value;
-            if (_petValueInput != null && !string.IsNullOrEmpty(_petValueInput.value))
-                _petBonusValue = _petValueInput.value;
+            UniqueDwellerData legend = thing as UniqueDwellerData;
+            if (legend != null)
+            {
+                string label = ReadMember(legend, "Name");
+                CreateLegendary(legend, string.IsNullOrEmpty(label) ? "legendary" : label);
+                return;
+            }
 
-            GrantPet((PetEntry)thing);
+            // Handed over as the game rolled it. Naming one and choosing its bonus is what the
+            // create tab is for.
+            GrantPet((PetEntry)thing, false);
         }
 
         private UIInput _firstNameInput;
@@ -1777,16 +1843,196 @@ namespace VaultAdmin
         private UILabel _rarityLabel;
         private UILabel _genderLabel;
         private UILabel _levelLabel;
-        private readonly UILabel[] _specialLabels = new UILabel[7];
+        private readonly UIInput[] _specialInputs = new UIInput[7];
         private int _dwellerLevelValue = 1;
 
-        private void BuildDwellersPage(Transform page)
+        private enum Making { Dweller, Pet }
+
+        private Making _making = Making.Dweller;
+        private GameObject _dwellerSection;
+        private GameObject _petSection;
+        private UILabel _makingLabel;
+        private UIScrollView _createView;
+        private int _petIndex;
+        private UILabel _petPickLabel;
+        private UISprite _petPickIcon;
+
+        /// <summary>
+        /// The constructor: everything that is built to order rather than handed over as it stands.
+        ///
+        /// Both halves start at the same height and only one is ever shown, so neither leaves a gap
+        /// where the other would have been.
+        /// </summary>
+        private void BuildCreatePage(Transform page)
         {
             int width = _windowWidth - Margin * 2;
 
             Transform parent;
-            UIScrollView view = BeginScroll(page, width, ContentTop(), ContentBottom(), out parent);
+            _createView = BeginScroll(page, width, ContentTop(), ContentBottom(), out parent);
 
+            _makingLabel = AddPickerRow(parent, width, "MAKING",
+                                        delegate { StepMaking(-1); }, delegate { StepMaking(1); },
+                                        _making.ToString().ToUpper());
+
+            int sectionTop = _cursorY;
+
+            _dwellerSection = MakeSection(parent, "DwellerSection");
+            BuildDwellerSection(_dwellerSection.transform, width);
+            int afterDweller = _cursorY;
+
+            _cursorY = sectionTop;
+            _petSection = MakeSection(parent, "PetSection");
+            BuildPetSection(_petSection.transform, width);
+
+            _cursorY = Mathf.Min(afterDweller, _cursorY);
+            EndScroll(_createView, width);
+
+            ShowMaking(_making);
+        }
+
+        private GameObject MakeSection(Transform parent, string name)
+        {
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localScale = Vector3.one;
+            return go;
+        }
+
+        private void StepMaking(int by)
+        {
+            _making = _making == Making.Dweller ? Making.Pet : Making.Dweller;
+            ShowMaking(_making);
+        }
+
+        private void ShowMaking(Making making)
+        {
+            _making = making;
+            if (_makingLabel != null) _makingLabel.text = making.ToString().ToUpper();
+            if (_dwellerSection != null) _dwellerSection.SetActive(making == Making.Dweller);
+            if (_petSection != null) _petSection.SetActive(making == Making.Pet);
+            if (_createView != null) _createView.ResetPosition();
+        }
+
+        /// <summary>A pet built to order: which one, called what, carrying which bonus.</summary>
+        private void BuildPetSection(Transform parent, int width)
+        {
+            AddHeader(parent, "PET", width);
+
+            int pickY = _cursorY - RowHeight / 2;
+            Plate(parent, "PetPick", 0, pickY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+
+            GameObject iconGo = new GameObject("PetPickIcon");
+            iconGo.layer = parent.gameObject.layer;
+            iconGo.transform.SetParent(parent, false);
+            iconGo.transform.localPosition = new Vector3(-width / 2 + 78, pickY, 0f);
+            iconGo.transform.localScale = Vector3.one;
+            _petPickIcon = iconGo.AddComponent<UISprite>();
+            _petPickIcon.width = 34;
+            _petPickIcon.height = 34;
+            _petPickIcon.depth = 3;
+
+            MakeButton(parent, "PetBack", "<", -width / 2 + 28, pickY, 40, 32, false,
+                       delegate { StepPet(-1); });
+            MakeButton(parent, "PetFwd", ">", -width / 2 + 128, pickY, 40, 32, false,
+                       delegate { StepPet(1); });
+
+            _petPickLabel = MakeLeftLabel(parent, "PetPickName", "-",
+                                          -width / 2 + 154, pickY, width - 164, RowHeight,
+                                          Skin.Bright, 3);
+            _cursorY -= RowHeight + RowGap;
+
+            AddHeader(parent, "NAME AND BONUS", width);
+
+            int nameY = _cursorY - RowHeight / 2;
+            Plate(parent, "PetNameRow", 0, nameY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            MakeLeftLabel(parent, "PetNameCaption", "NAME", -width / 2 + 14, nameY, 110,
+                          RowHeight, Skin.Bright, 3);
+            _petNameInput = AddInput(parent, "PetName", 34, nameY, width - 150, "RANDOM");
+            _cursorY -= RowHeight + RowGap;
+
+            int bonusY = _cursorY - RowHeight / 2;
+            Plate(parent, "PetBonusRow", 0, bonusY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            MakeButton(parent, "PetBonusBack", "<", -width / 2 + 28, bonusY, 40, 32, false,
+                       delegate { StepBonus(-1); });
+            MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, bonusY, 40, 32, false,
+                       delegate { StepBonus(1); });
+            _bonusLabel = MakeLeftLabel(parent, "PetBonusName",
+                                        BonusEffects[_petBonusIndex].ToString(),
+                                        -width / 2 + 98, bonusY, width - 200, RowHeight,
+                                        Skin.Bright, 3);
+            _petValueInput = AddInput(parent, "PetValue", width / 2 - 52, bonusY, 80, "10");
+            _cursorY -= RowHeight + RowGap;
+
+            MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22, width, 44, true,
+                       CreatePetFromPanel);
+            _cursorY -= 44 + RowGap;
+
+            MakeLabel(parent, "PetNote", "Goes straight into the vault's storage.",
+                      0, _cursorY - 13, width, 26, Skin.Rim, 3);
+            _cursorY -= 26 + RowGap;
+
+            RefreshPetPick();
+        }
+
+        private void StepPet(int by)
+        {
+            if (_pets == null) BuildPetCatalogue();
+            if (_pets == null || _pets.Count == 0) return;
+
+            _petIndex = (_petIndex + by + _pets.Count) % _pets.Count;
+            RefreshPetPick();
+        }
+
+        private void RefreshPetPick()
+        {
+            if (_pets == null) BuildPetCatalogue();
+
+            if (_pets == null || _pets.Count == 0)
+            {
+                if (_petPickLabel != null) _petPickLabel.text = "no pets in the catalogue";
+                return;
+            }
+
+            _petIndex = Mathf.Clamp(_petIndex, 0, _pets.Count - 1);
+            PetEntry pet = _pets[_petIndex];
+
+            if (_petPickLabel != null)
+                _petPickLabel.text = pet.Name + "   " + (_petIndex + 1) + "/" + _pets.Count;
+
+            if (_petPickIcon != null)
+            {
+                UIAtlas atlas = PetAtlasFor(pet.PetType);
+                string sprite = ReadMember(pet.Template, "Sprite");
+                if (string.IsNullOrEmpty(sprite)) sprite = ReadMember(pet.Template, "HeadSprite");
+
+                if (atlas != null && !string.IsNullOrEmpty(sprite))
+                {
+                    _petPickIcon.atlas = atlas;
+                    _petPickIcon.spriteName = sprite;
+                }
+                else
+                {
+                    _petPickIcon.atlas = null;
+                    _petPickIcon.spriteName = "";
+                }
+            }
+        }
+
+        private void CreatePetFromPanel()
+        {
+            if (_pets == null || _pets.Count == 0) return;
+
+            if (_petNameInput != null) _petName = _petNameInput.value;
+            if (_petValueInput != null && !string.IsNullOrEmpty(_petValueInput.value))
+                _petBonusValue = _petValueInput.value;
+
+            GrantPet(_pets[Mathf.Clamp(_petIndex, 0, _pets.Count - 1)], true);
+        }
+
+        private void BuildDwellerSection(Transform parent, int width)
+        {
             AddHeader(parent, "NAME", width);
 
             int nameY = _cursorY - RowHeight / 2;
@@ -1828,8 +2074,8 @@ namespace VaultAdmin
                 MakeLabel(parent, "SpecLetter" + i, Specials[i].ToString().Substring(0, 1),
                           x, specialY + 32, cell, 22, Skin.Bright, 3);
 
-                _specialLabels[i] = MakeLabel(parent, "SpecValue" + i, _special[i].ToString(),
-                                              x, specialY + 8, cell, 22, Skin.Bright, 3);
+                _specialInputs[i] = AddInput(parent, "Spec" + i, x, specialY + 10, cell - 6,
+                                             _special[i].ToString());
 
                 MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, specialY - 22, cell / 2 - 3, 26,
                            false, delegate { StepSpecial(index, -1); });
@@ -1846,8 +2092,6 @@ namespace VaultAdmin
                       "Arrives at the vault door, waiting to be let in.",
                       0, _cursorY - 13, width, 26, Skin.Rim, 3);
             _cursorY -= 26 + RowGap;
-
-            EndScroll(view, width);
         }
 
         /// <summary>A label, a value, and a pair of arrows — the game's own way of offering a choice.</summary>
@@ -1859,9 +2103,8 @@ namespace VaultAdmin
 
             Plate(parent, "Pick_" + caption, 0, y, width, RowHeight, Skin.Row(width, RowHeight), 1);
 
-            UILabel name = MakeLabel(parent, "PickName_" + caption, caption,
-                                     -width / 2 + 84, y, 160, RowHeight, Skin.Bright, 3);
-            name.alignment = NGUIText.Alignment.Left;
+            MakeLeftLabel(parent, "PickName_" + caption, caption,
+                          -width / 2 + 14, y, 170, RowHeight, Skin.Bright, 3);
 
             MakeButton(parent, "PickBack_" + caption, "<", width / 2 - 178, y, 40, 32, false, back);
             UILabel value = MakeLabel(parent, "PickValue_" + caption, initial,
@@ -1922,10 +2165,28 @@ namespace VaultAdmin
             if (_levelLabel != null) _levelLabel.text = _dwellerLevel;
         }
 
+        // Ten is the figure the game shows, not a rule it enforces: higher values are kept and do
+        // work. The ceiling here is only high enough to stop a slipped keystroke.
+        private const int MaxSpecial = 100;
+
         private void StepSpecial(int index, int by)
         {
-            _special[index] = Mathf.Clamp(_special[index] + by, 1, 10);
-            if (_specialLabels[index] != null) _specialLabels[index].text = _special[index].ToString();
+            _special[index] = Mathf.Clamp(_special[index] + by, 1, MaxSpecial);
+            if (_specialInputs[index] != null)
+                _specialInputs[index].value = _special[index].ToString();
+        }
+
+        /// <summary>Takes the typed figures, so a stat can be set rather than clicked up to.</summary>
+        private void ReadSpecialInputs()
+        {
+            for (int i = 0; i < _specialInputs.Length; i++)
+            {
+                if (_specialInputs[i] == null) continue;
+
+                int parsed;
+                if (int.TryParse(_specialInputs[i].value, out parsed) && parsed >= 1)
+                    _special[i] = Mathf.Min(parsed, MaxSpecial);
+            }
         }
 
         /// <summary>Reads the panel's fields and hands them to the creation the game already uses.</summary>
@@ -1933,6 +2194,7 @@ namespace VaultAdmin
         {
             if (_firstNameInput != null) _dwellerFirst = _firstNameInput.value;
             if (_lastNameInput != null) _dwellerLast = _lastNameInput.value;
+            ReadSpecialInputs();
             _dwellerLevel = _dwellerLevelValue.ToString();
             CreateDweller();
         }
@@ -1968,14 +2230,11 @@ namespace VaultAdmin
             AddIcon(parent, "Icon_" + resource, ResourceSprite(resource),
                     -width / 2 + 26, top, 28);
 
-            UILabel name = MakeLabel(parent, "Name_" + resource, resource.ToString(),
-                                     -width / 2 + 52, top, width / 2 - 40, 26, Skin.Bright, 3);
-            name.alignment = NGUIText.Alignment.Left;
+            MakeLeftLabel(parent, "Name_" + resource, resource.ToString(),
+                          -width / 2 + 48, top, width - 210, 26, Skin.Bright, 3);
 
-            UILabel value = MakeLabel(parent, "Value_" + resource, "-",
-                                      width / 2 - 88, top, 160, 26, Skin.Bright, 3);
-            value.alignment = NGUIText.Alignment.Right;
-            _resourceLabels[resource] = value;
+            _resourceLabels[resource] = MakeRightLabel(parent, "Value_" + resource, "-",
+                                                       width / 2 - 10, top, 160, 26, Skin.Bright, 3);
 
             // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
             EResource captured = resource;
@@ -2017,9 +2276,8 @@ namespace VaultAdmin
 
             AddIcon(parent, "BoxIcon_" + type, BoxSprite(type), -width / 2 + 26, top, 28);
 
-            UILabel name = MakeLabel(parent, "BoxName_" + type, type.ToString(),
-                                     -width / 2 + 52, top, width - 80, 26, Skin.Bright, 3);
-            name.alignment = NGUIText.Alignment.Left;
+            MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
+                          -width / 2 + 48, top, width - 60, 26, Skin.Bright, 3);
 
             ELunchBoxType captured = type;
 
@@ -2244,6 +2502,32 @@ namespace VaultAdmin
             return label;
         }
 
+        /// <summary>
+        /// A left-aligned label placed by the edge its text starts at.
+        ///
+        /// NGUI positions a label by its centre, so a left-aligned one placed where its text should
+        /// begin actually begins half its own width further left. That is how every resource name
+        /// ended up outside the window with its first letters cut off.
+        /// </summary>
+        private UILabel MakeLeftLabel(Transform parent, string name, string text,
+                                      int left, int y, int width, int height, Color colour, int depth)
+        {
+            UILabel label = MakeLabel(parent, name, text, left + width / 2, y, width, height,
+                                      colour, depth);
+            label.alignment = NGUIText.Alignment.Left;
+            return label;
+        }
+
+        /// <summary>The same, placed by the edge its text ends at.</summary>
+        private UILabel MakeRightLabel(Transform parent, string name, string text,
+                                       int right, int y, int width, int height, Color colour, int depth)
+        {
+            UILabel label = MakeLabel(parent, name, text, right - width / 2, y, width, height,
+                                      colour, depth);
+            label.alignment = NGUIText.Alignment.Right;
+            return label;
+        }
+
         private GameObject MakeButton(Transform parent, string name, string text,
                                       int x, int y, int width, int height,
                                       bool solid, EventDelegate.Callback onClick)
@@ -2301,10 +2585,11 @@ namespace VaultAdmin
                 {
                     RefreshValues();
 
-                    if (_petArtPending && _family == EItemType.Pet)
+                    if (_petArtPending)
                     {
                         _petArtPending = false;
-                        FillRows();
+                        if (_grantFamily == Family.Pet) FillRows();
+                        if (_making == Making.Pet) RefreshPetPick();
                     }
 
                     if (_filterInput != null)
@@ -2523,10 +2808,10 @@ namespace VaultAdmin
                     string id = ReadMember(data, idMember);
                     if (string.IsNullOrEmpty(id)) continue;
 
-                    // The Name property returns the data object's own name, which for these
-                    // tables is a bare number — which is exactly what the first list showed. The
-                    // readable name is a localisation key, and the game keeps a table of those.
-                    string label = Localised(ReadMember(data, nameMember));
+                    // The Name property returns the data object's own name, which in these tables
+                    // is a bare number. Every family carries a GetName that does the lookup properly.
+                    string label = CallText(data, "GetName");
+                    if (string.IsNullOrEmpty(label)) label = Localised(ReadMember(data, nameMember));
                     if (string.IsNullOrEmpty(label)) label = ReadMember(data, "Name");
                     if (string.IsNullOrEmpty(label)) label = data.CodeId;
                     if (string.IsNullOrEmpty(label)) label = id;
@@ -2544,6 +2829,48 @@ namespace VaultAdmin
                 catch { }   // one unreadable row must not cost the whole family
             }
             return added;
+        }
+
+        /// <summary>
+        /// Calls a no-argument method and returns what it says.
+        ///
+        /// Each item family has its own GetName, and each one runs the localisation lookup itself.
+        /// Reading the key and looking it up here was the wrong way round: the table those keys
+        /// belong to is not the one NGUI keeps, which is why every item was listed by its id.
+        /// </summary>
+        private static string CallText(object target, string method)
+        {
+            if (target == null) return null;
+
+            try
+            {
+                MethodInfo found = target.GetType().GetMethod(
+                    method,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, Type.EmptyTypes, null);
+
+                if (found == null) return null;
+
+                object answer = found.Invoke(target, null);
+                return answer == null ? null : answer.ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Reads a member as text, whatever type it is.
+        ///
+        /// ReadMember casts to string and answers null for everything else, so every number asked
+        /// for through it came back empty — which is why no weapon showed its damage and no outfit
+        /// its bonus.
+        /// </summary>
+        private static string ReadAsText(object target, string member)
+        {
+            object value = ReadObject(target, member);
+            return value == null ? null : value.ToString();
         }
 
         private static string ReadMember(object target, string member)
@@ -2643,10 +2970,19 @@ namespace VaultAdmin
 
                 if (type == EItemType.Weapon)
                 {
-                    string min = ReadMember(data, "DamageMin");
-                    string max = ReadMember(data, "DamageMax");
-                    if (!string.IsNullOrEmpty(min) && !string.IsNullOrEmpty(max))
-                        line += min == max ? "  " + min + " DMG" : "  " + min + "-" + max + " DMG";
+                    // The game writes its own damage line; there is no reason to write another.
+                    string damage = CallText(data, "GetDamageAsString");
+                    if (string.IsNullOrEmpty(damage))
+                    {
+                        string min = ReadAsText(data, "DamageMin");
+                        string max = ReadAsText(data, "DamageMax");
+                        if (!string.IsNullOrEmpty(min) && !string.IsNullOrEmpty(max))
+                            damage = min == max ? min : min + "-" + max;
+                    }
+                    if (!string.IsNullOrEmpty(damage)) line += "  " + damage + " DMG";
+
+                    string kind = ReadAsText(data, "WeaponType");
+                    if (!string.IsNullOrEmpty(kind) && kind != "None") line += "  " + kind.ToUpper();
                 }
                 else if (type == EItemType.Outfit)
                 {
@@ -2655,8 +2991,8 @@ namespace VaultAdmin
                 }
                 else if (type == EItemType.Junk)
                 {
-                    string part = ReadMember(data, "m_linkedComponent");
-                    if (!string.IsNullOrEmpty(part) && part != "None") line += "  " + part;
+                    string part = ReadAsText(data, "m_linkedComponent");
+                    if (!string.IsNullOrEmpty(part) && part != "None") line += "  " + part.ToUpper();
                 }
 
                 if (data.SellPrice > 0) line += "  " + data.SellPrice + " CAPS";
@@ -2689,11 +3025,13 @@ namespace VaultAdmin
                     object row = rows.GetValue(i);
                     if (row == null) continue;
 
-                    string stat = ReadMember(row, "Stat");
-                    if (string.IsNullOrEmpty(stat)) stat = ReadMember(row, "m_stat");
+                    string stat = ReadAsText(row, "Stat");
+                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "m_stat");
+                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "SpecialStat");
 
-                    string value = ReadMember(row, "Value");
-                    if (string.IsNullOrEmpty(value)) value = ReadMember(row, "m_value");
+                    string value = ReadAsText(row, "Value");
+                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "m_value");
+                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "StatValue");
 
                     if (string.IsNullOrEmpty(stat) || string.IsNullOrEmpty(value)) continue;
                     if (value == "0") continue;
@@ -2883,7 +3221,9 @@ namespace VaultAdmin
         /// in stays filled in, and what lands in the save is a pet the game built with three fields
         /// changed — not a record assembled by this mod and hoped over.
         /// </summary>
-        private void GrantPet(PetEntry entry)
+        private void GrantPet(PetEntry entry) { GrantPet(entry, true); }
+
+        private void GrantPet(PetEntry entry, bool customise)
         {
             try
             {
@@ -2912,7 +3252,7 @@ namespace VaultAdmin
                 }
 
                 PetUniqueData data = unique as PetUniqueData;
-                if (data != null)
+                if (data != null && customise)
                 {
                     if (!string.IsNullOrEmpty(_petName)) data.Name = _petName;
 
