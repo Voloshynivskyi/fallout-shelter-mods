@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.13.2";
+        public const string PluginVersion = "0.13.3";
 
         internal static ManualLogSource Log;
 
@@ -499,12 +499,25 @@ namespace VaultAdmin
                 // mistake as guessing, just quieter.
                 if (sprite.atlas == null) { Log.LogWarning("  sampling: the sprite has no atlas."); return false; }
 
-                Texture texture = sprite.atlas.texture;
+                // The atlas exposes neither a texture nor a material here — the previous attempt
+                // reported exactly that. The widget does, though: UIWidget.mainTexture is what NGUI
+                // actually draws with, and the sprite plainly renders. This build keeps almost
+                // nothing where the obvious accessor looks, which its empty sprite list already
+                // showed.
+                Texture texture = sprite.mainTexture;
+
+                if (texture == null && sprite.material != null) texture = sprite.material.mainTexture;
+                if (texture == null) texture = sprite.atlas.texture;
                 if (texture == null && sprite.atlas.spriteMaterial != null)
                 {
-                    texture = sprite.atlas.spriteMaterial.mainTexture;   // the atlas may only expose it here
+                    texture = sprite.atlas.spriteMaterial.mainTexture;
                 }
-                if (texture == null) { Log.LogWarning("  sampling: the atlas has no texture."); return false; }
+
+                if (texture == null)
+                {
+                    Log.LogWarning("  sampling: no texture from the widget, its material, or the atlas.");
+                    return false;
+                }
                 if (texture.width == 0 || texture.height == 0)
                 {
                     Log.LogWarning("  sampling: the atlas texture is " + texture.width + "x" + texture.height + ".");
