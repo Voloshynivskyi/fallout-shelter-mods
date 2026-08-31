@@ -284,3 +284,11 @@ roots, the visible panels with their depths, the game's own windows, the atlases
 
 Nothing changes on screen: the survey only reads. Its whole purpose is to spend one launch learning
 the facts the real panel has to be built against, instead of several launches guessing at them.
+
+Also expect a `buttons on screen` section listing every button with its parent path. That is how the
+menu on the right — settings, stats, boxes, missions, storage — gets located: it is assembled in the
+scene, so nothing in the assembly describes it, but its buttons are visible and their paths say
+where a new one would belong.
+
+If the menu is one that opens rather than one always shown, **open it before pressing Survey UI**,
+so its buttons are on screen while the survey runs.

@@ -18,12 +18,23 @@ So the diagnostic comes first this time.
 A one-shot survey, off by default, that writes to the log:
 
 - every UI root in the scene, with its scaling and its size
+- every button on screen with its parent path, which is how the menu on the right is found at all
 - every panel under them: name, depth, clipping, parent chain
 - the windows the game itself builds, so one can be cloned rather than invented
 - the atlases in use and what a sprite from each is called
 - the fonts in use, since a label with no font draws nothing
 
 Nothing is created and nothing is drawn. This change only reads.
+
+## The menu on the right
+
+A later request: the panel should open from the game's own menu — the one on the right holding
+settings, stats, boxes, missions and storage — not only from a hotkey.
+
+That menu is assembled in the scene rather than declared in code. Searching the assembly for a type
+that owns those buttons finds nothing, because there is no such type: the buttons exist as objects
+with components, put together in the editor. They are on screen though, and a button's parent path
+says which menu it belongs to and therefore where another one would go. So the survey lists them.
 
 ## Non-goals
 

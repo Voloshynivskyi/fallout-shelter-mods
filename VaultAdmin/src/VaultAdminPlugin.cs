@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.9.0";
+        public const string PluginVersion = "0.9.1";
 
         internal static ManualLogSource Log;
 
@@ -960,6 +960,7 @@ namespace VaultAdmin
             SurveySection("roots", delegate { SurveyRoots(); });
             SurveySection("panels", delegate { SurveyPanels(); });
             SurveySection("windows", delegate { SurveyWindows(); });
+            SurveySection("buttons", delegate { SurveyButtons(); });
             SurveySection("atlases", delegate { SurveyAtlases(); });
             SurveySection("fonts", delegate { SurveyFonts(); });
             Log.LogInfo("=== end of survey ===");
@@ -1032,6 +1033,34 @@ namespace VaultAdmin
                             "  active=" + m.gameObject.activeInHierarchy);
             }
             Log.LogInfo("  windows, huds and popups listed: " + shown);
+        }
+
+        /// <summary>
+        /// Every button on screen, with where it lives.
+        ///
+        /// The menu on the right — settings, stats, boxes, missions, storage — is assembled in the
+        /// scene rather than declared in code, so no amount of reading the assembly finds it. Its
+        /// buttons are on screen though, and a button's parent path is what says which menu it
+        /// belongs to and therefore where another one would go.
+        /// </summary>
+        private void SurveyButtons()
+        {
+            UIButton[] buttons = Resources.FindObjectsOfTypeAll<UIButton>();
+            int shown = 0;
+            int active = 0;
+
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                UIButton b = buttons[i];
+                if (b == null || !b.gameObject.activeInHierarchy) continue;
+                active++;
+                if (shown++ >= SurveyCap * 3) continue;
+
+                Log.LogInfo("    " + Path(b.transform));
+            }
+
+            Log.LogInfo("  buttons on screen: " + active + " (of " + buttons.Length + " loaded)");
+            if (active > shown) Log.LogInfo("    (" + (active - shown) + " more not listed)");
         }
 
         private void SurveyAtlases()
