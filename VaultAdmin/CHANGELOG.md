@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0
+
+Created dwellers now genuinely queue at the vault door, waiting to be let in.
+
+The game has a call for exactly this, and building it by hand was the mistake:
+
+```
+DwellerSpawner.CreateWaitingDweller(gender, shouldAppearInTheMiddle, middleModifier, rarity, forceCreate)
+DwellerSpawner.CreateUniqueWaitingDweller(data, shouldGoOutByHappiness, ..., forceCreate)
+```
+
+It creates the dweller and registers them in the waiting line in one go. The registration was the
+half that was missing: setting the waiting-approval state without it left someone waiting at a door
+that did not know they were there, so they could neither be admitted nor do anything else.
+
+Three hand-rolled pieces are gone with it — choosing a spawn position, registering with the dweller
+pool, and changing state by hand. All of it was reproducing, badly, what one call already did.
+
+Level is applied afterwards, since that call does not take one, using `SetLevelAndMinExp` — the same
+call the game uses for it, which moves the level and its experience together.
+
+### How this was found
+
+Three guesses preceded it, each costing a launch: register with the pool, then rarity, then state.
+The gate diagnostic ended it in one run by printing every condition for a created dweller beside one
+the game made. Every check passed on both. The only difference was the state — which is what pointed
+at the queue rather than at the gates, and from there to the call that does the queueing properly.
+
+The diagnostic should have been the first step, not the fourth. It is staying in the panel.
+
 ## 0.7.0
 
 Created dwellers now queue at the vault door instead of appearing inside.

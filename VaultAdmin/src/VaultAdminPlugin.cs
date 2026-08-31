@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.7.3";
+        public const string PluginVersion = "0.8.0";
 
         internal static ManualLogSource Log;
 
@@ -880,35 +880,6 @@ namespace VaultAdmin
             GUILayout.EndScrollView();
         }
 
-        /// <summary>
-        /// Where a newcomer appears: the room by the vault door.
-        ///
-        /// This is where the game puts an arrival — FakeWastelandRoom.OnHandleDwellerArrive is what
-        /// runs when someone comes back from the wasteland, and the queue forms there. Falls back to
-        /// an existing dweller's position, which is by definition somewhere the game accepts.
-        /// </summary>
-        private Vector3 SpawnPosition(DwellerManager dwellers)
-        {
-            try
-            {
-                Room door = ManagersHandler.WastelandRoom;
-                if (door != null) return door.transform.position;
-            }
-            catch { }
-
-            try
-            {
-                if (dwellers.Dwellers != null && dwellers.Dwellers.Count > 0)
-                {
-                    Dweller existing = dwellers.Dwellers[0];
-                    if (existing != null) return existing.transform.position;
-                }
-            }
-            catch { }
-
-            return Vector3.zero;
-        }
-
         private void CreateDweller()
         {
             try
@@ -916,21 +887,28 @@ namespace VaultAdmin
                 DwellerManager manager = SafeDwellerManager();
                 if (manager == null) return;
 
-                // The creation call admits the dweller itself, so a full vault has to be caught
-                // before creating rather than by a refusal afterwards.
+                DwellerSpawner spawner = DwellerSpawner.Instance;
+                if (spawner == null)
+                {
+                    Log.LogWarning("The dweller spawner is unavailable; nothing was created.");
+                    return;
+                }
+
                 if (manager.VaultIsWithMaxPopulation)
                 {
                     Log.LogWarning("The vault is at its population limit; no dweller was created.");
                     return;
                 }
 
-                int level;
-                if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
-
-                Dweller dweller = manager.CreateDweller(
-                    Rarities[_rarityIndex], Genders[_genderIndex],
-                    SpawnPosition(manager), Quaternion.identity,
-                    level, null, null);
+                // The game's own call for a newcomer at the door. It creates the dweller and adds
+                // them to the waiting line in one go, which is the half that was missing when this
+                // was built by hand: setting the waiting-approval state without registering with
+                // the queue left someone waiting at a door that did not know they were there.
+                //
+                // forceCreate is true so the panel is not silently refused by the same throttle
+                // that paces normal arrivals; the population limit is checked above instead.
+                Dweller dweller = spawner.CreateWaitingDweller(
+                    Genders[_genderIndex], false, 0, Rarities[_rarityIndex], true);
 
                 if (dweller == null)
                 {
@@ -938,15 +916,14 @@ namespace VaultAdmin
                     return;
                 }
 
-                RegisterAsActive(dweller);
-
-                // Rarity is not set here: DwellerPool.GetInstance already took it as an argument
-                // and set it. Assigning it again only wrote the same value back.
                 if (!string.IsNullOrEmpty(_dwellerFirst)) dweller.Name = _dwellerFirst;
                 if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
 
+                int level;
+                if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
+                ApplyLevel(dweller, level);
+
                 ApplySpecial(dweller);
-                SendToQueue(dweller);
                 _created.Add(dweller.GetInstanceID());
 
                 Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
@@ -955,37 +932,6 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Creating a dweller failed: " + e.Message);
-            }
-        }
-
-        /// <summary>
-        /// Puts the dweller into the pool's list of active dwellers.
-        ///
-        /// CreateDweller adds the dweller to DwellerManager's own list, which is enough for it to
-        /// exist and walk around, but nothing in that path calls DwellerPool.AddToActiveDweller —
-        /// only SetupDweller does. Without it the interface cannot act on the dweller: the outfit,
-        /// weapon and pet slots are drawn but do nothing when clicked, which is exactly how this
-        /// surfaced.
-        ///
-        /// SetupDweller would register it too, but it also re-rolls the stats from rarity and picks
-        /// a random level, throwing away whatever the panel was asked to set. This registers and
-        /// nothing else.
-        /// </summary>
-        private void RegisterAsActive(Dweller dweller)
-        {
-            try
-            {
-                DwellerPool pool = DwellerPool.Instance;
-                if (pool == null)
-                {
-                    Log.LogWarning("The dweller pool is unavailable; the new dweller may not be interactive.");
-                    return;
-                }
-                pool.AddToActiveDweller(dweller);
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Could not register the dweller as active: " + e.Message);
             }
         }
 
@@ -1082,38 +1028,22 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Settles a newly created dweller into the vault, at the door where new arrivals appear.
+        /// Sets the dweller's level, and the experience that belongs with it.
         ///
-        /// A dweller straight out of CreateDweller has no state at all — not idling, not walking,
-        /// not waiting — which is a condition the game never produces by itself. Giving them one is
-        /// necessary. Giving them the *waiting for approval* one is not enough, and is worse than
-        /// idle: that state expects the entrance room to have registered them, and without it they
-        /// wait at a door that does not know they exist.
+        /// CreateWaitingDweller does not take a level, so it is applied afterwards. The game uses
+        /// this same call inside CreateDweller for the same purpose — it moves the level and the
+        /// experience together, which is the pairing the save keeps.
         /// </summary>
-        private void SendToQueue(Dweller dweller)
+        private void ApplyLevel(Dweller dweller, int level)
         {
             try
             {
-                // Deliberately NOT SetWaitingApproval.
-                //
-                // Putting a dweller into the waiting-approval state left them stuck: the gate
-                // diagnostic showed every check passing — canDoAction, canBe3DSelected,
-                // canDoAnySelectionNow all true, identical to a dweller the game made — and the
-                // only difference was the state itself. Waiting for approval is half a mechanism:
-                // the other half is the entrance room registering the dweller through a
-                // DwellerWaitingPosition, which is what draws the button that lets them in. Setting
-                // the state without that registration produces someone waiting at a door that does
-                // not know they are there, so they can neither be admitted nor do anything else.
-                //
-                // This is the other branch of the game's own arrival code, the one for a dweller
-                // who needs no approval: shelter state, then idle.
-                dweller.ChangeState(dweller.ShelterState);
-                dweller.ChangeState(dweller.IdleState);
-                dweller.SetFacingRight(true);
+                DwellerExperience experience = dweller.Experience;
+                if (experience != null) experience.SetLevelAndMinExp(level);
             }
             catch (Exception e)
             {
-                Log.LogWarning("Could not put the dweller in the queue: " + e.Message);
+                Log.LogWarning("Setting the level failed: " + e.Message);
             }
         }
 
@@ -1157,14 +1087,20 @@ namespace VaultAdmin
                 DwellerManager manager = SafeDwellerManager();
                 if (manager == null) return;
 
+                DwellerSpawner spawner = DwellerSpawner.Instance;
+                if (spawner == null)
+                {
+                    Log.LogWarning("The dweller spawner is unavailable; " + label + " was not created.");
+                    return;
+                }
+
                 if (manager.VaultIsWithMaxPopulation)
                 {
                     Log.LogWarning("The vault is at its population limit; " + label + " was not created.");
                     return;
                 }
 
-                Dweller dweller = manager.CreateSpecialDweller(
-                    data, SpawnPosition(manager), Quaternion.identity, null, null);
+                Dweller dweller = spawner.CreateUniqueWaitingDweller(data, false, false, 0, true);
 
                 if (dweller == null)
                 {
@@ -1172,11 +1108,8 @@ namespace VaultAdmin
                     return;
                 }
 
-                RegisterAsActive(dweller);
-
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
-                SendToQueue(dweller);
                 _created.Add(dweller.GetInstanceID());
 
                 Log.LogInfo("Created legendary dweller " + label + " — waiting at the door.");
