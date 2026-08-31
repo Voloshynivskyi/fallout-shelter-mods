@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.13.1";
+        public const string PluginVersion = "0.13.2";
 
         internal static ManualLogSource Log;
 
@@ -494,13 +494,39 @@ namespace VaultAdmin
 
             try
             {
-                if (sprite.atlas == null) return false;
+                // Each step says why it gave up. The first version returned a bare false from
+                // four different places, so a failure told me nothing at all — which is the same
+                // mistake as guessing, just quieter.
+                if (sprite.atlas == null) { Log.LogWarning("  sampling: the sprite has no atlas."); return false; }
 
                 Texture texture = sprite.atlas.texture;
-                if (texture == null || texture.width == 0) return false;
+                if (texture == null && sprite.atlas.spriteMaterial != null)
+                {
+                    texture = sprite.atlas.spriteMaterial.mainTexture;   // the atlas may only expose it here
+                }
+                if (texture == null) { Log.LogWarning("  sampling: the atlas has no texture."); return false; }
+                if (texture.width == 0 || texture.height == 0)
+                {
+                    Log.LogWarning("  sampling: the atlas texture is " + texture.width + "x" + texture.height + ".");
+                    return false;
+                }
 
                 UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
-                if (data == null || data.width <= 0 || data.height <= 0) return false;
+                if (data == null)
+                {
+                    Log.LogWarning("  sampling: the atlas has no sprite named '" + sprite.spriteName + "'.");
+                    return false;
+                }
+                if (data.width <= 0 || data.height <= 0)
+                {
+                    Log.LogWarning("  sampling: sprite '" + sprite.spriteName + "' is " +
+                                   data.width + "x" + data.height + ".");
+                    return false;
+                }
+
+                Log.LogInfo("  sampling: atlas " + texture.width + "x" + texture.height +
+                            ", sprite '" + sprite.spriteName + "' at " + data.x + "," + data.y +
+                            " size " + data.width + "x" + data.height + ".");
 
                 rt = RenderTexture.GetTemporary(texture.width, texture.height, 0,
                                                 RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
@@ -538,7 +564,12 @@ namespace VaultAdmin
                     bestKey = entry.Key;
                 }
 
-                if (bestKey < 0) return false;
+                if (bestKey < 0)
+                {
+                    Log.LogWarning("  sampling: every pixel in that rectangle was transparent (" +
+                                   pixels.Length + " read). The rectangle or the blit is wrong.");
+                    return false;
+                }
 
                 // Back to the middle of the quantised bucket.
                 float r = (((bestKey >> 10) & 31) * 8 + 4) / 255f;
