@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.13.3";
+        public const string PluginVersion = "0.14.0";
 
         internal static ManualLogSource Log;
 
@@ -168,7 +168,7 @@ namespace VaultAdmin
                 "first time the button is placed, so there is a list to choose from rather than a " +
                 "guess — a name the atlas does not hold renders as nothing at all.");
 
-            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "auto",
+            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "",
                 "Colour of the button icon. The icon file is greyscale and NGUI multiplies it " +
                 "by this, so white in the file becomes exactly this colour. 'auto' reads the " +
                 "colour out of the game's own screenshot icon, which is the only way to match it " +

@@ -7,9 +7,10 @@ shade darker than the fill around the whole shape — the camera is a filled gre
 lens and a dark-green rim, not a dark body with green lines. Getting that backwards is why earlier
 versions read as a different set of icons however closely the outline matched.
 
-And this is drawn in greyscale rather than in green. NGUI multiplies a UITexture by its colour, so
-white here becomes exactly whatever HudButtonTint is set to. Matching the game's green then costs a
-line of configuration instead of a redraw, which matters after three failed guesses at it.
+The three colours are the game's own, given
+directly. Matching them by eye failed three times, and reading them out of the atlas at runtime
+failed as well: that atlas exposes no texture to read. So they are written down here, and the tint
+is left off so nothing multiplies over them.
 """
 import io
 import os
@@ -17,10 +18,12 @@ import struct
 import zlib
 
 S = 256
+# The game's own values, given rather than guessed at. Three attempts to match this by eye all
+# missed, and sampling it out of the atlas at runtime failed too — the atlas exposes no texture.
 CLEAR = (0, 0, 0, 0)
-FILL = (255, 255, 255, 255)   # becomes the tint exactly
-RIM = (150, 150, 150, 255)    # the outline, a shade darker once tinted
-CUT = (40, 40, 40, 255)       # punched through, as the camera's lens is
+FILL = (0x14, 0xFF, 0x17, 255)   # 14FF17, the bright body
+CUT = (0x08, 0x51, 0x08, 255)    # 085108, punched through, as the camera's lens is
+RIM = (0x08, 0x60, 0x0A, 255)    # 08600A, the outline
 
 px = [[CLEAR] * S for _ in range(S)]
 
