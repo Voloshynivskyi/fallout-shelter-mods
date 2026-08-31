@@ -12,10 +12,12 @@ namespace VaultAdmin
     /// <summary>
     /// Vault Admin — a debug panel for Fallout Shelter.
     ///
-    /// This is the skeleton: it reads live vault state and displays it, and writes nothing at all.
-    /// Everything this mod will eventually do writes to the player's save, and a save that stops
-    /// loading is lost progress, so the plumbing underneath gets proven before anything can grant
-    /// a single cap.
+    /// Reads live vault state, and grants resources and boxes.
+    ///
+    /// Everything is written through the game's own methods rather than by assigning fields.
+    /// Storage.AddResource clamps to the vault's cap and raises the callbacks the interface
+    /// listens to; a field assignment would leave the number on screen stale and skip whatever
+    /// else the game does when a resource changes.
     ///
     /// The panel is drawn with IMGUI here and only here. The finished panel is built from the
     /// game's own NGUI widgets so it belongs to the interface rather than floating over it; doing
@@ -29,7 +31,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.1.0";
+        public const string PluginVersion = "0.2.0";
 
         internal static ManualLogSource Log;
 
@@ -43,8 +45,27 @@ namespace VaultAdmin
         // evidence needed to work out what it is failing at.
         private readonly HashSet<string> _reported = new HashSet<string>();
 
-        private Rect _window = new Rect(40f, 40f, 380f, 460f);
+        private Rect _window = new Rect(40f, 40f, 460f, 560f);
         private Vector2 _scroll;
+
+        // EResource carries Lunchbox, MrHandy and PetCarrier, and granting them looks like the
+        // obvious move. It does nothing: the real store is a list of LunchBox objects on the vault,
+        // reached through Vault.AddLunchBox. Leaving them in the resource rows would give the panel
+        // two routes to the same thing, one of which silently fails, so they are excluded here and
+        // offered in the box section instead.
+        private static readonly EResource[] NotRealResources =
+        {
+            EResource.Lunchbox, EResource.MrHandy, EResource.PetCarrier
+        };
+
+        private static readonly float[] GrantAmounts = { 100f, 1000f, 10000f };
+        private static readonly int[] BoxAmounts = { 1, 5, 25 };
+
+        private static readonly ELunchBoxType[] BoxTypes =
+        {
+            ELunchBoxType.Regular, ELunchBoxType.MrHandy, ELunchBoxType.PetCarrier,
+            ELunchBoxType.NukaColaQuantum
+        };
 
         private void Awake()
         {
@@ -126,7 +147,7 @@ namespace VaultAdmin
 
         private void DrawWindow(int id)
         {
-            GUILayout.Label("Read-only. This build writes nothing.");
+            GUILayout.Label("Grants go through the game's own methods.");
             GUILayout.Space(6f);
 
             Vault vault = SafeVault();
@@ -140,6 +161,8 @@ namespace VaultAdmin
             _scroll = GUILayout.BeginScrollView(_scroll);
 
             DrawResources(vault);
+            GUILayout.Space(8f);
+            DrawBoxes();
             GUILayout.Space(8f);
             DrawDwellers();
             GUILayout.Space(8f);
@@ -166,19 +189,112 @@ namespace VaultAdmin
             foreach (EResource resource in Enum.GetValues(typeof(EResource)))
             {
                 if (resource == EResource.None || resource == EResource.Count) continue;
+                if (Array.IndexOf(NotRealResources, resource) >= 0) continue;
 
                 float amount;
                 try { amount = held[resource]; }
                 catch { continue; }   // not every enum member is a resource the vault stores
 
-                string line = "    " + resource + ": " + amount.ToString("0");
+                string line = resource + ": " + amount.ToString("0");
                 if (cap != null)
                 {
                     float max;
                     try { max = cap[resource]; } catch { max = 0f; }
                     if (max > 0f) line += " / " + max.ToString("0");
                 }
-                GUILayout.Label(line);
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(line, GUILayout.Width(190f));
+
+                for (int i = 0; i < GrantAmounts.Length; i++)
+                {
+                    if (GUILayout.Button("+" + GrantAmounts[i].ToString("0"), GUILayout.Width(60f)))
+                        Grant(resource, GrantAmounts[i]);
+                }
+                if (GUILayout.Button("Fill", GUILayout.Width(44f))) FillToCap(resource);
+
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        private void DrawBoxes()
+        {
+            GUILayout.Label("Boxes");
+
+            foreach (ELunchBoxType type in BoxTypes)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(type.ToString(), GUILayout.Width(190f));
+
+                for (int i = 0; i < BoxAmounts.Length; i++)
+                {
+                    if (GUILayout.Button("+" + BoxAmounts[i], GUILayout.Width(60f)))
+                        GrantBoxes(type, BoxAmounts[i]);
+                }
+
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        /// <summary>
+        /// Adds a resource through the game's own method.
+        ///
+        /// capped lets the game clamp to the vault's own limit, so this never has to know what the
+        /// cap is. fireCallbacks raises the event the interface listens to; without it the figure
+        /// on screen stays stale until something else refreshes it.
+        /// </summary>
+        private void Grant(EResource resource, float amount)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded || vault.Storage == null) return;
+
+                vault.Storage.AddResource(new GameResources(resource, amount), true, true);
+                Log.LogInfo("Granted " + amount.ToString("0") + " " + resource + ".");
+            }
+            catch (Exception e)
+            {
+                // Named so a failure says which grant failed, not merely that one did.
+                Log.LogWarning("Granting " + amount.ToString("0") + " " + resource + " failed: " + e.Message);
+            }
+        }
+
+        private void FillToCap(EResource resource)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded || vault.Storage == null) return;
+
+                GameResources space = vault.Storage.GetAvailableSpace();
+                if (space == null) return;
+
+                float room = space[resource];
+                if (room <= 0f) return;
+
+                vault.Storage.AddResource(new GameResources(resource, room), true, true);
+                Log.LogInfo("Filled " + resource + " to its cap (+" + room.ToString("0") + ").");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Filling " + resource + " failed: " + e.Message);
+            }
+        }
+
+        private void GrantBoxes(ELunchBoxType type, int quantity)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded) return;
+
+                vault.AddLunchBox(type, quantity);
+                Log.LogInfo("Granted " + quantity + " " + type + " box(es).");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Granting " + quantity + " " + type + " box(es) failed: " + e.Message);
             }
         }
 

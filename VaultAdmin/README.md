@@ -5,9 +5,9 @@
 Create dwellers, weapons and pets with full control over every attribute the game holds — names,
 SPECIAL, appearance — and grant resources, boxes and items besides.
 
-> **Status: 0.1.0, skeleton.** It reads live vault state and displays it. It writes nothing yet, and
-> its panel is a plain scaffold rather than game UI. Both are deliberate: everything this mod will
-> do writes to your save, so the plumbing gets proven before anything can grant a single cap.
+> **Status: 0.2.0.** Grants resources and boxes. Dwellers, weapons and items are still to come, and
+> the panel is a plain scaffold rather than game UI — that lands in its own change, so a failure
+> there is a UI failure and nothing else.
 
 ---
 

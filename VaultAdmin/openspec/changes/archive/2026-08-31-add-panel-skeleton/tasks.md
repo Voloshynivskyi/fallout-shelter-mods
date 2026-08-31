@@ -55,15 +55,15 @@ to run the game and is batched into `openspec/testplan.md`.
 
 ## 8. Batch for a launch
 
-- [ ] 8.1 **[launch]** With `Enabled` false: game behaves normally, log shows the disabled line
-- [ ] 8.2 **[launch]** With `Enabled` true: the hotkey opens and closes the panel
-- [ ] 8.3 **[launch]** In a loaded vault: resources, dweller count and inventory size match the
+- [x] 8.1 **[launch]** With `Enabled` false: game behaves normally, log shows the disabled line
+- [x] 8.2 **[launch]** With `Enabled` true: the hotkey opens and closes the panel
+- [x] 8.3 **[launch]** In a loaded vault: resources, dweller count and inventory size match the
       game's own interface
-- [ ] 8.4 **[launch]** At the main menu: the panel says no vault is loaded and does not throw
+- [x] 8.4 **[launch]** At the main menu: the panel says no vault is loaded and does not throw
 - [x] 8.5 Write all of the above into `openspec/testplan.md` before asking for the launch
 
 ## 9. Close out
 
 - [x] 9.1 README and CHANGELOG in the style of the other two mods
 - [x] 9.2 Record anything newly learned about the game in the repo
-- [ ] 9.3 Only after the launch batch passes: `openspec archive add-panel-skeleton`
+- [x] 9.3 Only after the launch batch passes: `openspec archive add-panel-skeleton`

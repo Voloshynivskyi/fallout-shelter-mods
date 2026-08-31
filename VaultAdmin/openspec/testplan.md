@@ -5,7 +5,9 @@ handed over in batches, never one at a time.
 
 Tick a step only when it has actually been run.
 
-## Batch 1 — add-panel-skeleton
+## Batch 1 — add-panel-skeleton — PASSED 2026-08-30
+
+Confirmed by the user: the panel opens, and every figure matches the game's own interface.
 
 Install first. **The game must be closed**, or the DLL cannot be replaced:
 
@@ -29,7 +31,7 @@ powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' 
 ### 2. Enabled
 
 - [x] `Enabled = true` set in `BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg`.
-- [ ] Restart the game.
+- [x] Restart the game.
 
 **Expect**:
 
@@ -39,12 +41,12 @@ powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' 
 
 ### 3. The panel toggles
 
-- [ ] Load a vault. Press **F8**.
+- [x] Load a vault. Press **F8**.
 
 **Expect** a draggable window titled `Vault Admin 0.1.0`, with the line
 `Read-only. This build writes nothing.`
 
-- [ ] Press **F8** again.
+- [x] Press **F8** again.
 
 **Expect** it to disappear.
 
@@ -52,22 +54,22 @@ powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' 
 
 With the panel open in a loaded vault, compare against the game's own interface:
 
-- [ ] Caps, food, water and energy match the numbers along the top of the screen.
-- [ ] Dweller count matches the population figure.
-- [ ] Inventory count matches what the inventory screen reports.
+- [x] Caps, food, water and energy match the numbers along the top of the screen.
+- [x] Dweller count matches the population figure.
+- [x] Inventory count matches what the inventory screen reports.
 
 A figure that disagrees is a bug in how the panel reads state, and matters more than it looks:
 every later feature writes through the same accessors.
 
 ### 5. No vault loaded
 
-- [ ] Quit to the main menu, leaving the game running. Press **F8**.
+- [x] Quit to the main menu, leaving the game running. Press **F8**.
 
 **Expect** the panel to open and say `No vault loaded.` — and **no exception** in the log.
 
 ### 6. A bad key name falls back
 
-- [ ] Set `ToggleKey = Banana` in the config. Restart.
+- [x] Set `ToggleKey = Banana` in the config. Restart.
 
 **Expect**:
 
@@ -77,19 +79,73 @@ every later feature writes through the same accessors.
 
 **Expect** F8 to still open the panel.
 
-- [ ] Set `ToggleKey` back to `F8`.
+- [x] Set `ToggleKey` back to `F8`.
 
 ### 7. Nothing was written
 
-- [ ] Quit the game. Rename `BepInEx\plugins\VaultAdmin.dll` to `VaultAdmin.dll.off`.
-- [ ] Start the game and load the vault.
+- [x] Quit the game. Rename `BepInEx\plugins\VaultAdmin.dll` to `VaultAdmin.dll.off`.
+- [x] Start the game and load the vault.
 
 **Expect** the vault to load normally and every figure to be unchanged. This build writes nothing,
 so it must leave no trace at all.
 
-- [ ] Rename the DLL back.
+- [x] Rename the DLL back.
 
 ## Reporting back
 
 Copy `BepInEx\LogOutput.log` and say which numbered steps passed. A screenshot of the open panel
 settles steps 3 and 4 in one go.
+
+## Batch 2 — add-resource-grants
+
+Install first, with the game closed:
+
+```
+powershell -NoProfile -Command "& 'D:\FalloutShelter-Mods\VaultAdmin\build.ps1' -Install"
+```
+
+### 8. Grants show up immediately
+
+- [ ] Load a vault, press **F8**, press `+1000` on **Food**.
+
+**Expect** the food figure at the top of the screen to change **at once**, without reloading. That
+is what `fireCallbacks` is for; a stale number means the callback is not reaching the interface.
+
+**Expect** in the log: `Granted 1000 Food.`
+
+### 9. Capping holds
+
+- [ ] Press `+10000` on a resource repeatedly, past what the vault can hold.
+
+**Expect** it to stop at the cap and stay there. Nothing negative, nothing wrapped around.
+
+- [ ] Press **Fill** on a resource that is not full.
+
+**Expect** it to land exactly on the cap, and the log to say by how much it rose.
+
+### 10. Boxes are real boxes
+
+- [ ] Press `+5` on **Regular** in the Boxes section.
+
+**Expect** five lunchboxes to appear **and be openable**. This is the step that matters most: the
+save has a resource counter called `Lunchbox` that is not where boxes actually live, so a number
+going up while nothing can be opened would mean the wrong path is being used.
+
+- [ ] Press `+1` on **PetCarrier** and open it.
+
+### 11. Nothing is offered without a vault
+
+- [ ] Quit to the main menu, press **F8**.
+
+**Expect** `No vault loaded.` and **no grant buttons at all**.
+
+### 12. A granted vault survives the mod being removed
+
+- [ ] Grant several resources and boxes. Save and quit.
+- [ ] Rename `BepInEx\plugins\VaultAdmin.dll` to `.off`. Start the game and load the vault.
+
+**Expect** the vault to load normally, with the granted resources and boxes still there. Everything
+was written by the game's own code, so this should hold — but it is the check that catches it if it
+does not.
+
+- [ ] Rename the DLL back.
