@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.12.0";
+        public const string PluginVersion = "0.12.1";
 
         internal static ManualLogSource Log;
 
@@ -43,6 +43,7 @@ namespace VaultAdmin
         private static ConfigEntry<string> HudButtonSprite;
         private static ConfigEntry<string> HudButtonTint;
         private static ConfigEntry<string> HudButtonImage;
+        private static ConfigEntry<float> HudButtonIconScale;
 
         private Key _toggleKey = Key.F8;
         private bool _panelOpen;
@@ -179,6 +180,10 @@ namespace VaultAdmin
                 "square reads best. This does not go through the game's atlas at all, so the " +
                 "picture can be anything — replace the file and restart. Empty uses the borrowed " +
                 "sprite instead.");
+
+            HudButtonIconScale = Config.Bind("Interface", "HudButtonIconScale", 0.85f,
+                "How large the icon is drawn relative to the button it sits on. Slightly under one " +
+                "leaves a margin, which is how the game's own icons sit.");
 
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
@@ -395,10 +400,16 @@ namespace VaultAdmin
                 holder.transform.localPosition = Vector3.zero;
                 holder.transform.localScale = Vector3.one;
 
+                float scale = HudButtonIconScale.Value;
+                if (scale <= 0f) scale = 1f;
+
                 UITexture drawn = holder.AddComponent<UITexture>();
                 drawn.mainTexture = texture;
-                drawn.width = sprite.width;
-                drawn.height = sprite.height;
+
+                // Sized from the button, not from the image: the picture is 256 across and the
+                // button is fifty, so its own pixels are not a size at all.
+                drawn.width = Mathf.RoundToInt(sprite.width * scale);
+                drawn.height = Mathf.RoundToInt(sprite.height * scale);
                 drawn.depth = sprite.depth + 1;                // in front of the sprite it replaces
 
                 Shader shader = Shader.Find("Unlit/Transparent Colored");
