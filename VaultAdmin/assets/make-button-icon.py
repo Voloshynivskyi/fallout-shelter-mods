@@ -1,10 +1,12 @@
 """Draws the 256x256 button icon, with no image library.
 
-Deliberately blunt. The HUD scales this to about fifty pixels, so anything smaller than a few
-pixels at full size disappears entirely: a stand, a bezel, thin outlines. What survives is a big
-rectangle, a handful of thick bars, and block capitals.
+The game's HUD icons are a solid green shape with the detail punched through it in dark — the
+camera is a filled green body with a dark lens, not a dark body with green lines. The first few
+attempts here had that backwards, which is why they read as a different set of icons however
+closely the shape matched.
 
-Two greens and a dark, matching the game's own HUD icons.
+So: one solid green slab, everything else cut out of it in dark, and nothing thinner than about a
+tenth of the width. The HUD shows this at roughly fifty pixels, where anything finer is gone.
 """
 import io
 import os
@@ -13,9 +15,8 @@ import zlib
 
 S = 256
 CLEAR = (0, 0, 0, 0)
-GREEN = (62, 255, 62, 255)    # the HUD green, brighter than it first looked against the rock
-DEEP = (26, 150, 26, 255)     # shadow, only used under the caption
-DARK = (10, 26, 10, 255)      # the screen behind the lines
+GREEN = (62, 255, 62, 255)    # the HUD green
+DARK = (12, 40, 12, 255)      # punched through the green, as the camera's lens is
 
 px = [[CLEAR] * S for _ in range(S)]
 
@@ -42,25 +43,22 @@ def rounded(x0, y0, x1, y1, r, colour):
                 px[y][x] = colour
 
 
-# ---- the screen: one rectangle, a thick frame, nothing else ----
-SCREEN_TOP = 6
-SCREEN_BOTTOM = 172
-FRAME = 16
+# ---- the slab: solid green, reaching well down the canvas so the caption fits inside it ----
+BODY_TOP = 14
+BODY_BOTTOM = 242
+rounded(6, BODY_TOP, 250, BODY_BOTTOM, 20, GREEN)
 
-rounded(4, SCREEN_TOP, 252, SCREEN_BOTTOM, 16, GREEN)
-rounded(4 + FRAME, SCREEN_TOP + FRAME, 252 - FRAME, SCREEN_BOTTOM - FRAME, 8, DARK)
+# ---- output lines, cut out in dark ----
+BAR_LEFT = 34
+BAR_HEIGHT = 20
+for (top, width) in ((44, 150), (80, 188), (116, 92)):
+    rect(BAR_LEFT, top, BAR_LEFT + width, top + BAR_HEIGHT, DARK)
 
-# ---- lines of "output": thick enough to still be there at fifty pixels ----
-BAR_LEFT = 40
-BAR_HEIGHT = 18
-for (top, width) in ((46, 150), (82, 176), (118, 96)):
-    rect(BAR_LEFT, top, BAR_LEFT + width, top + BAR_HEIGHT, GREEN)
-
-# a caret after the short last line, so it reads as a terminal rather than a paragraph
-rect(BAR_LEFT + 112, 118, BAR_LEFT + 148, 118 + BAR_HEIGHT, GREEN)
+# a caret after the short line, so it reads as a terminal rather than a paragraph
+rect(BAR_LEFT + 108, 116, BAR_LEFT + 148, 116 + BAR_HEIGHT, DARK)
 
 
-# ---- caption ----
+# ---- caption, inside the slab and cut out of it like everything else ----
 # A five-by-seven block font, only the letters this word needs: there is no font to measure here,
 # and block capitals are the only kind that survive being scaled down this far.
 GLYPHS = {
@@ -85,15 +83,14 @@ def text(word, left, top, scale, colour):
 
 
 WORD = "ADMIN"
-SCALE = 8            # 9 overflowed the canvas; the assertion below is what caught it
+SCALE = 7
 width = (5 + 1) * SCALE * len(WORD) - SCALE
-CAPTION_TOP = 186
+CAPTION_TOP = 168
 
-assert width <= S, "the caption is wider than the canvas"
-assert CAPTION_TOP + 7 * SCALE <= S, "the caption would run off the bottom"
+assert width <= S - 24, "the caption would touch the edge of the slab"
+assert CAPTION_TOP + 7 * SCALE <= BODY_BOTTOM - 12, "the caption would run out of the slab"
 
-text(WORD, (S - width) // 2 + 3, CAPTION_TOP + 3, SCALE, DEEP)
-text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, GREEN)
+text(WORD, (S - width) // 2, CAPTION_TOP, SCALE, DARK)
 
 
 def write_png(path):
