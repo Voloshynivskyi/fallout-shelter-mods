@@ -34,53 +34,66 @@ namespace VaultAdmin
 
         private static readonly Dictionary<string, Texture2D> _cache = new Dictionary<string, Texture2D>();
 
+        /// <summary>
+        /// Screen pixels per interface unit.
+        ///
+        /// The interface is laid out at a fixed height and stretched to the screen — 720 units on a
+        /// 1080-pixel display. A texture drawn one pixel per unit is then blown up by half again,
+        /// which is exactly what made the first panel look coarse beside the game's own art. Drawing
+        /// at the screen's own resolution costs a little memory and nothing else.
+        /// </summary>
+        public static float Scale = 1f;
+
         public static Texture2D Frame(int width, int height, int radius, int thickness,
                                       Color edge, Color inside)
         {
             width = Mathf.Max(1, width);
             height = Mathf.Max(1, height);
-            radius = Mathf.Clamp(radius, 0, Mathf.Min(width, height) / 2);
 
-            string key = width + "x" + height + "r" + radius + "t" + thickness +
+            int w = Mathf.Max(1, Mathf.RoundToInt(width * Scale));
+            int h = Mathf.Max(1, Mathf.RoundToInt(height * Scale));
+            float r = Mathf.Clamp(radius * Scale, 0f, Mathf.Min(w, h) / 2f);
+            float t = Mathf.Max(1f, thickness * Scale);
+
+            string key = w + "x" + h + "r" + radius + "t" + thickness +
                          "e" + ColorUtility.ToHtmlStringRGBA(edge) +
                          "i" + ColorUtility.ToHtmlStringRGBA(inside);
 
             Texture2D cached;
             if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
 
-            Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Texture2D texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
             texture.filterMode = FilterMode.Bilinear;
             texture.wrapMode = TextureWrapMode.Clamp;
 
-            Color[] pixels = new Color[width * height];
+            Color[] pixels = new Color[w * h];
 
-            for (int y = 0; y < height; y++)
+            for (int y = 0; y < h; y++)
             {
-                for (int x = 0; x < width; x++)
+                for (int x = 0; x < w; x++)
                 {
-                    // How far this pixel lies outside the rounded core, in pixels.
+                    // Distance past the rounded core, measured from the corner's centre.
                     float dx = 0f;
                     float dy = 0f;
-                    if (x < radius) dx = radius - x;
-                    else if (x >= width - radius) dx = x - (width - radius - 1);
-                    if (y < radius) dy = radius - y;
-                    else if (y >= height - radius) dy = y - (height - radius - 1);
+                    if (x < r) dx = r - x;
+                    else if (x >= w - r) dx = x - (w - r - 1f);
+                    if (y < r) dy = r - y;
+                    else if (y >= h - r) dy = y - (h - r - 1f);
 
                     float d = Mathf.Sqrt(dx * dx + dy * dy);
 
-                    Color colour;
-                    if (d > radius)
-                    {
-                        colour = Clear;                       // outside the rounded corner
-                    }
-                    else
-                    {
-                        int near = Mathf.Min(Mathf.Min(x, y), Mathf.Min(width - 1 - x, height - 1 - y));
-                        bool onEdge = near < thickness || d > radius - thickness;
-                        colour = onEdge ? edge : inside;
-                    }
+                    // Feathered by one pixel rather than cut at one: a hard threshold is what makes
+                    // a drawn corner look like a staircase.
+                    float coverage = Mathf.Clamp01(r - d + 0.5f);
+                    if (r <= 0f) coverage = 1f;
 
-                    pixels[y * width + x] = colour;
+                    float near = Mathf.Min(Mathf.Min(x, y), Mathf.Min(w - 1 - x, h - 1 - y));
+                    bool onEdge = near < t || d > r - t;
+
+                    Color colour = onEdge ? edge : inside;
+                    colour.a *= coverage;
+
+                    pixels[y * w + x] = colour;
                 }
             }
 
@@ -143,7 +156,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.22.0";
+        public const string PluginVersion = "0.24.0";
 
         internal static ManualLogSource Log;
 
@@ -188,6 +201,7 @@ namespace VaultAdmin
             public string Name;      // for the human only
             public EItemRarity Rarity;
             public string Sprite;    // name of this item's sprite inside its family's atlas
+            public string Stats;     // rarity, what it does, what it sells for
         }
 
         // One atlas per family, resolved once. An atlas is a texture plus a table of rectangles.
@@ -1014,6 +1028,13 @@ namespace VaultAdmin
 
                 BorrowFont();
 
+                // Everything drawn from here on is sized in interface units but rendered at the
+                // screen's resolution.
+                Skin.Scale = root.activeHeight > 0
+                    ? Mathf.Clamp((float)Screen.height / root.activeHeight, 1f, 3f)
+                    : 1f;
+                Log.LogInfo("Drawing the skin at " + Skin.Scale.ToString("0.00") + " pixels per unit.");
+
                 MeasureWindow(root);
 
                 _nguiWindow = new GameObject("VaultAdmin_Window");
@@ -1082,18 +1103,69 @@ namespace VaultAdmin
             panel.clipSoftness = new Vector2(4f, 8f);
 
             UIScrollView view = go.AddComponent<UIScrollView>();
+
+            // NGUI keeps a legacy field that its Awake turns back into a direction, and its default
+            // stands for horizontal. Left alone it overrides whatever is set here — which is why the
+            // first attempt scrolled sideways and dragged the rows out from under their labels.
+            // Cleared before Awake, and the direction set again after it, so neither order matters.
+            try
+            {
+                FieldInfo legacy = typeof(UIScrollView).GetField(
+                    "scale", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (legacy != null) legacy.SetValue(view, Vector3.zero);
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not clear the scroll view's legacy direction: " + e.Message);
+            }
+
             view.movement = UIScrollView.Movement.Vertical;
             view.dragEffect = UIScrollView.DragEffect.MomentumAndSpring;
             view.scrollWheelFactor = 0.4f;
             view.restrictWithinPanel = true;
             view.disableDragIfFits = true;
+            view.showScrollBars = UIScrollView.ShowCondition.Always;
 
             go.SetActive(true);
+            view.movement = UIScrollView.Movement.Vertical;
+
+            view.verticalScrollBar = MakeScrollBar(page, width, centre, viewHeight);
 
             content = go.transform;
-            _scrollTop = viewHeight / 2 - 6;
+            _scrollTop = viewHeight / 2 - 4;
             _cursorY = _scrollTop;
             return view;
+        }
+
+        /// <summary>
+        /// A bar down the right-hand edge, so the list says how long it is and can be dragged by it.
+        ///
+        /// The game's own wheel handling reaches the camera whatever the panel does about it, so the
+        /// bar is not a nicety: without it a list that does not fit has no visible way out.
+        /// </summary>
+        private UIScrollBar MakeScrollBar(Transform page, int width, int centre, int viewHeight)
+        {
+            GameObject go = new GameObject("ScrollBar");
+            go.layer = page.gameObject.layer;
+            go.transform.SetParent(page, false);
+            go.transform.localPosition = new Vector3(width / 2 + 12, centre, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UITexture track = Plate(go.transform, "Track", 0, 0, 10, viewHeight,
+                                    Skin.Frame(10, viewHeight, 5, 1, Skin.Rim, Skin.Plate), 2);
+
+            UITexture thumb = Plate(go.transform, "Thumb", 0, 0, 10, viewHeight,
+                                    Skin.Frame(10, 64, 5, 1, Skin.Bright, Skin.Bright), 3);
+
+            BoxCollider box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(22f, viewHeight, 1f);
+            box.isTrigger = true;
+
+            UIScrollBar bar = go.AddComponent<UIScrollBar>();
+            bar.backgroundWidget = track;
+            bar.foregroundWidget = thumb;
+            bar.fillDirection = UIProgressBar.FillDirection.TopToBottom;
+            return bar;
         }
 
         /// <summary>
@@ -1314,6 +1386,7 @@ namespace VaultAdmin
             public GameObject Root;
             public UISprite Icon;
             public UILabel Name;
+            public UILabel Stats;
             public GameObject Give;
         }
 
@@ -1341,7 +1414,7 @@ namespace VaultAdmin
         private int _rowsPerPage;
         private string _appliedFilter = "";
 
-        private const int ItemRowHeight = 40;
+        private const int ItemRowHeight = 58;
         private const int MaxItemRows = 9;
 
         private void BuildThingsPage(Transform parent)
@@ -1353,11 +1426,12 @@ namespace VaultAdmin
                                         delegate { StepFamily(-1); }, delegate { StepFamily(1); },
                                         Families[_familyIndex].ToString().ToUpper());
 
-            Plate(parent, "FilterRow", 0, _cursorY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            int filterY = _cursorY - RowHeight / 2;
+            Plate(parent, "FilterRow", 0, filterY, width, RowHeight, Skin.Row(width, RowHeight), 1);
             UILabel filterName = MakeLabel(parent, "FilterName", "FILTER",
-                                           -width / 2 + 70, _cursorY, 120, RowHeight, Skin.Bright, 3);
+                                           -width / 2 + 64, filterY, 120, RowHeight, Skin.Bright, 3);
             filterName.alignment = NGUIText.Alignment.Left;
-            _filterInput = AddInput(parent, "Filter", 30, _cursorY, width - 160, "ALL");
+            _filterInput = AddInput(parent, "Filter", 34, filterY, width - 150, "ALL");
             _cursorY -= RowHeight + RowGap;
 
             // The list occupies whatever is left between here and the pager above the close button.
@@ -1367,7 +1441,8 @@ namespace VaultAdmin
             _rowsPerPage = Mathf.Clamp((listTop - listBottom) / (ItemRowHeight + RowGap), 1, MaxItemRows);
 
             for (int i = 0; i < _rowsPerPage; i++)
-                _itemRows.Add(BuildItemRow(parent, i, width, listTop - i * (ItemRowHeight + RowGap)));
+                _itemRows.Add(BuildItemRow(parent, i, width,
+                                           listTop - ItemRowHeight / 2 - i * (ItemRowHeight + RowGap)));
 
             BuildPetStrip(parent, width, listBottom + 2 * (ItemRowHeight + RowGap));
 
@@ -1402,16 +1477,26 @@ namespace VaultAdmin
             iconGo.transform.localScale = Vector3.one;
 
             row.Icon = iconGo.AddComponent<UISprite>();
-            row.Icon.width = 34;
-            row.Icon.height = 34;
+            row.Icon.width = 40;
+            row.Icon.height = 40;
             row.Icon.depth = 3;
 
-            row.Name = MakeLabel(row.Root.transform, "Name", "", 20, 0, width - 190, ItemRowHeight,
-                                 Skin.Bright, 3);
+            int textLeft = -width / 2 + 52;
+            int textWidth = width - 150;
+
+            row.Name = MakeLabel(row.Root.transform, "Name", "",
+                                 textLeft + textWidth / 2, 11, textWidth, 24, Skin.Bright, 3);
             row.Name.alignment = NGUIText.Alignment.Left;
 
+            // The figures beneath the name, quieter than it: what the item does and what it is
+            // worth is the reason to pick one item out of two hundred.
+            row.Stats = MakeLabel(row.Root.transform, "Stats", "",
+                                  textLeft + textWidth / 2, -12, textWidth, 20, Skin.Bright, 3);
+            row.Stats.alignment = NGUIText.Alignment.Left;
+            row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.65f);
+
             int captured = index;
-            row.Give = MakeButton(row.Root.transform, "Give", "GIVE", width / 2 - 48, 0, 84, 32,
+            row.Give = MakeButton(row.Root.transform, "Give", "GIVE", width / 2 - 44, 0, 76, 34,
                                   false, delegate { GiveRow(captured); });
 
             return row;
@@ -1549,16 +1634,29 @@ namespace VaultAdmin
                 if (item != null)
                 {
                     row.Name.text = item.Name;
+                    row.Stats.text = item.Stats;
                     ShowIcon(row.Icon, item);
                 }
                 else
                 {
                     PetEntry pet = (PetEntry)thing;
                     row.Name.text = pet.Name;
-                    // Pet art loads per type on demand, so there is nothing to show here until the
-                    // pet is granted and the game fetches its atlas.
-                    row.Icon.atlas = null;
-                    row.Icon.spriteName = "";
+                    row.Stats.text = pet.Detail;
+
+                    UIAtlas atlas = PetAtlasFor(pet.PetType);
+                    string sprite = ReadMember(pet.Template, "Sprite");
+                    if (string.IsNullOrEmpty(sprite)) sprite = ReadMember(pet.Template, "HeadSprite");
+
+                    if (atlas != null && !string.IsNullOrEmpty(sprite))
+                    {
+                        row.Icon.atlas = atlas;
+                        row.Icon.spriteName = sprite;
+                    }
+                    else
+                    {
+                        row.Icon.atlas = null;
+                        row.Icon.spriteName = "";
+                    }
                 }
             }
 
@@ -1567,6 +1665,78 @@ namespace VaultAdmin
                 _pageLabel.text = _shown.Count == 0
                     ? "NOTHING MATCHES"
                     : (_itemPage + 1) + " / " + pages + "   (" + _shown.Count + ")";
+        }
+
+        // Pet art is not simply present the way item atlases are: it is loaded per type, on
+        // request, and asynchronously. Asking is what a granted pet needed to have a picture at all,
+        // and it is what the list needs to show one.
+        private readonly Dictionary<string, UIAtlas> _petAtlases = new Dictionary<string, UIAtlas>();
+        private bool _petArtPending;
+
+        private UIAtlas PetAtlasFor(object petType)
+        {
+            if (petType == null) return null;
+
+            string key = petType.ToString();
+            UIAtlas known;
+            if (_petAtlases.TryGetValue(key, out known) && known != null) return known;
+
+            try
+            {
+                PetAtlasManager manager = PetAtlasManager.Instance;
+                if (manager == null) return null;
+
+                Array infos = ReadObject(manager, "m_atlases") as Array;
+                if (infos == null) return null;
+
+                for (int i = 0; i < infos.Length; i++)
+                {
+                    object info = infos.GetValue(i);
+                    if (info == null) continue;
+
+                    object type = ReadObject(info, "PetType");
+                    if (type == null || type.ToString() != key) continue;
+
+                    UIAtlas atlas = ReadObject(info, "Atlas") as UIAtlas;
+                    if (atlas != null)
+                    {
+                        _petAtlases[key] = atlas;
+                        return atlas;
+                    }
+
+                    // Not loaded yet. Ask for it, and let the refresh tick pick it up when it lands.
+                    object loading = ReadObject(info, "IsLoading");
+                    if (loading == null || !(bool)loading) RequestPetType(petType);
+                    _petArtPending = true;
+                    return null;
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("petatlas", "Could not reach the pet atlases: " + e.Message);
+            }
+
+            return null;
+        }
+
+        private void RequestPetType(object petType)
+        {
+            try
+            {
+                PetAtlasManager manager = PetAtlasManager.Instance;
+                if (manager == null) return;
+
+                MethodInfo load = typeof(PetAtlasManager).GetMethod(
+                    "LoadAtlases",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { petType.GetType() }, null);
+
+                if (load != null) load.Invoke(manager, new[] { petType });
+            }
+            catch (Exception e)
+            {
+                ReportOnce("petload", "Could not ask for pet art: " + e.Message);
+            }
         }
 
         private void ShowIcon(UISprite icon, CatalogueEntry entry)
@@ -1619,9 +1789,10 @@ namespace VaultAdmin
 
             AddHeader(parent, "NAME", width);
 
-            Plate(parent, "NameRow", 0, _cursorY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            _firstNameInput = AddInput(parent, "First", -width / 4, _cursorY, width / 2 - 12, "FIRST");
-            _lastNameInput = AddInput(parent, "Last", width / 4, _cursorY, width / 2 - 12, "LAST");
+            int nameY = _cursorY - RowHeight / 2;
+            Plate(parent, "NameRow", 0, nameY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            _firstNameInput = AddInput(parent, "First", -width / 4, nameY, width / 2 - 12, "FIRST");
+            _lastNameInput = AddInput(parent, "Last", width / 4, nameY, width / 2 - 12, "LAST");
             _cursorY -= RowHeight + RowGap;
 
             AddHeader(parent, "RARITY, GENDER, LEVEL", width);
@@ -1642,9 +1813,12 @@ namespace VaultAdmin
 
             // Seven stats across one row: a row apiece would not fit, and the letters are the
             // game's own shorthand for them.
+            const int specialHeight = 92;
             int cell = (width - 16) / 7;
-            Plate(parent, "SpecialRow", 0, _cursorY, width, RowHeight + 22,
-                  Skin.Row(width, RowHeight + 22), 1);
+            int specialY = _cursorY - specialHeight / 2;
+
+            Plate(parent, "SpecialRow", 0, specialY, width, specialHeight,
+                  Skin.Row(width, specialHeight), 1);
 
             for (int i = 0; i < Specials.Length; i++)
             {
@@ -1652,25 +1826,25 @@ namespace VaultAdmin
                 int x = -width / 2 + cell / 2 + 8 + i * cell;
 
                 MakeLabel(parent, "SpecLetter" + i, Specials[i].ToString().Substring(0, 1),
-                          x, _cursorY + 20, cell, 24, Skin.Bright, 3);
+                          x, specialY + 32, cell, 22, Skin.Bright, 3);
 
                 _specialLabels[i] = MakeLabel(parent, "SpecValue" + i, _special[i].ToString(),
-                                              x, _cursorY - 2, cell, 24, Skin.Bright, 3);
+                                              x, specialY + 8, cell, 22, Skin.Bright, 3);
 
-                MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, _cursorY - 24, cell / 2 - 4, 26,
+                MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, specialY - 22, cell / 2 - 3, 26,
                            false, delegate { StepSpecial(index, -1); });
-                MakeButton(parent, "SpecUp" + i, "+", x + cell / 4, _cursorY - 24, cell / 2 - 4, 26,
+                MakeButton(parent, "SpecUp" + i, "+", x + cell / 4, specialY - 22, cell / 2 - 3, 26,
                            false, delegate { StepSpecial(index, 1); });
             }
-            _cursorY -= RowHeight + 22 + RowGap;
+            _cursorY -= specialHeight + RowGap;
 
-            MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY, width, 44, true,
+            MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
             _cursorY -= 44 + RowGap;
 
             MakeLabel(parent, "DwellerNote",
                       "Arrives at the vault door, waiting to be let in.",
-                      0, _cursorY, width, 26, Skin.Bright, 3);
+                      0, _cursorY - 13, width, 26, Skin.Rim, 3);
             _cursorY -= 26 + RowGap;
 
             EndScroll(view, width);
@@ -1681,17 +1855,18 @@ namespace VaultAdmin
                                      EventDelegate.Callback back, EventDelegate.Callback forward,
                                      string initial)
         {
-            Plate(parent, "Pick_" + caption, 0, _cursorY, width, RowHeight,
-                  Skin.Row(width, RowHeight), 1);
+            int y = _cursorY - RowHeight / 2;
+
+            Plate(parent, "Pick_" + caption, 0, y, width, RowHeight, Skin.Row(width, RowHeight), 1);
 
             UILabel name = MakeLabel(parent, "PickName_" + caption, caption,
-                                     -width / 2 + 90, _cursorY, 160, RowHeight, Skin.Bright, 3);
+                                     -width / 2 + 84, y, 160, RowHeight, Skin.Bright, 3);
             name.alignment = NGUIText.Alignment.Left;
 
-            MakeButton(parent, "PickBack_" + caption, "<", width / 2 - 190, _cursorY, 44, 34, false, back);
+            MakeButton(parent, "PickBack_" + caption, "<", width / 2 - 178, y, 40, 32, false, back);
             UILabel value = MakeLabel(parent, "PickValue_" + caption, initial,
-                                      width / 2 - 118, _cursorY, 120, RowHeight, Skin.Bright, 3);
-            MakeButton(parent, "PickFwd_" + caption, ">", width / 2 - 46, _cursorY, 44, 34, false, forward);
+                                      width / 2 - 108, y, 116, RowHeight, Skin.Bright, 3);
+            MakeButton(parent, "PickFwd_" + caption, ">", width / 2 - 38, y, 40, 32, false, forward);
 
             _cursorY -= RowHeight + RowGap;
             return value;
@@ -1762,10 +1937,14 @@ namespace VaultAdmin
             CreateDweller();
         }
 
+        // Everything on a page is placed against _cursorY as the top edge of the next element and
+        // drawn about its own centre. Mixing the two conventions is what pushed the first row of
+        // every page half out of the window.
         private void AddHeader(Transform parent, string text, int width)
         {
-            Plate(parent, "Header_" + text, 0, _cursorY, width, 34, Skin.Header(width, 34), 1);
-            MakeLabel(parent, "HeaderText_" + text, text, 0, _cursorY, width - 20, 34, Skin.Ink, 3);
+            int y = _cursorY - 17;
+            Plate(parent, "Header_" + text, 0, y, width, 34, Skin.Header(width, 34), 1);
+            MakeLabel(parent, "HeaderText_" + text, text, 0, y, width - 20, 34, Skin.Ink, 3);
             _cursorY -= 34 + RowGap;
         }
 
@@ -2122,6 +2301,12 @@ namespace VaultAdmin
                 {
                     RefreshValues();
 
+                    if (_petArtPending && _family == EItemType.Pet)
+                    {
+                        _petArtPending = false;
+                        FillRows();
+                    }
+
                     if (_filterInput != null)
                     {
                         string typed = _filterInput.value == null ? "" : _filterInput.value;
@@ -2298,9 +2483,12 @@ namespace VaultAdmin
 
                 ItemParameters items = parameters.Items;
 
-                int weapons = Collect(items.WeaponsList, EItemType.Weapon, "WeaponId", "WeaponSprite");
-                int outfits = Collect(items.OutfitList, EItemType.Outfit, "m_outfitId", "OutfitSprite");
-                int junk = Collect(items.JunksList, EItemType.Junk, "JunkId", "JunkSprite");
+                int weapons = Collect(items.WeaponsList, EItemType.Weapon,
+                                      "WeaponId", "WeaponSprite", "m_NameLocalizationId");
+                int outfits = Collect(items.OutfitList, EItemType.Outfit,
+                                      "m_outfitId", "OutfitSprite", "m_outfitNameLocalizationId");
+                int junk = Collect(items.JunksList, EItemType.Junk,
+                                   "JunkId", "JunkSprite", "m_NameLocalizationId");
 
                 _atlases[EItemType.Weapon] = items.WeaponAtlas;
                 _atlases[EItemType.Outfit] = items.OutfitAtlas;
@@ -2319,7 +2507,8 @@ namespace VaultAdmin
         /// Pulls one family into the catalogue, taking the id off whichever member that family is
         /// keyed by. Reflection rather than a direct call because the outfit id is a private field.
         /// </summary>
-        private int Collect(Array table, EItemType type, string idMember, string spriteMember)
+        private int Collect(Array table, EItemType type, string idMember, string spriteMember,
+                            string nameMember)
         {
             if (table == null) return 0;
 
@@ -2334,10 +2523,11 @@ namespace VaultAdmin
                     string id = ReadMember(data, idMember);
                     if (string.IsNullOrEmpty(id)) continue;
 
-                    // Name is a non-public property, so it comes through the same reflection
-                    // helper as the id. CodeId is public and readable, and stands in when the
-                    // display name is missing.
-                    string label = ReadMember(data, "Name");
+                    // The Name property returns the data object's own name, which for these
+                    // tables is a bare number — which is exactly what the first list showed. The
+                    // readable name is a localisation key, and the game keeps a table of those.
+                    string label = Localised(ReadMember(data, nameMember));
+                    if (string.IsNullOrEmpty(label)) label = ReadMember(data, "Name");
                     if (string.IsNullOrEmpty(label)) label = data.CodeId;
                     if (string.IsNullOrEmpty(label)) label = id;
 
@@ -2347,6 +2537,7 @@ namespace VaultAdmin
                     entry.Name = label;
                     entry.Rarity = data.ItemRarity;
                     entry.Sprite = ReadMember(data, spriteMember);
+                    entry.Stats = Describe(data, type);
                     _catalogue.Add(entry);
                     added++;
                 }
@@ -2416,6 +2607,124 @@ namespace VaultAdmin
 
             if (matched > shown)
                 GUILayout.Label("    " + matched + " match; showing " + shown + ". Narrow the filter.");
+        }
+
+        /// <summary>
+        /// Turns a localisation key into words.
+        ///
+        /// The table answers with the key itself when it holds nothing for it, so that case is
+        /// treated as a miss rather than shown to the player as a name.
+        /// </summary>
+        private static string Localised(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+
+            try
+            {
+                string text = Localization.Get(key);
+                if (!string.IsNullOrEmpty(text) && text != key) return text;
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// What an item is worth knowing about, in one line.
+        ///
+        /// Every family keeps its figures somewhere different, and none of it is on the base type
+        /// except the rarity and the price, so each is read where it lives.
+        /// </summary>
+        private string Describe(DwellerBaseItem data, EItemType type)
+        {
+            try
+            {
+                string line = data.ItemRarity.ToString().ToUpper();
+
+                if (type == EItemType.Weapon)
+                {
+                    string min = ReadMember(data, "DamageMin");
+                    string max = ReadMember(data, "DamageMax");
+                    if (!string.IsNullOrEmpty(min) && !string.IsNullOrEmpty(max))
+                        line += min == max ? "  " + min + " DMG" : "  " + min + "-" + max + " DMG";
+                }
+                else if (type == EItemType.Outfit)
+                {
+                    string bonus = OutfitBonus(data);
+                    if (!string.IsNullOrEmpty(bonus)) line += "  " + bonus;
+                }
+                else if (type == EItemType.Junk)
+                {
+                    string part = ReadMember(data, "m_linkedComponent");
+                    if (!string.IsNullOrEmpty(part) && part != "None") line += "  " + part;
+                }
+
+                if (data.SellPrice > 0) line += "  " + data.SellPrice + " CAPS";
+                return line;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// An outfit's SPECIAL bonuses, written the way the game writes them.
+        ///
+        /// ModificationStats is an array of the game's own stat records; the two members worth
+        /// reading off each are which stat it is and by how much, and neither resolves by name from
+        /// this assembly.
+        /// </summary>
+        private string OutfitBonus(DwellerBaseItem data)
+        {
+            try
+            {
+                object stats = ReadObject(data, "ModificationStats");
+                Array rows = stats as Array;
+                if (rows == null || rows.Length == 0) return null;
+
+                string line = "";
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    object row = rows.GetValue(i);
+                    if (row == null) continue;
+
+                    string stat = ReadMember(row, "Stat");
+                    if (string.IsNullOrEmpty(stat)) stat = ReadMember(row, "m_stat");
+
+                    string value = ReadMember(row, "Value");
+                    if (string.IsNullOrEmpty(value)) value = ReadMember(row, "m_value");
+
+                    if (string.IsNullOrEmpty(stat) || string.IsNullOrEmpty(value)) continue;
+                    if (value == "0") continue;
+
+                    if (line.Length > 0) line += " ";
+                    line += "+" + value + stat.Substring(0, 1);
+                }
+                return line.Length > 0 ? line : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Reads a member without turning it into a string first.</summary>
+        private static object ReadObject(object target, string member)
+        {
+            if (target == null) return null;
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+            Type type = target.GetType();
+
+            PropertyInfo property = type.GetProperty(member, Flags);
+            if (property != null && property.CanRead) return property.GetValue(target, null);
+
+            FieldInfo field = type.GetField(member, Flags);
+            if (field != null) return field.GetValue(target);
+
+            return null;
         }
 
         /// <summary>
