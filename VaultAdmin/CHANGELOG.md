@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.2
+
+Two bugs found by playing, both mine, both traced back to code.
+
+### Created dwellers had dead equipment slots
+
+Their outfit, weapon and pet slots were drawn but did nothing when clicked. Existing dwellers were
+fine.
+
+`CreateDweller` adds the dweller to `DwellerManager`'s own list, which is enough for it to exist and
+walk around. Nothing in that path calls `DwellerPool.AddToActiveDweller` — only `SetupDweller` does,
+and `CreateDweller` does not call it. So the dweller was alive and visible but never registered as
+active, and the interface had nothing to act on.
+
+Fixed by registering it directly. `SetupDweller` would have registered it too, but it also re-rolls
+stats from rarity and picks a random level, which would have thrown away the SPECIAL and level the
+panel was asked to set.
+
+Also stopped assigning `Rarity` after creation: `DwellerPool.GetInstance` already takes it as an
+argument and sets it, so that line only wrote the same value back.
+
+### Created pets had no icon
+
+The game asks for a pet type's atlas before it builds the pet —
+`PetAtlasManager.LoadAtlases(petItem.Type)` — because pet art loads asynchronously per type rather
+than being simply present the way item atlases are.
+
+That line was in the IL that this feature was built from, and it was read and skipped, on the
+reasoning that icons were a separate change. The reasoning was wrong: the atlas load is part of
+creating a pet, not part of drawing a list.
+
+### Modified stats are recalculated
+
+`CalculateModStats` is called after rewriting SPECIAL. The game does this after every stat change —
+`CreateDweller` does it twice in its own body — and equipment bonuses are applied on top of modified
+stats, so leaving them stale after setting all seven values left the dweller describing itself
+wrongly.
+
 ## 0.6.0
 
 Creates dwellers, with a name, a rarity, a level and all seven SPECIAL values — plus any legendary

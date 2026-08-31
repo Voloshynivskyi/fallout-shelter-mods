@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.6.0";
+        public const string PluginVersion = "0.6.2";
 
         internal static ManualLogSource Log;
 
@@ -84,6 +84,7 @@ namespace VaultAdmin
             public string PetId;
             public string Name;
             public string Detail;
+            public object PetType;   // EPetType — which atlas this pet's art lives in
         }
 
         private List<PetEntry> _pets;
@@ -540,6 +541,7 @@ namespace VaultAdmin
 
                         object type = ReadAny(template, "Type");
                         object breed = ReadAny(template, "Breed");
+                        entry.PetType = type;
                         entry.Detail = (type == null ? "?" : type.ToString()) + " / " +
                                        (breed == null ? "?" : breed.ToString());
 
@@ -619,6 +621,12 @@ namespace VaultAdmin
                     return;
                 }
 
+                // The game asks for this pet type's atlas before it builds the item, and pet art
+                // loads asynchronously per type rather than being simply present the way item
+                // atlases are. Skipping it is why a granted pet appeared with no picture: the
+                // pet existed, its art had never been requested.
+                RequestPetAtlas(entry);
+
                 DwellerItem item = new DwellerItem(EItemType.Pet, entry.PetId);
 
                 object unique = InvokeGenerateRandomData(entry.Template);
@@ -650,6 +658,37 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Granting pet " + entry.Name + " failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Asks the game to load the atlas holding this pet's art.
+        ///
+        /// Taken from the IL of GenerateRandomPet, which calls
+        /// PetAtlasManager.Instance.LoadAtlases(petItem.Type) before constructing anything. The
+        /// call returns a Coroutine: the art arrives a moment later, which is fine, because the
+        /// pet is not looked at until the player opens it.
+        /// </summary>
+        private void RequestPetAtlas(PetEntry entry)
+        {
+            try
+            {
+                if (entry.PetType == null) return;
+
+                PetAtlasManager manager = PetAtlasManager.Instance;
+                if (manager == null) return;
+
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+                MethodInfo load = typeof(PetAtlasManager).GetMethod("LoadAtlases", Flags,
+                                                                    null, new[] { entry.PetType.GetType() }, null);
+                if (load == null) return;
+
+                load.Invoke(manager, new object[] { entry.PetType });
+            }
+            catch (Exception e)
+            {
+                // No atlas means no picture, not a broken pet.
+                ReportOnce("petatlas", "Could not request the pet atlas: " + e.Message);
             }
         }
 
@@ -883,11 +922,12 @@ namespace VaultAdmin
                     return;
                 }
 
-                // Created, edited, and only then admitted — which is what makes naming and SPECIAL
-                // possible at all.
+                RegisterAsActive(dweller);
+
+                // Rarity is not set here: DwellerPool.GetInstance already took it as an argument
+                // and set it. Assigning it again only wrote the same value back.
                 if (!string.IsNullOrEmpty(_dwellerFirst)) dweller.Name = _dwellerFirst;
                 if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
-                dweller.Rarity = Rarities[_rarityIndex];
 
                 ApplySpecial(dweller);
 
@@ -897,6 +937,37 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Log.LogWarning("Creating a dweller failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts the dweller into the pool's list of active dwellers.
+        ///
+        /// CreateDweller adds the dweller to DwellerManager's own list, which is enough for it to
+        /// exist and walk around, but nothing in that path calls DwellerPool.AddToActiveDweller —
+        /// only SetupDweller does. Without it the interface cannot act on the dweller: the outfit,
+        /// weapon and pet slots are drawn but do nothing when clicked, which is exactly how this
+        /// surfaced.
+        ///
+        /// SetupDweller would register it too, but it also re-rolls the stats from rarity and picks
+        /// a random level, throwing away whatever the panel was asked to set. This registers and
+        /// nothing else.
+        /// </summary>
+        private void RegisterAsActive(Dweller dweller)
+        {
+            try
+            {
+                DwellerPool pool = DwellerPool.Instance;
+                if (pool == null)
+                {
+                    Log.LogWarning("The dweller pool is unavailable; the new dweller may not be interactive.");
+                    return;
+                }
+                pool.AddToActiveDweller(dweller);
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not register the dweller as active: " + e.Message);
             }
         }
 
@@ -925,6 +996,12 @@ namespace VaultAdmin
                     Log.LogWarning("Setting " + Specials[i] + " failed: " + e.Message);
                 }
             }
+
+            // The game calls this after every stat change — CreateDweller does it twice in its own
+            // body. Modified stats are what equipment bonuses are applied on top of, so leaving them
+            // stale after rewriting all seven values leaves the dweller describing itself wrongly.
+            try { stats.CalculateModStats(); }
+            catch (Exception e) { Log.LogWarning("Recalculating modified stats failed: " + e.Message); }
         }
 
         private void CreateLegendary(UniqueDwellerData data, string label)
@@ -948,6 +1025,8 @@ namespace VaultAdmin
                     Log.LogWarning("The game did not create " + label + "; nothing was added.");
                     return;
                 }
+
+                RegisterAsActive(dweller);
 
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
