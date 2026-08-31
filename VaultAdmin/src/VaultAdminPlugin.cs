@@ -32,7 +32,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.11.0";
+        public const string PluginVersion = "0.11.1";
 
         internal static ManualLogSource Log;
 
@@ -166,9 +166,12 @@ namespace VaultAdmin
                 "first time the button is placed, so there is a list to choose from rather than a " +
                 "guess — a name the atlas does not hold renders as nothing at all.");
 
-            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "#7FD36B",
+            HudButtonTint = Config.Bind("Interface", "HudButtonTint", "#FFB000",
                 "Colour applied to the button, so it is not mistaken for the one it was copied " +
-                "from. Empty leaves it alone.");
+                "from. The colour multiplies with the sprite, so a shade close to the sprite's own " +
+                "only dims it — the screenshot button is green, which is why green was a poor " +
+                "choice. Empty leaves it alone, which is what to use once a sprite of its own is " +
+                "set.");
 
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
@@ -336,19 +339,28 @@ namespace VaultAdmin
             try
             {
                 UIAtlas atlas = sprite.atlas;
-                if (atlas == null || atlas.spriteList == null) return;
+                if (atlas == null) return;
 
-                List<UISpriteData> sprites = atlas.spriteList;
+                // Not spriteList: this atlas reported none at all, because it is a reference to
+                // another one. GetListOfSprites follows that link, which spriteList does not.
+                BetterList<string> names = atlas.GetListOfSprites();
+                if (names == null)
+                {
+                    Log.LogWarning("The atlas offers no sprite list.");
+                    return;
+                }
+
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                sb.Append("Sprites available on the button's atlas '").Append(atlas.name)
-                  .Append("' (").Append(sprites.Count).Append("), current is '")
+                sb.Append("Sprites on atlas '").Append(atlas.name)
+                  .Append("' (").Append(names.size).Append("), current is '")
                   .Append(sprite.spriteName).Append("':");
 
-                for (int i = 0; i < sprites.Count && i < 120; i++)
+                for (int i = 0; i < names.size && i < 200; i++)
                 {
-                    if (sprites[i] == null) continue;
-                    sb.Append("\n    ").Append(sprites[i].name);
+                    sb.Append("\n    ").Append(names[i]);
                 }
+                if (names.size > 200) sb.Append("\n    (").Append(names.size - 200).Append(" more)");
+
                 Log.LogInfo(sb.ToString());
             }
             catch (Exception e)
