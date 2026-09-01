@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.69.0";
+        public const string PluginVersion = "0.71.0";
 
         internal static ManualLogSource Log;
 
@@ -1258,6 +1258,7 @@ namespace VaultAdmin
         private int _cursorY;
         private int _scrollTop;
         private int _refreshFrames;
+        private int _filmFrames;
         private UIAtlas _menuAtlas;
         private readonly List<UITexture> _thumbs = new List<UITexture>();
 
@@ -4459,6 +4460,34 @@ namespace VaultAdmin
                 if (coat != null && !string.IsNullOrEmpty(coat.Stats))
                     line += "   " + coat.Stats;
 
+                // What the game itself can work out about the body standing there: its health and
+                // what it hits for, both read off the dweller rather than reckoned here.
+                if (_previewDweller != null)
+                {
+                    try
+                    {
+                        object health = ReadObject(_previewDweller, "Health");
+                        object most = health == null ? null : ReadObject(health, "HealthMax");
+                        if (most != null) line += "   HP " + Convert.ToSingle(most).ToString("0");
+
+                        MethodInfo hits = typeof(Dweller).GetMethod(
+                            "GetDamage",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                            null, Type.EmptyTypes, null);
+
+                        if (hits != null)
+                        {
+                            object blow = hits.Invoke(_previewDweller, null);
+                            if (blow != null)
+                                line += "   DMG " + Convert.ToSingle(blow).ToString("0.#");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        ReportOnce("combat", "Could not read the combat figures: " + e.Message);
+                    }
+                }
+
                 _mainStatLabel.text = line;
             }
             catch (Exception e)
@@ -4739,22 +4768,22 @@ namespace VaultAdmin
             // What it does, under what it is called. A coat chosen by its name alone is a coat
             // chosen for nothing.
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
-                                           textLeft, y - 10, textWidth, 18, Skin.Bright, 3);
+                                           textLeft, y - 12, textWidth - 58, 18, Skin.Bright, 3);
             effect.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
 
             Choice captured = choice;
-            int arrowsY = y - height / 2 + 18;
 
-            // Centred in the space they have, which is the space beside the picture and not the
-            // whole card. Bunched against its left edge they read as belonging to nothing.
-            int arrowsCentre = textLeft + textWidth / 2 + 6;
+            // Into the bottom corner and out of the way. Across the middle of the card they sat on
+            // top of the very line that says what the thing does.
+            int arrowsY = y - height / 2 + 15;
+            int arrowsRight = centreX + width / 2 - 18;
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsCentre - 22, arrowsY, 30, 26,
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsRight - 28, arrowsY, 24, 20,
                        false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsCentre + 22, arrowsY, 30, 26,
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsRight, arrowsY, 24, 20,
                        false, delegate { captured.Step(1); });
 
             choice.Show();
@@ -5430,6 +5459,17 @@ namespace VaultAdmin
             {
                 _drawChecked = true;
                 ReportDrawing();
+            }
+
+            // A render texture is not kept for you: the game reclaims it whenever it is busy —
+            // assigning a dweller to a room was enough — and the picture went blank until something
+            // else happened to redraw it. Filming again is one camera and one object, so it is
+            // cheap enough to do on a slow beat rather than waiting to be asked.
+            if (_panelOpen && _tab == Tab.Create && _making == Making.Dweller &&
+                _previewDweller != null && ++_filmFrames >= 45)
+            {
+                _filmFrames = 0;
+                RefreshPreview();
             }
 
             if (_panelOpen && _nguiWindow != null && ++_refreshFrames >= 30)
@@ -6571,6 +6611,41 @@ namespace VaultAdmin
         }
 
         /// <summary>
+        /// The same for boxes, which the game carries with a call of their own.
+        /// </summary>
+        private void ShowBoxFlight(ELunchBoxType type, int quantity)
+        {
+            if (quantity <= 0) return;
+
+            try
+            {
+                ResourceParticleMgr particles = ResourceParticleMgr.Instance;
+                if (particles == null) return;
+
+                Camera view = Camera.main;
+                Vector3 from = view != null
+                    ? view.ViewportToWorldPoint(new Vector3(0.5f, 0.42f, 12f))
+                    : Vector3.zero;
+
+                MethodInfo fly = typeof(ResourceParticleMgr).GetMethod(
+                    "AddLunchboxParticlesAt",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (fly == null)
+                {
+                    ReportOnce("boxflight", "The game has no AddLunchboxParticlesAt.");
+                    return;
+                }
+
+                fly.Invoke(particles, new object[] { from, quantity, type, true, null });
+            }
+            catch (Exception e)
+            {
+                ReportOnce("boxflight", "Could not send the boxes flying: " + e.Message);
+            }
+        }
+
+        /// <summary>
         /// Sends the granted resources flying into the vault, the way everything else in the game
         /// arrives.
         ///
@@ -6629,6 +6704,7 @@ namespace VaultAdmin
                 // count is kept here, where it means what it says.
                 for (int i = 0; i < quantity; i++) vault.AddLunchBox(type);
 
+                ShowBoxFlight(type, quantity);
                 Say("Granted " + quantity + " " + type + " box" + (quantity == 1 ? "" : "es") + ".");
             }
             catch (Exception e)
