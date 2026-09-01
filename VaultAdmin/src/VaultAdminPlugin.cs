@@ -181,7 +181,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.32.0";
+        public const string PluginVersion = "0.33.0";
 
         internal static ManualLogSource Log;
 
@@ -1704,32 +1704,67 @@ namespace VaultAdmin
         /// L for legendary in front of it — sometimes with the spaces kept, sometimes without. So
         /// both are asked for, and the word matcher covers the rest.
         /// </summary>
-        private void ShowLegendIcon(UISprite icon, string who)
+        private UIAtlas _dwellersAtlas;
+        private bool _lookedForDwellersAtlas;
+
+        /// <summary>
+        /// The atlas of portraits, one for every dweller the game has written.
+        /// </summary>
+        private UIAtlas DwellersAtlas()
+        {
+            if (_lookedForDwellersAtlas) return _dwellersAtlas;
+            _lookedForDwellersAtlas = true;
+
+            UIAtlas[] all = Resources.FindObjectsOfTypeAll<UIAtlas>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null || all[i].name != "Dwellers") continue;
+                if (SpritesOf(all[i]) == null) continue;
+
+                _dwellersAtlas = all[i];
+                Log.LogInfo("Portraits will come from the '" + all[i].name + "' atlas.");
+                break;
+            }
+
+            if (_dwellersAtlas == null)
+                ReportOnce("dwellersatlas", "No portrait atlas found; the plain icon will be used.");
+
+            return _dwellersAtlas;
+        }
+
+        /// <summary>
+        /// A named dweller's own portrait, found the way the game finds it.
+        ///
+        /// Not by the person's name — that was two rounds of near misses and one round of Three Dog
+        /// being drawn as a dog. The game reads the sprite name off the data object itself:
+        /// UISeasonPassRewardLockedPopup takes Object.name from the UniqueDwellerData and hands it
+        /// straight to a UISprite on the dwellers atlas. So this does the same.
+        /// </summary>
+        private void ShowLegendIcon(UISprite icon, UniqueDwellerData legend)
         {
             if (icon == null) return;
 
-            if (string.IsNullOrEmpty(who))
+            icon.atlas = null;
+            icon.spriteName = "";
+
+            UIAtlas atlas = DwellersAtlas();
+            if (atlas == null || legend == null)
             {
                 ShowMenuIcon(icon, DwellerSprites);
                 return;
             }
 
-            // Exact only. Left to match by words, this gave Three Dog a picture of a dog, Star
-            // Paladin Cross a cross, and Maximus his own coat: every one of them a real sprite whose
-            // name happened to share a word with a person's.
-            string bare = who.Replace(" ", "");
-            Found found = FindIcon(new[] { "L_" + who, "L_" + bare, "L_" + who.Replace(".", ""),
-                                           "L_" + bare.Replace(".", "").Replace("(", "").Replace(")", "") },
-                                   "legend " + who, false, false);
-
-            if (found == null)
+            string sprite = legend.name;
+            if (string.IsNullOrEmpty(sprite) || atlas.GetSprite(sprite) == null)
             {
+                ReportOnce("portrait_" + sprite,
+                           "The portrait atlas has nothing called '" + sprite + "'.");
                 ShowMenuIcon(icon, DwellerSprites);
                 return;
             }
 
-            icon.atlas = found.Atlas;
-            icon.spriteName = found.Sprite;
+            icon.atlas = atlas;
+            icon.spriteName = sprite;
             FitSprite(icon, 40);
         }
 
@@ -2298,10 +2333,9 @@ namespace VaultAdmin
                 UniqueDwellerData legend = thing as UniqueDwellerData;
                 if (legend != null)
                 {
-                    string who = LegendName(legend);
-                    row.Name.text = who;
+                    row.Name.text = LegendName(legend);
                     row.Stats.text = "LEGENDARY  brings its own look and stats";
-                    ShowLegendIcon(row.Icon, who);
+                    ShowLegendIcon(row.Icon, legend);
                     continue;
                 }
 
