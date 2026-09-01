@@ -162,12 +162,13 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.29.0";
+        public const string PluginVersion = "0.30.0";
 
         internal static ManualLogSource Log;
 
         private static ConfigEntry<bool> Enabled;
         private static ConfigEntry<string> ToggleKey;
+        private static ConfigEntry<bool> WriteIconReport;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
@@ -309,6 +310,11 @@ namespace VaultAdmin
                 "Master switch, off by default. While this is false the mod reads nothing, draws " +
                 "nothing and binds no key: the game behaves exactly as it does without the plugin. " +
                 "This is a debug tool, so it stays out of the way until it is asked for.");
+
+            WriteIconReport = Config.Bind("Diagnostics", "WriteIconReport", false,
+                "Writes VaultAdmin-icons.txt beside the plugin, listing every picture the item " +
+                "lists ask for and every picture the game's atlases hold. Only useful when an icon " +
+                "is missing and the right name has to be looked up rather than guessed at.");
 
             ToggleKey = Config.Bind("General", "ToggleKey", "F8",
                 "Key that opens and closes the panel, named as in UnityEngine.InputSystem.Key — " +
@@ -1398,8 +1404,8 @@ namespace VaultAdmin
                 case EResource.RadAway:
                     return new[] { "Icon_RadawayPlain", "Icon_Radaway", "Radaway" };
                 case EResource.NukaColaQuantum:
-                    return new[] { "Icon_NukaColaQuantum", "Icon_NukaQuantum", "NukaQuantum",
-                                   "NukaColaQuantum002", "Icon_Nuka_Quantum_Star" };
+                    return new[] { "Icon_NukaQuantum", "Icon_NukaColaQuantum",
+                                   "Icon_Nuka_Quantum_Star", "NukaQuantum", "NukaColaQuantum002" };
                 default:
                     return null;
             }
@@ -1412,12 +1418,12 @@ namespace VaultAdmin
                 // The proper artwork first, the flat pictogram only as a fallback: these three have
                 // pictures of their own and a plain outline of a box is not one of them.
                 case ELunchBoxType.Regular:
-                    return new[] { "LunchBox", "Lunchbox", "LunchboxPlainColor",
-                                   "Icon_LunchboxesPlain" };
+                    return new[] { "Icon_LunchboxesPlain", "Icon_Lunchbox", "LunchboxPlainColor",
+                                   "LunchBox", "Lunchbox" };
                 case ELunchBoxType.MrHandy:
-                    return new[] { "MrHandy", "MR_handy", "Icon_MrHandy", "Icon_MrHandyCollect" };
+                    return new[] { "Icon_MrHandy", "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
                 case ELunchBoxType.PetCarrier:
-                    return new[] { "PetCarrier", "Pet Carrier", "Icon_PetCarrier" };
+                    return new[] { "Icon_PetCarrier", "PetCarrier", "Pet Carrier" };
                 default:
                     return null;
             }
@@ -1520,7 +1526,7 @@ namespace VaultAdmin
                 if (list != null && list.Count > 0) return list;
 
                 UIAtlas next = atlas.replacement;
-                if (next == null || next == atlas) return list;
+                if (next == null || next == atlas) return null;
                 atlas = next;
             }
             return null;
@@ -1650,21 +1656,26 @@ namespace VaultAdmin
             UIAtlas[] atlases = Resources.FindObjectsOfTypeAll<UIAtlas>();
             UIAtlas menu = MenuAtlas();
 
-            // Candidates in the outer loop, atlases in the inner one: the order the names are
-            // written in is what says which picture is wanted most, and it has to beat the order
-            // the atlases happen to be searched in. The menu atlas is tried first within each name,
-            // so a pictogram in the right style still wins a tie.
-            for (int pass = 0; pass < 2; pass++)
+            // The interface's own atlas is searched out first and in full — exactly, then by
+            // words — before anything else is considered. Letting other atlases compete by name
+            // order found a lunchbox, but it was the quest screen's illustration of one: a picture
+            // of a Vault Boy holding a box where a small green box was wanted.
+            for (int pass = 0; pass < 4; pass++)
             {
+                bool menuOnly = pass < 2;
+                bool exact = (pass % 2) == 0;
+
                 for (int i = 0; i < candidates.Length; i++)
                 {
                     for (int a = -1; a < atlases.Length; a++)
                     {
+                        if (menuOnly && a >= 0) break;
+
                         UIAtlas atlas = a < 0 ? menu : atlases[a];
                         if (atlas == null || (a >= 0 && atlas == menu)) continue;
                         if (SpritesOf(atlas) == null) continue;
 
-                        string sprite = pass == 0
+                        string sprite = exact
                             ? (atlas.GetSprite(candidates[i]) != null ? candidates[i] : null)
                             : BestSprite(atlas, candidates[i]);
 
@@ -2176,15 +2187,12 @@ namespace VaultAdmin
                         return atlas;
                     }
 
-                    if (atlas != null)
-                    {
-                        _petArtPending = true;
-                        return null;
-                    }
-
-                    // Not loaded yet. Ask for it, and let the refresh tick pick it up when it lands.
+                    // And an empty one still has to be asked for. Tightening the caching without
+                    // keeping the request is how every pet but the cats — whose art the game had
+                    // already loaded for itself — stayed blank.
                     object loading = ReadObject(info, "IsLoading");
                     if (loading == null || !(bool)loading) RequestPetType(petType);
+
                     _petArtPending = true;
                     return null;
                 }
@@ -3261,6 +3269,64 @@ namespace VaultAdmin
         /// ItemParameters rather than guessed, because an id the game cannot resolve produces an
         /// item with no data behind it.
         /// </summary>
+        /// <summary>
+        /// Writes down every name the catalogue asks for and every name the atlases hold.
+        ///
+        /// Four rounds have now been spent on sprite names, each one a guess corrected by the next.
+        /// A file with both lists in it ends that: whatever is still blank can be looked up rather
+        /// than guessed at. Off by default — it is a page of text nobody playing the game needs.
+        /// </summary>
+        private void WriteReport()
+        {
+            try
+            {
+                string path = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(Info.Location), "VaultAdmin-icons.txt");
+
+                System.Text.StringBuilder text = new System.Text.StringBuilder();
+                text.AppendLine("What the catalogue asks for, and what the atlases hold.");
+                text.AppendLine();
+
+                text.AppendLine("== items ==");
+                for (int i = 0; i < _catalogue.Count; i++)
+                {
+                    CatalogueEntry entry = _catalogue[i];
+                    UIAtlas atlas;
+                    _atlases.TryGetValue(entry.Type, out atlas);
+
+                    bool have = atlas != null && !string.IsNullOrEmpty(entry.Sprite) &&
+                                atlas.GetSprite(entry.Sprite) != null;
+
+                    text.AppendLine((have ? "  ok   " : "  MISS ") + entry.Type + "  id=" + entry.Id +
+                                    "  name=" + entry.Name + "  sprite=" + entry.Sprite);
+                }
+
+                text.AppendLine();
+                text.AppendLine("== atlases ==");
+
+                UIAtlas[] all = Resources.FindObjectsOfTypeAll<UIAtlas>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    List<UISpriteData> sprites = SpritesOf(all[i]);
+                    if (sprites == null) continue;
+
+                    text.AppendLine("  " + all[i].name + " (" + sprites.Count + ")");
+                    for (int j = 0; j < sprites.Count; j++)
+                    {
+                        if (sprites[j] == null) continue;
+                        text.AppendLine("      " + sprites[j].name);
+                    }
+                }
+
+                System.IO.File.WriteAllText(path, text.ToString());
+                Log.LogInfo("Wrote the icon report to " + path + ".");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not write the icon report: " + e.Message);
+            }
+        }
+
         private void BuildCatalogue()
         {
             _catalogue = new List<CatalogueEntry>();
@@ -3295,6 +3361,8 @@ namespace VaultAdmin
 
                 Log.LogInfo("Item catalogue read from the game: " + weapons + " weapons, " +
                             outfits + " outfits, " + junk + " junk.");
+
+                if (WriteIconReport.Value) WriteReport();
             }
             catch (Exception e)
             {
@@ -3341,9 +3409,14 @@ namespace VaultAdmin
                     // is a bare number. Every family carries a GetName that does the lookup properly.
                     string label = CallText(data, "GetName");
                     if (string.IsNullOrEmpty(label)) label = Localised(ReadMember(data, nameMember));
-                    if (string.IsNullOrEmpty(label)) label = ReadMember(data, "Name");
+
+                    // The Name member on these tables is the data object's own name, which is a row
+                    // number. A code at least says what the thing is, and some of these items have
+                    // no written name at all — they are real and can be granted, so they are listed
+                    // by whatever can be read rather than hidden.
                     if (string.IsNullOrEmpty(label)) label = data.CodeId;
                     if (string.IsNullOrEmpty(label)) label = id;
+                    if (string.IsNullOrEmpty(label)) label = ReadMember(data, "Name");
 
                     CatalogueEntry entry = new CatalogueEntry();
                     entry.Type = type;
