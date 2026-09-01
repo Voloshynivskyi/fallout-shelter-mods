@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.66.0";
+        public const string PluginVersion = "0.69.0";
 
         internal static ManualLogSource Log;
 
@@ -1233,7 +1233,6 @@ namespace VaultAdmin
 
         private GameObject _nguiWindow;
         private UITexture _frame;      // the window's own backing, and the proof it is being drawn
-        private UILabel _statusLabel;
         private int _drawCheckFrames;
         private bool _drawChecked;
         private bool _nguiDrawing;     // false until the frame is seen with a draw call
@@ -1364,14 +1363,6 @@ namespace VaultAdmin
 
                 // On the bottom edge, as the title is on the top one: outlined rather than solid,
                 // smaller than it was, and lettered large enough to read as the way out.
-                // Everything this panel does used to report only to a log file. One line above the
-                // way out says what the last press actually did, which is the difference between
-                // using the panel and guessing at it.
-                _statusLabel = MakeLabel(_nguiWindow.transform, "Status", "",
-                                         0, -_windowHeight / 2 + 40, _windowWidth - 56, 22,
-                                         Skin.Bright, 4);
-                _statusLabel.alignment = NGUIText.Alignment.Center;
-
                 GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
                                               0, -_windowHeight / 2 + 6, 148, 48, true, TogglePanel);
 
@@ -2287,7 +2278,7 @@ namespace VaultAdmin
 
         // Below the title and the tab bar; above the close button.
         private int ContentTop() { return _windowHeight / 2 - 86; }
-        private int ContentBottom() { return -_windowHeight / 2 + 62; }
+        private int ContentBottom() { return -_windowHeight / 2 + 44; }
 
         // ---- the items and pets page ----
 
@@ -3183,6 +3174,7 @@ namespace VaultAdmin
             public string Caption;
             public UILabel Title;      // the parameter's name, and how far through its list you are
             public UILabel Display;
+            public UILabel Detail;     // what the thing chosen actually does
 
             // Some choices are better looked at than read: a colour is a colour, and an outfit is
             // the picture of it.
@@ -3215,6 +3207,12 @@ namespace VaultAdmin
             {
                 if (Display != null)
                     Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
+
+                if (Detail != null)
+                {
+                    CatalogueEntry thing = Selected as CatalogueEntry;
+                    Detail.text = thing == null || thing.Stats == null ? "" : thing.Stats;
+                }
 
                 // The count belongs beside the thing being counted — the name of the parameter —
                 // not tacked onto whichever value happens to be showing. Counted from nought,
@@ -3481,6 +3479,8 @@ namespace VaultAdmin
 
             // Named before the row is made: AddChoiceRow writes the caption into a label there and
             // then, and an empty caption stays empty.
+            // Named for what it is: the same animal is filed once per rarity, and this picks which
+            // of those copies you get.
             _petGrade.Caption = "GRADE";
 
             _petPickLabel = MakeLeftLabel(parent, "PetPickName", "-",
@@ -3535,22 +3535,43 @@ namespace VaultAdmin
         }
 
         /// <summary>The versions of the chosen animal, strongest last.</summary>
+        /// <summary>
+        /// The rarities this animal comes in.
+        ///
+        /// The same animal is filed once per rarity, and 'grade' was a word for that filing rather
+        /// than for anything a player thinks about. It is a rarity, chosen the way a dweller's is,
+        /// and which copy sits behind it is this side's business.
+        /// </summary>
         private void RefillGrades()
         {
-            _petGrade.Caption = "GRADE";
-            _petGrade.Begin("any grade");
+            _petGrade.Caption = "RARITY";
+            _petGrade.Begin("any");
 
             PetGroup group = CurrentPetGroup();
             if (group == null) return;
 
-            for (int i = 0; i < group.Variants.Count; i++)
+            for (int i = 0; i < PetRarities.Length; i++)
             {
-                PetEntry variant = group.Variants[i];
-                _petGrade.Add(variant, variant.Rarity + ", bonus " + variant.Power);
+                PetEntry match = null;
+
+                for (int j = 0; j < group.Variants.Count; j++)
+                {
+                    if (group.Variants[j].Rarity != PetRarities[i]) continue;
+                    match = group.Variants[j];
+                    break;
+                }
+
+                if (match == null) continue;
+                _petGrade.Add(match, PetRarities[i] + "   " + PetStats(match));
             }
 
             _petGrade.Show();
         }
+
+        private static readonly EItemRarity[] PetRarities =
+        {
+            EItemRarity.Common, EItemRarity.Normal, EItemRarity.Rare, EItemRarity.Legendary
+        };
 
         private PetGroup CurrentPetGroup()
         {
@@ -3884,6 +3905,7 @@ namespace VaultAdmin
             }
         }
 
+        private UILabel _mainStatLabel;
         private Dweller _previewDweller;
         private bool _reportedPieces;
         private UITexture _previewPicture;
@@ -4400,8 +4422,54 @@ namespace VaultAdmin
         /// on rewrites the face beneath it — so applying one at a time left the rest behind. The
         /// whole set is cheap to reapply, because each is a field being written.
         /// </summary>
+        /// <summary>
+        /// Which stat the dweller leads with, and what its outfit adds to that.
+        ///
+        /// This is the line a stats panel shows and the bench did not: the figures were all here —
+        /// the seven typed in below, the outfit's bonuses read off its record — but nothing put them
+        /// together, so choosing a coat told you nothing about what it was for.
+        /// </summary>
+        private void RefreshMainStat()
+        {
+            if (_mainStatLabel == null) return;
+
+            try
+            {
+                ReadSpecialInputs();
+
+                CatalogueEntry coat = _outfit.Selected as CatalogueEntry;
+                int[] adds = coat == null ? null : coat.Stats7;
+
+                int best = 0;
+                for (int i = 1; i < Specials.Length; i++)
+                {
+                    int here = _special[i] + (adds != null ? adds[i] : 0);
+                    int there = _special[best] + (adds != null ? adds[best] : 0);
+                    if (here > there) best = i;
+                }
+
+                int bonus = adds != null ? adds[best] : 0;
+                string line = "STRONGEST: " + Specials[best].ToString().ToUpper() + " " +
+                              (_special[best] + bonus);
+
+                if (bonus != 0)
+                    line += "   (" + _special[best] + (bonus > 0 ? " +" : " ") + bonus +
+                            " from the outfit)";
+
+                if (coat != null && !string.IsNullOrEmpty(coat.Stats))
+                    line += "   " + coat.Stats;
+
+                _mainStatLabel.text = line;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("mainstat", "Could not work out the strongest stat: " + e.Message);
+            }
+        }
+
         private void LookChanged(Choice choice)
         {
+            RefreshMainStat();
             if (_previewDweller == null) return;
 
             try
@@ -4607,7 +4675,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 74;
+            const int slotHeight = 84;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -4664,9 +4732,18 @@ namespace VaultAdmin
             choice.Title = caption;
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           textLeft, y + 4, textWidth, 20, Skin.Bright, 3);
+                                           textLeft, y + 8, textWidth, 20, Skin.Bright, 3);
             choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
             choice.Display.maxLineCount = 1;
+
+            // What it does, under what it is called. A coat chosen by its name alone is a coat
+            // chosen for nothing.
+            UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
+                                           textLeft, y - 10, textWidth, 18, Skin.Bright, 3);
+            effect.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+            effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            effect.maxLineCount = 1;
+            choice.Detail = effect;
 
             Choice captured = choice;
             int arrowsY = y - height / 2 + 18;
@@ -4728,15 +4805,21 @@ namespace VaultAdmin
 
             AddHeader(parent, "RARITY AND LEVEL", width);
 
-            _rarityLabel = AddPickerRow(parent, width, "RARITY",
-                                        delegate { StepRarity(-1); }, delegate { StepRarity(1); },
-                                        Rarities[_rarityIndex].ToString());
+            // Both on one line: two short answers do not need two rows between them.
+            int gradeY = _cursorY - RowHeight / 2;
+            Plate(parent, "GradeRow", 0, gradeY, width, RowHeight, Skin.Row(width, RowHeight), 1);
 
-            int levelY = _cursorY - RowHeight / 2;
-            Plate(parent, "LevelRow", 0, levelY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            MakeLeftLabel(parent, "LevelCaption", "LEVEL", -width / 2 + 14, levelY, 120,
+            MakeButton(parent, "RarityBack", "<", -width / 2 + 26, gradeY, 34, 30, false,
+                       delegate { StepRarity(-1); });
+            _rarityLabel = MakeLabel(parent, "RarityValue", Rarities[_rarityIndex].ToString(),
+                                     -width / 2 + 118, gradeY, 120, RowHeight, Skin.Bright, 3);
+            _rarityLabel.maxLineCount = 1;
+            MakeButton(parent, "RarityFwd", ">", -width / 2 + 210, gradeY, 34, 30, false,
+                       delegate { StepRarity(1); });
+
+            MakeLeftLabel(parent, "LevelCaption", "LEVEL", -width / 2 + 244, gradeY, 70,
                           RowHeight, Skin.Bright, 3);
-            _levelInput = AddInput(parent, "Level", width / 2 - 60, levelY, 96,
+            _levelInput = AddInput(parent, "Level", width / 2 - 46, gradeY, 76,
                                    _dwellerLevelValue.ToString(), true);
             _cursorY -= RowHeight + RowGap;
 
@@ -4768,6 +4851,13 @@ namespace VaultAdmin
                            false, delegate { StepSpecial(index, 1); });
             }
             _cursorY -= specialHeight + RowGap;
+
+            // The one line a stats panel would show: which stat this dweller leads with, and what
+            // the coat on its back adds to it.
+            _mainStatLabel = MakeLabel(parent, "MainStat", "", 0, _cursorY - 14, width - 20, 26,
+                                       Skin.Bright, 3);
+            _mainStatLabel.maxLineCount = 1;
+            _cursorY -= 28 + RowGap;
 
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
@@ -4903,6 +4993,8 @@ namespace VaultAdmin
             _special[index] = Mathf.Clamp(_special[index] + by, 1, MaxSpecial);
             if (_specialInputs[index] != null)
                 _specialInputs[index].value = _special[index].ToString();
+
+            RefreshMainStat();
         }
 
         /// <summary>Takes the typed figures, so a stat can be set rather than clicked up to.</summary>
@@ -5107,17 +5199,16 @@ namespace VaultAdmin
             }
         }
 
-        /// <summary>Says what just happened, on screen and in the log together.</summary>
+        // The panel used to keep a running commentary along its foot. Watching the resources fly
+        // into the vault says the same thing better, and the log still has every word of it.
         private void Say(string message)
         {
             Log.LogInfo(message);
-            if (_statusLabel != null) _statusLabel.text = message;
         }
 
         private void Trouble(string message)
         {
             Log.LogWarning(message);
-            if (_statusLabel != null) _statusLabel.text = message;
         }
 
         /// <summary>
@@ -6444,6 +6535,8 @@ namespace VaultAdmin
                 if (vault == null || !vault.Loaded || vault.Storage == null) return;
 
                 vault.Storage.AddResource(new GameResources(resource, amount), true, true);
+                ShowResourceFlight(resource, amount);
+
                 Log.LogInfo("Granted " + amount.ToString("0") + " " + resource + ".");
             }
             catch (Exception e)
@@ -6467,11 +6560,60 @@ namespace VaultAdmin
                 if (room <= 0f) return;
 
                 vault.Storage.AddResource(new GameResources(resource, room), true, true);
+                ShowResourceFlight(resource, room);
+
                 Log.LogInfo("Filled " + resource + " to its cap (+" + room.ToString("0") + ").");
             }
             catch (Exception e)
             {
                 Log.LogWarning("Filling " + resource + " failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Sends the granted resources flying into the vault, the way everything else in the game
+        /// arrives.
+        ///
+        /// This is the game's own delivery: a parcel of resources handed to the particle manager,
+        /// which carries them up to the counters. Nothing else in Fallout Shelter gives you
+        /// something without showing it arrive, and a number that changes silently reads as a bug.
+        /// The parcel is cosmetic — the resource is already in the vault by the time it flies —
+        /// so nothing is counted twice.
+        /// </summary>
+        private void ShowResourceFlight(EResource resource, float amount)
+        {
+            if (amount <= 0f) return;
+
+            try
+            {
+                ResourceParticleMgr particles = ResourceParticleMgr.Instance;
+                if (particles == null) return;
+
+                Storage parcel = new Storage();
+                parcel.AddResource(new GameResources(resource, amount), true, true);
+
+                Camera view = Camera.main;
+                Vector3 from = view != null
+                    ? view.ViewportToWorldPoint(new Vector3(0.5f, 0.42f, 12f))
+                    : Vector3.zero;
+
+                MethodInfo fly = typeof(ResourceParticleMgr).GetMethod(
+                    "CollectResourcesWorld",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (fly == null)
+                {
+                    ReportOnce("flight", "The game has no CollectResourcesWorld; nothing will fly.");
+                    return;
+                }
+
+                // capped, sound, transfer, ignore the ratio. Transfer is off: the vault already has
+                // them, and these are the same resources arriving, not more of them.
+                fly.Invoke(particles, new object[] { from, parcel, true, true, false, true });
+            }
+            catch (Exception e)
+            {
+                ReportOnce("flight", "Could not send the resources flying: " + e.Message);
             }
         }
 
