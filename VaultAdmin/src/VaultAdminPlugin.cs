@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Log;
 
@@ -2482,6 +2482,14 @@ namespace VaultAdmin
             public UILabel Name;
             public UILabel Stats;
             public GameObject Give;
+
+            // A row that has just handed something over says so where its stats were, and puts
+            // them back afterwards. Kept here rather than rebuilt, because a row rebuilt to show a
+            // word is a row that flickers.
+            public string WasStats;
+            public Color WasColour;
+            public float ConfirmUntil;
+            public float PulseUntil;
         }
 
         private static readonly Family[] Families =
@@ -2490,6 +2498,11 @@ namespace VaultAdmin
         };
 
         private Family _grantFamily = Family.Weapon;
+
+        // How many refusals have been reported. A grant says it worked by nothing having gone
+        // wrong while it ran, which beats asking four different granting paths to agree on a
+        // return value they do not currently have.
+        private int _troubles;
 
         private static EItemType ItemTypeOf(Family family)
         {
@@ -2873,6 +2886,7 @@ namespace VaultAdmin
             if (_ordering != Ordering.None) _shown.Sort(CompareShown);
 
             EnsureRows(_shown.Count);
+            ClearConfirmations();
             FillRows();
             UpdateGrantArea(Mathf.Min(_shown.Count, MaxGrantRows));
         }
@@ -2920,6 +2934,34 @@ namespace VaultAdmin
             return -1;
         }
 
+        /// <summary>
+        /// Takes down any confirmation still showing.
+        ///
+        /// Called when the list itself changes rather than when it is merely refilled: GIVEN over
+        /// a row that now holds a different item is a confirmation of the wrong thing.
+        /// </summary>
+        private void ClearConfirmations()
+        {
+            for (int i = 0; i < _itemRows.Count; i++)
+            {
+                ItemRow row = _itemRows[i];
+                if (row == null) continue;
+
+                if (row.ConfirmUntil > 0f && row.Stats != null)
+                {
+                    row.Stats.text = row.WasStats == null ? "" : row.WasStats;
+                    row.Stats.color = row.WasColour;
+                }
+
+                row.ConfirmUntil = 0f;
+
+                if (row.PulseUntil > 0f && row.Give != null)
+                    row.Give.transform.localScale = Vector3.one;
+
+                row.PulseUntil = 0f;
+            }
+        }
+
         private void FillRows()
         {
             for (int i = 0; i < _itemRows.Count; i++)
@@ -2937,7 +2979,7 @@ namespace VaultAdmin
                 if (item != null)
                 {
                     row.Name.text = item.Name;
-                    row.Stats.text = item.Stats;
+                    SetStats(row, item.Stats);
                     ShowIcon(row.Icon, item);
                     continue;
                 }
@@ -2946,8 +2988,8 @@ namespace VaultAdmin
                 if (random != null)
                 {
                     row.Name.text = "Random " + random.Rarity + " dweller";
-                    row.Stats.text = "RANDOM  a " + random.Rarity.ToString().ToLower() +
-                                     " newcomer, rolled by the game";
+                    SetStats(row, "RANDOM  a " + random.Rarity.ToString().ToLower() +
+                                  " newcomer, rolled by the game");
                     ShowMenuIcon(row.Icon, DwellerSprites);
                     continue;
                 }
@@ -2956,7 +2998,7 @@ namespace VaultAdmin
                 if (legend != null)
                 {
                     row.Name.text = LegendName(legend);
-                    row.Stats.text = "LEGENDARY  brings its own look and stats";
+                    SetStats(row, "LEGENDARY  brings its own look and stats");
                     ShowLegendIcon(row.Icon, legend);
                     continue;
                 }
@@ -2966,10 +3008,10 @@ namespace VaultAdmin
                     PetEntry pet = group.Best;
 
                     row.Name.text = group.Name;
-                    row.Stats.text = PetStats(pet) +
+                    SetStats(row, PetStats(pet) +
                                      (group.Variants.Count > 1
                                           ? "   " + group.Variants.Count + " grades"
-                                          : "");
+                                          : ""));
                     ShowPetIcon(row.Icon, pet);
                 }
             }
@@ -3322,6 +3364,99 @@ namespace VaultAdmin
         {
             if (rowIndex < 0 || rowIndex >= _shown.Count) return;
 
+            int before = _troubles;
+            HandOver(rowIndex);
+            if (_troubles == before) ConfirmRow(rowIndex);
+        }
+
+        /// <summary>
+        /// Says on the row itself that the thing was handed over.
+        ///
+        /// A toast at the edge of the screen answers the question "did anything happen", but not
+        /// "did anything happen to the row I pressed", and with two hundred rows that is the
+        /// question being asked. So the row's own stats line says GIVEN for a moment and the
+        /// button swells under the finger, and then both go back to what they were.
+        /// </summary>
+        private void ConfirmRow(int rowIndex)
+        {
+            if (rowIndex < 0 || rowIndex >= _itemRows.Count) return;
+
+            ItemRow row = _itemRows[rowIndex];
+            if (row == null || row.Root == null) return;
+
+            if (row.Stats != null)
+            {
+                // Only the first press records what was there; a second press while the word is
+                // still up must not remember the word as the thing to go back to.
+                if (row.ConfirmUntil <= 0f)
+                {
+                    row.WasStats = row.Stats.text;
+                    row.WasColour = row.Stats.color;
+                }
+
+                row.Stats.text = "GIVEN";
+                row.Stats.color = Skin.Bright;
+            }
+
+            row.ConfirmUntil = Time.time + 1.4f;
+            row.PulseUntil = Time.time + PulseFor;
+        }
+
+        private const float PulseFor = 0.28f;
+
+        /// <summary>
+        /// Writes a row's stats line, unless it is busy saying something happened.
+        ///
+        /// A list refilled while a confirmation is up would either wipe the word or, worse, leave
+        /// the row to put back the word instead of the stats when the moment passed.
+        /// </summary>
+        private static void SetStats(ItemRow row, string what)
+        {
+            if (row.ConfirmUntil > 0f) { row.WasStats = what; return; }
+            if (row.Stats != null) row.Stats.text = what;
+        }
+
+        /// <summary>Lets the swell fall and the stats come back.</summary>
+        private void TickConfirmations()
+        {
+            float now = Time.time;
+
+            for (int i = 0; i < _itemRows.Count; i++)
+            {
+                ItemRow row = _itemRows[i];
+                if (row == null || row.Root == null) continue;
+
+                if (row.PulseUntil > 0f && row.Give != null)
+                {
+                    if (now >= row.PulseUntil)
+                    {
+                        row.PulseUntil = 0f;
+                        row.Give.transform.localScale = Vector3.one;
+                    }
+                    else
+                    {
+                        // One rise and one fall, rather than a jump and a snap back.
+                        float left = (row.PulseUntil - now) / PulseFor;
+                        float swell = Mathf.Sin(left * Mathf.PI);
+                        row.Give.transform.localScale = Vector3.one * (1f + 0.16f * swell);
+                    }
+                }
+
+                if (row.ConfirmUntil > 0f && now >= row.ConfirmUntil)
+                {
+                    row.ConfirmUntil = 0f;
+
+                    if (row.Stats != null)
+                    {
+                        row.Stats.text = row.WasStats == null ? "" : row.WasStats;
+                        row.Stats.color = row.WasColour;
+                    }
+                }
+            }
+        }
+
+        private void HandOver(int rowIndex)
+        {
             object thing = _shown[rowIndex];
 
             CatalogueEntry item = thing as CatalogueEntry;
@@ -6864,6 +6999,7 @@ namespace VaultAdmin
 
         private void Trouble(string message)
         {
+            _troubles++;
             Log.LogWarning(message);
             Answer(message, false);
         }
@@ -7078,7 +7214,12 @@ namespace VaultAdmin
 
             EnsureHudButton();
             UpdateCameraHold();
-            if (_panelOpen) ForgetOldAnswers();
+
+            if (_panelOpen)
+            {
+                ForgetOldAnswers();
+                if (_tab == Tab.Grant) TickConfirmations();
+            }
 
             if (++_upkeepFrames >= 90)
             {
@@ -8579,6 +8720,50 @@ namespace VaultAdmin
             return 1;
         }
 
+        /// <summary>
+        /// Writes down the whole of what the bench is set to, in one line.
+        ///
+        /// The panel showed a woman and produced a man, and the useful question is which of the
+        /// two the code believed. Reading the state out where it is used answers that without
+        /// another round of reasoning about which call might have reset what.
+        /// </summary>
+        private void SayTheState()
+        {
+            try
+            {
+                string onTheButton = "?";
+
+                if (_genderSwitch != null)
+                {
+                    UILabel text = _genderSwitch.GetComponentInChildren<UILabel>();
+                    if (text != null) onTheButton = text.text;
+                }
+
+                Log.LogInfo("Creating: gender=" + Genders[_genderIndex] +
+                            " (index " + _genderIndex + ", button says " + onTheButton + ")" +
+                            ", rarity=" + Rarities[_rarityIndex] +
+                            ", level=" + _dwellerLevelValue +
+                            ", " + Picked(_hair) +
+                            ", " + Picked(_face) +
+                            ", " + Picked(_hairColour) +
+                            ", " + Picked(_skin) +
+                            ", " + Picked(_helmet) +
+                            ", " + Picked(_outfit) +
+                            ", " + Picked(_weapon));
+            }
+            catch { }
+        }
+
+        private static string Picked(Choice choice)
+        {
+            string label = choice.Index >= 0 && choice.Index < choice.Labels.Count
+                ? choice.Labels[choice.Index]
+                : "?";
+
+            return choice.Caption + "=" + choice.Index + ":" + label +
+                   (choice.Selected == null ? "(nothing)" : "");
+        }
+
         private void CreateDweller() { CreateDweller(true); }
 
         /// <summary>
@@ -8615,6 +8800,11 @@ namespace VaultAdmin
                 //
                 // forceCreate is true so the panel is not silently refused by the same throttle
                 // that paces normal arrivals; the population limit is checked above instead.
+                // Written down at the moment it is used, not reasoned about afterwards. Twice now
+                // the panel has shown one thing and created another, and both times the guess about
+                // which half was lying was wrong. This says which.
+                if (customise) SayTheState();
+
                 Dweller dweller = spawner.CreateWaitingDweller(
                     Genders[_genderIndex], false, 0, Rarities[_rarityIndex], true);
 
@@ -8640,6 +8830,35 @@ namespace VaultAdmin
                 }
 
                 _created.Add(dweller.GetInstanceID());
+
+                // If the spawner has handed back the very object this panel was using as its
+                // stand-in -- it came out of the same pool and was never given back -- then the
+                // figure on the bench has just walked off to the vault door, which would explain
+                // both the avatar going and the newcomer arriving as something else.
+                if (_previewDweller != null && ReferenceEquals(dweller, _previewDweller))
+                {
+                    Log.LogWarning("The spawner handed back the stand-in itself; letting go of it.");
+
+                    _previewDweller = null;
+                    _standInLayer = -1;
+                    _texturedOnce = false;
+                    _framedSize = -1f;
+                    _framedLocked = false;
+                    _posed = false;
+                    _lastBeat.Clear();
+                }
+
+                if (customise)
+                    Log.LogInfo("Created a " + ReadAsText(dweller, "Gender") +
+                                " named " + dweller.Name + " " + dweller.LastName + ".");
+
+                // The bench keeps its figure. Whatever became of the stand-in, the next thing the
+                // player sees on this page should be someone standing there.
+                if (_tab == Tab.Create && _making == Making.Dweller && _panelOpen)
+                {
+                    EnsurePreview();
+                    RefreshPreview();
+                }
 
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
