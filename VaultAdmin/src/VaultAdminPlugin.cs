@@ -181,7 +181,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.31.0";
+        public const string PluginVersion = "0.32.0";
 
         internal static ManualLogSource Log;
 
@@ -1209,8 +1209,11 @@ namespace VaultAdmin
 
                 // Written straight onto the top edge, in the green, as the game's own windows do
                 // it — large enough to read as the window's name rather than a caption on it.
+                // A tenth of its own height lower, so it rests on the frame rather than balancing
+                // on it.
                 UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
-                                          0, _windowHeight / 2, _windowWidth - 60, 52, Skin.Bright, 4);
+                                          0, _windowHeight / 2 - 6, _windowWidth - 60, 52,
+                                          Skin.Bright, 4);
                 title.fontSize = Mathf.RoundToInt(_fontSize * 1.6f);
 
                 // Outlined, so the frame it straddles reads as behind it rather than through it.
@@ -1226,15 +1229,10 @@ namespace VaultAdmin
                 // On the bottom edge, as the title is on the top one: outlined rather than solid,
                 // smaller than it was, and lettered large enough to read as the way out.
                 GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
-                                              0, -_windowHeight / 2, 148, 48, false, TogglePanel);
+                                              0, -_windowHeight / 2, 148, 48, true, TogglePanel);
 
                 UILabel closeText = close.GetComponentInChildren<UILabel>();
-                if (closeText != null)
-                {
-                    closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
-                    closeText.effectStyle = UILabel.Effect.Outline;
-                    closeText.effectColor = Skin.Ink;
-                }
+                if (closeText != null) closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
 
                 _nguiWindow.SetActive(false);
                 Log.LogInfo("Built the panel window under " + root.name + ".");
@@ -1443,15 +1441,15 @@ namespace VaultAdmin
         {
             switch (type)
             {
-                // The proper artwork first, the flat pictogram only as a fallback: these three have
-                // pictures of their own and a plain outline of a box is not one of them.
+                // The painted article, not the outline. These three are objects the player knows
+                // by sight, and a white silhouette of a box is not one of them.
                 case ELunchBoxType.Regular:
-                    return new[] { "Icon_LunchboxesPlain", "Icon_Lunchbox", "LunchboxPlainColor",
-                                   "LunchBox", "Lunchbox" };
+                    return new[] { "LunchBox", "Lunchbox", "LunchboxPlainColor",
+                                   "Icon_LunchboxesPlain" };
                 case ELunchBoxType.MrHandy:
-                    return new[] { "Icon_MrHandy", "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
+                    return new[] { "MrHandy", "MR_handy", "Icon_MrHandy" };
                 case ELunchBoxType.PetCarrier:
-                    return new[] { "Icon_PetCarrier", "PetCarrier", "Pet Carrier" };
+                    return new[] { "PetCarrier", "Pet Carrier", "Icon_PetCarrier" };
                 default:
                     return null;
             }
@@ -1716,7 +1714,14 @@ namespace VaultAdmin
                 return;
             }
 
-            Found found = FindIcon(new[] { "L_" + who, "L_" + who.Replace(" ", "") }, "legend " + who);
+            // Exact only. Left to match by words, this gave Three Dog a picture of a dog, Star
+            // Paladin Cross a cross, and Maximus his own coat: every one of them a real sprite whose
+            // name happened to share a word with a person's.
+            string bare = who.Replace(" ", "");
+            Found found = FindIcon(new[] { "L_" + who, "L_" + bare, "L_" + who.Replace(".", ""),
+                                           "L_" + bare.Replace(".", "").Replace("(", "").Replace(")", "") },
+                                   "legend " + who, false, false);
+
             if (found == null)
             {
                 ShowMenuIcon(icon, DwellerSprites);
@@ -1725,6 +1730,38 @@ namespace VaultAdmin
 
             icon.atlas = found.Atlas;
             icon.spriteName = found.Sprite;
+            FitSprite(icon, 40);
+        }
+
+        /// <summary>
+        /// Sizes a sprite to fit a square without squashing it.
+        ///
+        /// A portrait is half as wide as it is tall, and forcing one into a square makes every face
+        /// in the list look pressed flat.
+        /// </summary>
+        private static void FitSprite(UISprite sprite, int box)
+        {
+            if (sprite == null || sprite.atlas == null) return;
+
+            try
+            {
+                UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
+                if (data == null || data.width <= 0 || data.height <= 0)
+                {
+                    sprite.width = box;
+                    sprite.height = box;
+                    return;
+                }
+
+                float scale = Mathf.Min((float)box / data.width, (float)box / data.height);
+                sprite.width = Mathf.Max(1, Mathf.RoundToInt(data.width * scale));
+                sprite.height = Mathf.Max(1, Mathf.RoundToInt(data.height * scale));
+            }
+            catch
+            {
+                sprite.width = box;
+                sprite.height = box;
+            }
         }
 
         /// <summary>Puts one of the interface's own icons on a row that has no art of its own.</summary>
@@ -1740,6 +1777,7 @@ namespace VaultAdmin
 
             icon.atlas = found.Atlas;
             icon.spriteName = found.Sprite;
+            FitSprite(icon, 40);
         }
 
         private sealed class Found
@@ -1760,11 +1798,27 @@ namespace VaultAdmin
         /// </summary>
         private Found FindIcon(string[] candidates, string what)
         {
+            return FindIcon(candidates, what, true, true);
+        }
+
+        /// <summary>
+        /// Hunts one picture through the game's atlases.
+        ///
+        /// Two kinds of picture are wanted here and they pull in opposite directions. A resource
+        /// wants the interface's own flat pictogram, in the same style as everything around it. A
+        /// lunchbox wants the painted article, because that is what a lunchbox looks like and the
+        /// outline of a box says nothing. So which to prefer is asked for rather than assumed.
+        ///
+        /// Fuzziness is also a choice: matching a portrait by words gave Three Dog a picture of a
+        /// dog and Star Paladin Cross a picture of a cross.
+        /// </summary>
+        private Found FindIcon(string[] candidates, string what, bool preferMenu, bool allowFuzzy)
+        {
             Found known;
             if (_foundIcons.TryGetValue(what, out known)) return known;
 
             UIAtlas[] atlases = Resources.FindObjectsOfTypeAll<UIAtlas>();
-            UIAtlas menu = MenuAtlas();
+            UIAtlas menu = preferMenu ? MenuAtlas() : null;
 
             // The interface's own atlas is searched out first and in full — exactly, then by
             // words — before anything else is considered. Letting other atlases compete by name
@@ -1774,6 +1828,9 @@ namespace VaultAdmin
             {
                 bool menuOnly = pass < 2;
                 bool exact = (pass % 2) == 0;
+
+                if (menuOnly && menu == null) continue;
+                if (!exact && !allowFuzzy) continue;
 
                 for (int i = 0; i < candidates.Length; i++)
                 {
@@ -1814,7 +1871,13 @@ namespace VaultAdmin
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size)
         {
-            Found found = FindIcon(candidates, what);
+            AddIcon(parent, name, candidates, what, x, y, size, true);
+        }
+
+        private void AddIcon(Transform parent, string name, string[] candidates, string what,
+                             int x, int y, int size, bool preferMenu)
+        {
+            Found found = FindIcon(candidates, what, preferMenu, true);
             if (found == null) return;
 
             UIAtlas atlas = found.Atlas;
@@ -2162,6 +2225,7 @@ namespace VaultAdmin
             }
             else if (_grantFamily == Family.Pet)
             {
+                PreloadPetArt();
                 if (_pets == null) BuildPetCatalogue();
                 if (_pets != null)
                 {
@@ -2316,6 +2380,35 @@ namespace VaultAdmin
             return null;
         }
 
+        private bool _petArtAsked;
+
+        /// <summary>
+        /// Asks for every kind of pet's art at once.
+        ///
+        /// Requesting each type only when a row needing it happens to be drawn meant the pictures
+        /// arrived a page at a time, in whatever order the list was read in. There are six kinds
+        /// altogether; asking for all six the first time the list is opened costs one round of
+        /// loading and gets them all.
+        /// </summary>
+        private void PreloadPetArt()
+        {
+            if (_petArtAsked) return;
+            _petArtAsked = true;
+
+            try
+            {
+                foreach (object type in Enum.GetValues(typeof(EPetType)))
+                    RequestPetType(type);
+
+                Log.LogInfo("Asked the game for every kind of pet's art.");
+                _petArtPending = true;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not ask for the pet art: " + e.Message);
+            }
+        }
+
         private void RequestPetType(object petType)
         {
             try
@@ -2370,6 +2463,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
+            FitSprite(icon, 40);
         }
 
         private void ShowIcon(UISprite icon, CatalogueEntry entry)
@@ -2402,6 +2496,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
+            FitSprite(icon, 40);
         }
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
@@ -2585,6 +2680,7 @@ namespace VaultAdmin
 
         private void RefreshPetPick()
         {
+            PreloadPetArt();
             if (_pets == null) BuildPetCatalogue();
 
             if (_pets == null || _pets.Count == 0)
@@ -2894,7 +2990,7 @@ namespace VaultAdmin
                   Skin.Row(width, cell), 1);
 
             AddIcon(parent, "BoxIcon_" + type, BoxSprites(type), "box " + type,
-                    -width / 2 + 26, top, 28);
+                    -width / 2 + 26, top, 30, false);
 
             MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
                           -width / 2 + 48, top, width - 60, 26, Skin.Bright, 3);
@@ -3525,6 +3621,10 @@ namespace VaultAdmin
                     // not arrive when granted. They are dressing for something else in the game,
                     // not stock a vault can hold.
                     if (id.StartsWith("costume_", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // The plain clothes a dweller arrives in. Like the jumpsuit and the fist, it is
+                    // what someone has when they have nothing, and granting it does nothing.
+                    if (id == "NormalClothing") continue;
 
                     // The Name property returns the data object's own name, which in these tables
                     // is a bare number. Every family carries a GetName that does the lookup properly.
