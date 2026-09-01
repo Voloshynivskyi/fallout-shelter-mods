@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.98.0";
+        public const string PluginVersion = "0.99.1";
 
         internal static ManualLogSource Log;
 
@@ -3804,6 +3804,12 @@ namespace VaultAdmin
         private static Shader _plainShader;
         private static bool _reportedMovers;
 
+        // Whether the stand-in has been put into its idle, and whether the camera has therefore
+        // been allowed to settle on a framing. A figure measured before it stands up is measured
+        // as the wrong shape.
+        private static bool _posed;
+        private bool _framedLocked;
+
         // Where each animator's clock stood last frame, so a clock that has stopped can be told
         // apart from one that is merely slow.
         private static readonly Dictionary<int, float> _lastBeat = new Dictionary<int, float>();
@@ -5484,6 +5490,8 @@ namespace VaultAdmin
             // that no longer exist.
             _lastBeat.Clear();
             _reportedMovers = false;
+            _posed = false;
+            _framedLocked = false;
 
             _previewDweller = null;
             RefreshPreview();
@@ -5615,20 +5623,27 @@ namespace VaultAdmin
                     Call(_previewDweller, "ForceUpdateTexture", true);
                 }
 
-                // Framed on what is actually there, so a tall dweller and a child both fit.
-                // Framed once and left. The bounds shift a little as pieces are put on and taken
-                // off, and re-framing every shot made the figure breathe in and out — very slightly,
-                // three times, exactly as it was opening.
-                if (_framedSize <= 0f)
+                // Standing before measuring. This used to run the other way about, and a dweller
+                // out of the pool arrives in whatever pose it was left in — the one in the report
+                // was lying back with its legs out. The camera framed that, locked to it, and then
+                // the figure stood up inside a frame cut for someone lying down: too small, and
+                // then suddenly the right size when a change of gender built a new one.
+                KeepItMoving(body);
+
+                // Framed on what is actually there, so a tall dweller and a child both fit. Held
+                // loosely until the idle is running, and fixed from then on: re-framing every shot
+                // made the figure breathe in and out, and framing it before it had stood up was
+                // worse.
+                if (_framedSize <= 0f || !_framedLocked)
                 {
                     Bounds seen;
                     if (!MeasureRenderers(body, out seen)) return false;
 
                     _framedSize = Mathf.Max(0.2f, seen.extents.y * 1.12f);
                     _framedAt = new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
-                }
 
-                KeepItMoving(body);
+                    if (_posed) _framedLocked = true;
+                }
 
                 _previewCamera.transform.position = _framedAt;
                 _previewCamera.orthographicSize = _framedSize;
@@ -5767,16 +5782,24 @@ namespace VaultAdmin
                     // hand. Anything culled by visibility is culled for good.
                     reel.cullingType = AnimationCullingType.AlwaysAnimate;
 
-                    AnimationState playing = NowPlaying(reel);
+                    // The idle, chosen outright rather than accepted. Taking whatever happened to
+                    // be running and putting it on a loop is how a dweller came to sit in the
+                    // panel for half a minute: the pool had left a sitting clip playing, and all
+                    // this did was make sure it never ended.
+                    AnimationState playing = PickIdle(reel);
+                    if (playing == null) continue;
 
-                    if (playing == null)
+                    if (!reel.IsPlaying(playing.name))
                     {
-                        playing = PickIdle(reel);
-                        if (playing == null) continue;
-
                         playing.wrapMode = WrapMode.Loop;
+                        playing.time = 0f;
                         reel.Play(playing.name);
+                        reel.Sample();
+
+                        _lastBeat.Remove(reel.GetInstanceID());
                     }
+
+                    _posed = true;
 
                     playing.enabled = true;
                     playing.weight = 1f;
@@ -7226,6 +7249,7 @@ namespace VaultAdmin
                     RebuildLookOptions();
 
                     text.AppendLine("  " + gender);
+                    AppendRawNames(text, _hair);
                     AppendChoice(text, _hair);
                     AppendChoice(text, _face);
                     AppendChoice(text, _hairColour);
@@ -7260,6 +7284,84 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Could not write the icon report: " + e.Message);
             }
+        }
+
+        /// <summary>
+        /// Every field a hairstyle could be named from, and what each of them actually says.
+        ///
+        /// The list currently reads 24, 9 and null, which are three different failures wearing the
+        /// same clothes. Rather than guess which field to prefer -- a habit that has cost several
+        /// rounds already -- this writes down what is on the record and lets the answer be read off
+        /// it. The whole member list of the first entry goes down once, so a field nobody thought
+        /// to try is still visible.
+        /// </summary>
+        private static void AppendRawNames(System.Text.StringBuilder text, Choice choice)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            try
+            {
+                text.AppendLine("      " + choice.Caption + " -- raw:");
+
+                for (int i = 1; i < choice.Options.Count && i <= 40; i++)
+                {
+                    object entry = choice.Options[i];
+                    if (entry == null) { text.AppendLine("          " + i + ": <null entry>"); continue; }
+
+                    text.AppendLine("          " + i +
+                                    ": TitleTextId=" + Show(ReadMember(entry, "TitleTextId")) +
+                                    "  PieceName=" + Show(ReadMember(entry, "PieceName")) +
+                                    "  Id=" + Show(ReadMember(entry, "Id")) +
+                                    "  shown=" + Show(i < choice.Labels.Count ? choice.Labels[i] : null));
+                }
+
+                for (int i = 1; i < choice.Options.Count; i++)
+                {
+                    object entry = choice.Options[i];
+                    if (entry == null) continue;
+
+                    text.AppendLine("          all members of entry " + i + " (" +
+                                    entry.GetType().Name + "):");
+
+                    FieldInfo[] fields = entry.GetType().GetFields(Flags);
+                    for (int f = 0; f < fields.Length; f++)
+                        text.AppendLine("              ." + fields[f].Name + " = " +
+                                        Show(SafeText(fields[f].GetValue(entry))));
+
+                    PropertyInfo[] props = entry.GetType().GetProperties(Flags);
+                    for (int f = 0; f < props.Length; f++)
+                    {
+                        if (props[f].GetIndexParameters().Length > 0) continue;
+
+                        string got;
+                        try { got = SafeText(props[f].GetValue(entry, null)); }
+                        catch { got = "<threw>"; }
+
+                        text.AppendLine("              ." + props[f].Name + " = " + Show(got));
+                    }
+
+                    break;
+                }
+            }
+            catch (Exception e)
+            {
+                text.AppendLine("          could not read the raw names: " + e.Message);
+            }
+        }
+
+        private static string Show(string what)
+        {
+            if (what == null) return "<null>";
+            return what.Length == 0 ? "<empty>" : "\"" + what + "\"";
+        }
+
+        private static string SafeText(object what)
+        {
+            if (what == null) return null;
+
+            try { return what.ToString(); }
+            catch { return "<threw>"; }
         }
 
         private static void AppendChoice(System.Text.StringBuilder text, Choice choice)
