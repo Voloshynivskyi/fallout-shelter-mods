@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.96.0";
+        public const string PluginVersion = "0.98.0";
 
         internal static ManualLogSource Log;
 
@@ -3806,8 +3806,7 @@ namespace VaultAdmin
 
         // Where each animator's clock stood last frame, so a clock that has stopped can be told
         // apart from one that is merely slow.
-        private static readonly Dictionary<Animator, float> _lastBeat =
-            new Dictionary<Animator, float>();
+        private static readonly Dictionary<int, float> _lastBeat = new Dictionary<int, float>();
 
         /// <summary>
         /// Forgets every saved original when the vault underneath us changes.
@@ -4966,6 +4965,7 @@ namespace VaultAdmin
             _hair.Begin("random");
             _face.Begin("random");
             _hairColour.Begin("random");
+            _colourWordsUsed.Clear();
             _helmet.Begin("none");
             _skin.Begin("base");
 
@@ -4994,7 +4994,7 @@ namespace VaultAdmin
 
                         if (kind == "Hair") _hair.Add(entry, label);
                         else if (kind == "Face") _face.Add(entry, label);
-                        else if (kind == "HairColor") _hairColour.Add(entry, label);
+                        else if (kind == "HairColor") _hairColour.Add(entry, HairColourName(entry, label));
                         else if (kind == "Helmet") _helmet.Add(entry, label);
                     }
                 }
@@ -5088,6 +5088,77 @@ namespace VaultAdmin
         /// A hair colour is filed either as a shade of its own or as an index into the palette for
         /// this gender, and either way it is a colour — which is the only useful way to show it.
         /// </summary>
+        /// <summary>
+        /// A hair colour named after the colour it is.
+        ///
+        /// The catalogue's own label is the name of the group the entry belongs to, not of the
+        /// entry: twenty-one shades all called "Hair Male" and "Hair Male Customization Only" in
+        /// turn. The colour itself is right there on the record and already resolved for the
+        /// swatch, so the name is worked out from that instead of read off a heading.
+        /// </summary>
+        private string HairColourName(object entry, string fallback)
+        {
+            Color? shade = ColourOf(entry);
+            if (shade == null) return fallback;
+
+            string word = ColourWord(shade.Value);
+
+            // Twenty-one shades will not yield twenty-one words, and three rows all reading BROWN
+            // is the same complaint in a different form. The repeats are numbered in the order the
+            // catalogue lists them, so each row names a colour and no two rows name it the same.
+            int seen;
+            _colourWordsUsed.TryGetValue(word, out seen);
+            _colourWordsUsed[word] = seen + 1;
+
+            return seen == 0 ? word : word + " " + (seen + 1);
+        }
+
+        private readonly Dictionary<string, int> _colourWordsUsed = new Dictionary<string, int>();
+
+        /// <summary>
+        /// The word a person would use for a colour, leaning towards the words used about hair.
+        ///
+        /// Hue alone is not enough: brown, ginger and blonde are all the same orange, separated
+        /// only by how dark and how strong it is. Grey and white have no hue worth reading at all,
+        /// so they are settled on brightness before hue is consulted.
+        /// </summary>
+        private static string ColourWord(Color shade)
+        {
+            float hue, sat, value;
+            Color.RGBToHSV(shade, out hue, out sat, out value);
+
+            float degrees = hue * 360f;
+
+            if (sat < 0.12f)
+            {
+                if (value < 0.18f) return "BLACK";
+                if (value < 0.40f) return "DARK GREY";
+                if (value < 0.65f) return "GREY";
+                if (value < 0.88f) return "SILVER";
+                return "WHITE";
+            }
+
+            if (value < 0.16f) return "BLACK";
+
+            if (degrees < 16f || degrees >= 345f) return value < 0.45f ? "AUBURN" : "RED";
+
+            if (degrees < 42f)
+            {
+                if (value < 0.30f) return "DARK BROWN";
+                if (value < 0.55f) return "BROWN";
+                if (sat > 0.55f) return "GINGER";
+                return "LIGHT BROWN";
+            }
+
+            if (degrees < 68f) return value > 0.75f ? "BLONDE" : "DARK BLONDE";
+            if (degrees < 165f) return "GREEN";
+            if (degrees < 200f) return "TEAL";
+            if (degrees < 260f) return "BLUE";
+            if (degrees < 300f) return "PURPLE";
+
+            return "PINK";
+        }
+
         private Color? ColourOf(object entry)
         {
             if (entry == null) return null;
@@ -5672,47 +5743,65 @@ namespace VaultAdmin
         {
             try
             {
-                Animator[] movers = body.GetComponentsInChildren<Animator>(true);
+                // Not Mecanim. The stand-in has no Animator at all -- it is driven by the old
+                // Animation component and the game's own AnimationController on top of it, which
+                // is why every previous attempt here changed nothing: they were winding a clock
+                // that was not in the room.
+                Animation[] reels = body.GetComponentsInChildren<Animation>(true);
 
                 if (!_reportedMovers)
                 {
                     _reportedMovers = true;
-                    ReportMovers(body, movers);
+                    ReportMovers(body, reels);
                 }
 
-                for (int i = 0; i < movers.Length; i++)
+                for (int i = 0; i < reels.Length; i++)
                 {
-                    Animator mover = movers[i];
-                    if (mover == null || mover.runtimeAnimatorController == null) continue;
+                    Animation reel = reels[i];
+                    if (reel == null) continue;
 
-                    // A dweller out of the pool comes with its animator switched off, and skipping
-                    // the ones that were off is why the last attempt at this changed nothing.
-                    if (!mover.enabled) mover.enabled = true;
+                    if (!reel.enabled) reel.enabled = true;
 
-                    // Nothing here is on screen the way Unity means it. The stand-in sits on a
+                    // Nothing here is on screen the way Unity means it: the stand-in sits on a
                     // layer of its own, watched by a disabled camera that is told to render by
-                    // hand, so anything culled by visibility is culled for good.
-                    mover.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                    if (mover.speed <= 0f) mover.speed = 1f;
+                    // hand. Anything culled by visibility is culled for good.
+                    reel.cullingType = AnimationCullingType.AlwaysAnimate;
 
-                    AnimatorStateInfo state = mover.GetCurrentAnimatorStateInfo(0);
-                    float now = state.normalizedTime;
+                    AnimationState playing = NowPlaying(reel);
+
+                    if (playing == null)
+                    {
+                        playing = PickIdle(reel);
+                        if (playing == null) continue;
+
+                        playing.wrapMode = WrapMode.Loop;
+                        reel.Play(playing.name);
+                    }
+
+                    playing.enabled = true;
+                    playing.weight = 1f;
+                    if (playing.speed <= 0f) playing.speed = 1f;
+                    if (playing.wrapMode != WrapMode.Loop) playing.wrapMode = WrapMode.Loop;
+
+                    int who = reel.GetInstanceID();
+                    float now = playing.time;
 
                     float before;
-                    bool seenBefore = _lastBeat.TryGetValue(mover, out before);
-                    _lastBeat[mover] = now;
+                    bool seenBefore = _lastBeat.TryGetValue(who, out before);
 
-                    // The honest test, and the one that needs no theory about why. Every previous
-                    // attempt at this idle was a guess about what drives a dweller, and each was
-                    // wrong in a way that cost a round trip to find out. This asks the only
-                    // question that matters -- did the clock move since the last frame -- and winds
-                    // it on itself when the answer is no. If the engine is already driving this
-                    // animator the branch never runs, so it cannot double the speed.
-                    if (seenBefore && now == before) mover.Update(Time.deltaTime);
+                    // The same honest test as before, now aimed at the thing that is actually
+                    // there: did the clock move since the last frame, and if not, move it. Setting
+                    // the time is only bookkeeping until Sample puts it on the bones.
+                    if (seenBefore && now == before)
+                    {
+                        now += Time.deltaTime;
+                        if (playing.length > 0f && now > playing.length) now %= playing.length;
 
-                    // And a one-shot that has run out goes back to the beginning.
-                    if (!state.loop && now >= 1f && state.fullPathHash != 0)
-                        mover.Play(state.fullPathHash, 0, 0f);
+                        playing.time = now;
+                        reel.Sample();
+                    }
+
+                    _lastBeat[who] = now;
                 }
             }
             catch (Exception e)
@@ -5721,54 +5810,81 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>Whichever clip this component is running, or nothing if it is running none.</summary>
+        private static AnimationState NowPlaying(Animation reel)
+        {
+            foreach (AnimationState state in reel)
+                if (state != null && reel.IsPlaying(state.name)) return state;
+
+            return null;
+        }
+
+        /// <summary>
+        /// The clip to stand about in.
+        ///
+        /// By name first, because a dweller has a great many clips and only some of them are a
+        /// person standing still; the component's own default next, since that is what the game
+        /// would have played; and failing both, the first one there is, on the grounds that a
+        /// figure doing something is better than a figure doing nothing.
+        /// </summary>
+        private static AnimationState PickIdle(Animation reel)
+        {
+            AnimationState first = null;
+            AnimationState fallback = null;
+
+            foreach (AnimationState state in reel)
+            {
+                if (state == null || state.clip == null) continue;
+                if (first == null) first = state;
+
+                if (state.name.IndexOf("idle", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return state;
+
+                if (reel.clip != null && state.clip == reel.clip) fallback = state;
+            }
+
+            return fallback != null ? fallback : first;
+        }
+
         /// <summary>
         /// Writes down what actually animates the stand-in, once.
         ///
-        /// Said plainly because the alternative has been tried. If the figure still stands still
-        /// after this, the log says whether there was ever anything there to drive.
+        /// This is the line that ended four rounds of guessing: it said zero animators and one
+        /// legacy Animation, and every attempt before it had been aimed at Mecanim.
         /// </summary>
-        private static void ReportMovers(GameObject body, Animator[] movers)
+        private static void ReportMovers(GameObject body, Animation[] reels)
         {
             try
             {
                 System.Text.StringBuilder said = new System.Text.StringBuilder();
-                said.Append("The stand-in has ").Append(movers.Length).Append(" animator(s)");
+                said.Append("The stand-in has ").Append(reels.Length).Append(" Animation(s)");
 
-                for (int i = 0; i < movers.Length; i++)
+                for (int i = 0; i < reels.Length; i++)
                 {
-                    Animator mover = movers[i];
-                    if (mover == null) continue;
+                    Animation reel = reels[i];
+                    if (reel == null) continue;
 
-                    said.Append("; [").Append(mover.name).Append("] enabled=").Append(mover.enabled)
-                        .Append(" controller=")
-                        .Append(mover.runtimeAnimatorController == null
-                                ? "none"
-                                : mover.runtimeAnimatorController.name)
-                        .Append(" culling=").Append(mover.cullingMode)
-                        .Append(" speed=").Append(mover.speed)
-                        .Append(" layers=").Append(mover.layerCount);
+                    said.Append("; [").Append(reel.name).Append("] enabled=").Append(reel.enabled)
+                        .Append(" playing=").Append(reel.isPlaying)
+                        .Append(" default=")
+                        .Append(reel.clip == null ? "none" : reel.clip.name)
+                        .Append(" clips:");
+
+                    int shown = 0;
+                    foreach (AnimationState state in reel)
+                    {
+                        if (state == null) continue;
+                        if (++shown > 24) { said.Append(" ..."); break; }
+
+                        said.Append(" ").Append(state.name)
+                            .Append("(").Append(state.length.ToString("0.00")).Append("s")
+                            .Append(reel.IsPlaying(state.name) ? ",playing" : "")
+                            .Append(")");
+                    }
+
+                    if (shown == 0) said.Append(" none");
                 }
 
-                Animation[] legacy = body.GetComponentsInChildren<Animation>(true);
-                said.Append(". Legacy Animation components: ").Append(legacy.Length);
-
-                MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
-                said.Append(". Behaviours with 'anim' in the name:");
-
-                bool any = false;
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    if (parts[i] == null) continue;
-
-                    string kind = parts[i].GetType().Name;
-                    if (kind.IndexOf("anim", StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-                    said.Append(" ").Append(kind)
-                        .Append("(enabled=").Append(parts[i].enabled).Append(")");
-                    any = true;
-                }
-
-                if (!any) said.Append(" none");
                 Log.LogInfo(said.ToString());
             }
             catch { }
