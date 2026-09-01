@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.2";
+        public const string PluginVersion = "1.3.3";
 
         internal static ManualLogSource Log;
 
@@ -5667,6 +5667,10 @@ namespace VaultAdmin
         {
             if (who == null) return;
 
+            // This method changes what the dweller is made of, so what was drawn of it is stale by
+            // definition.
+            _texturedOnce = false;
+
             // Emptied first. GenerateRandomCustomization fills a dweller in, and a slot that is
             // already filled is not a slot it has to fill -- which is how the created dweller's
             // hair and face survived being randomised and went on standing there after the bench
@@ -5926,6 +5930,11 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Could not put the stand-in away: " + e.Message);
             }
+
+            // The next figure needs its picture composed from scratch, whether it is a new one
+            // or the same one wearing something else. Without this the bench was dressed anew and
+            // then drawn as it used to be.
+            _texturedOnce = false;
 
             // A new stand-in is a new set of animators, and the old readings belong to figures
             // that no longer exist.
