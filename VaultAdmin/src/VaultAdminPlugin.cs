@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.59.0";
+        public const string PluginVersion = "0.60.0";
 
         internal static ManualLogSource Log;
 
@@ -217,6 +217,7 @@ namespace VaultAdmin
         private static ConfigEntry<string> ToggleKey;
         private static ConfigEntry<bool> WriteIconReport;
         private static ConfigEntry<bool> PreviewWholeSheet;
+        private static ConfigEntry<bool> PreviewCopyGame;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
@@ -425,7 +426,12 @@ namespace VaultAdmin
                 "nothing and binds no key: the game behaves exactly as it does without the plugin. " +
                 "This is a debug tool, so it stays out of the way until it is asked for.");
 
-            PreviewWholeSheet = Config.Bind("Diagnostics", "PreviewWholeSheet", true,
+            PreviewCopyGame = Config.Bind("Diagnostics", "PreviewCopyGame", true,
+                "Takes the shape of the game's own dweller picture — its crop and proportions — for " +
+                "the constructor's figure, rather than choosing one here. Off, the settings below " +
+                "and above are used instead.");
+
+            PreviewWholeSheet = Config.Bind("Diagnostics", "PreviewWholeSheet", false,
                 "Draws the whole of the dweller's composed picture in the constructor rather than " +
                 "the corner of it the game's own call selects. On, the figure is whole; off, it is " +
                 "cropped the way the game crops it for its own panels.");
@@ -4070,6 +4076,8 @@ namespace VaultAdmin
                 // composition. What was missing was the part of it being looked at: SetUITex leaves
                 // the widget sampling a corner of the sheet, and that corner is the head. The whole
                 // sheet is shown instead, which is where the rest of the dweller was all along.
+                // The whole sheet is the raw atlas — the dweller in pieces — so this is off by
+                // default now. It stays because seeing the atlas is what proved that.
                 if (PreviewWholeSheet.Value)
                 {
                     _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
@@ -4078,7 +4086,12 @@ namespace VaultAdmin
 
                 FitPreview();
 
-                if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
+                if (!_reportedPieces)
+                {
+                    _reportedPieces = true;
+                    ReportPieces();
+                    CopyGameGeometry();
+                }
             }
             catch (Exception e)
             {
@@ -4142,6 +4155,68 @@ namespace VaultAdmin
         /// stops the theorising: the material's own texture properties say what is bound and what is
         /// empty, and the dweller's fields say which pieces it thinks it has.
         /// </summary>
+        /// <summary>
+        /// Measures the game's own dweller picture and takes its shape.
+        ///
+        /// The character window does nothing but call SetUITex — the same call, on the same
+        /// material — and it shows a whole person. So the difference is in the widget, not in the
+        /// drawing, and the only honest way to find it is to go and look at theirs. Whatever it
+        /// says wins over anything guessed at here.
+        /// </summary>
+        private void CopyGameGeometry()
+        {
+            try
+            {
+                DwellerInfoWindow[] windows = Resources.FindObjectsOfTypeAll<DwellerInfoWindow>();
+                if (windows.Length == 0)
+                {
+                    Log.LogInfo("No dweller info window in the scene to measure.");
+                    return;
+                }
+
+                for (int i = 0; i < windows.Length; i++)
+                {
+                    UITexture theirs = ReadObject(windows[i], "m_dwellerPicture") as UITexture;
+                    if (theirs == null) continue;
+
+                    Log.LogInfo("The game's own dweller picture: " + theirs.width + "x" +
+                                theirs.height + " uv=" + theirs.uvRect +
+                                " pivot=" + theirs.pivot +
+                                " aspect=" + theirs.keepAspectRatio +
+                                " type=" + theirs.type);
+
+                    if (_previewPicture != null && PreviewCopyGame.Value)
+                    {
+                        _previewPicture.uvRect = theirs.uvRect;
+                        _previewPicture.type = theirs.type;
+                        _previewPicture.keepAspectRatio = theirs.keepAspectRatio;
+
+                        float shape = theirs.height > 0 ? (float)theirs.width / theirs.height : 0.5f;
+                        _previewPicture.height = PreviewHeight;
+                        _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(PreviewHeight * shape));
+
+                        if (_previewHeadgear != null)
+                        {
+                            _previewHeadgear.uvRect = theirs.uvRect;
+                            _previewHeadgear.width = _previewPicture.width;
+                            _previewHeadgear.height = _previewPicture.height;
+                        }
+
+                        Log.LogInfo("  copied onto the preview: " + _previewPicture.width + "x" +
+                                    _previewPicture.height + " uv=" + _previewPicture.uvRect);
+                    }
+
+                    return;
+                }
+
+                Log.LogInfo("The dweller info window has no picture widget to measure.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not measure the game's dweller picture: " + e.Message);
+            }
+        }
+
         private void ReportPieces()
         {
             if (_previewDweller == null) return;
@@ -4384,9 +4459,13 @@ namespace VaultAdmin
             Choice captured = choice;
             int arrowsY = y - height / 2 + 18;
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", textLeft + 18, arrowsY, 30, 26,
+            // Centred in the space they have, which is the space beside the picture and not the
+            // whole card. Bunched against its left edge they read as belonging to nothing.
+            int arrowsCentre = textLeft + textWidth / 2 + 6;
+
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsCentre - 22, arrowsY, 30, 26,
                        false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", textLeft + 54, arrowsY, 30, 26,
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsCentre + 22, arrowsY, 30, 26,
                        false, delegate { captured.Step(1); });
 
             choice.Show();
