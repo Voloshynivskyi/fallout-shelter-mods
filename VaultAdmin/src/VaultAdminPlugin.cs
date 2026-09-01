@@ -149,6 +149,12 @@ namespace VaultAdmin
             return Frame(width, height, 10, 3, Ink, Bright);
         }
 
+        /// <summary>A flat square, meant to be tinted by the widget that draws it.</summary>
+        public static Texture2D Solid()
+        {
+            return Frame(8, 8, 0, 0, Color.white, Color.white);
+        }
+
         /// <summary>
         /// The recess an icon sits in.
         ///
@@ -201,7 +207,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.43.0";
+        public const string PluginVersion = "0.46.0";
 
         internal static ManualLogSource Log;
 
@@ -1122,6 +1128,7 @@ namespace VaultAdmin
 
         private GameObject _nguiWindow;
         private UITexture _frame;      // the window's own backing, and the proof it is being drawn
+        private UILabel _statusLabel;
         private int _drawCheckFrames;
         private bool _drawChecked;
         private bool _nguiDrawing;     // false until the frame is seen with a draw call
@@ -1252,6 +1259,14 @@ namespace VaultAdmin
 
                 // On the bottom edge, as the title is on the top one: outlined rather than solid,
                 // smaller than it was, and lettered large enough to read as the way out.
+                // Everything this panel does used to report only to a log file. One line above the
+                // way out says what the last press actually did, which is the difference between
+                // using the panel and guessing at it.
+                _statusLabel = MakeLabel(_nguiWindow.transform, "Status", "",
+                                         0, -_windowHeight / 2 + 52, _windowWidth - 56, 26,
+                                         Skin.Bright, 4);
+                _statusLabel.alignment = NGUIText.Alignment.Center;
+
                 GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
                                               0, -_windowHeight / 2 + 6, 148, 48, true, TogglePanel);
 
@@ -2162,7 +2177,7 @@ namespace VaultAdmin
 
         // Below the title and the tab bar; above the close button.
         private int ContentTop() { return _windowHeight / 2 - 86; }
-        private int ContentBottom() { return -_windowHeight / 2 + 70; }
+        private int ContentBottom() { return -_windowHeight / 2 + 84; }
 
         // ---- the items and pets page ----
 
@@ -3044,6 +3059,12 @@ namespace VaultAdmin
         {
             public string Caption;
             public UILabel Display;
+
+            // Some choices are better looked at than read: a colour is a colour, and an outfit is
+            // the picture of it.
+            public UITexture Swatch;
+            public UISprite Picture;
+            public Action OnChange;
             public readonly List<object> Options = new List<object>();
             public readonly List<string> Labels = new List<string>();
             public int Index;
@@ -3063,9 +3084,19 @@ namespace VaultAdmin
 
             public void Show()
             {
-                if (Display == null) return;
+                if (Display != null)
+                    Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
 
-                Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
+                object chosen = Selected;
+
+                if (Swatch != null)
+                {
+                    bool colour = chosen is Color;
+                    Swatch.gameObject.SetActive(colour);
+                    if (colour) Swatch.color = (Color)chosen;
+                }
+
+                if (OnChange != null) OnChange();
             }
 
             /// <summary>Starts the list again, with 'as the game rolls it' in front.</summary>
@@ -3093,7 +3124,7 @@ namespace VaultAdmin
                   Skin.Row(width, RowHeight), 1);
 
             MakeLeftLabel(parent, "ChoiceName_" + choice.Caption, choice.Caption,
-                          -width / 2 + 14, y, 150, RowHeight, Skin.Bright, 3);
+                          -width / 2 + 14, y, 130, RowHeight, Skin.Bright, 3);
 
             Choice captured = choice;
             MakeButton(parent, "ChoiceBack_" + choice.Caption, "<", width / 2 - 178, y, 40, 32,
@@ -3104,6 +3135,24 @@ namespace VaultAdmin
 
             MakeButton(parent, "ChoiceFwd_" + choice.Caption, ">", width / 2 - 38, y, 40, 32,
                        false, delegate { captured.Step(1); });
+
+            // A place for the thing itself, left of the words: a colour swatch, or the item's own
+            // picture. Naming a shade 'shade 4' told nobody anything.
+            int showX = -width / 2 + 158;
+
+            choice.Swatch = Plate(parent, "ChoiceSwatch_" + choice.Caption, showX, y, 30, 26,
+                                  Skin.Solid(), 3);
+            choice.Swatch.gameObject.SetActive(false);
+
+            GameObject pictureGo = new GameObject("ChoicePic_" + choice.Caption);
+            pictureGo.layer = parent.gameObject.layer;
+            pictureGo.transform.SetParent(parent, false);
+            pictureGo.transform.localPosition = new Vector3(showX, y, 0f);
+            pictureGo.transform.localScale = Vector3.one;
+
+            choice.Picture = pictureGo.AddComponent<UISprite>();
+            choice.Picture.depth = 3;
+            choice.Picture.gameObject.SetActive(false);
 
             _cursorY -= RowHeight + RowGap;
             choice.Show();
@@ -3378,6 +3427,22 @@ namespace VaultAdmin
                         (_skin.Options.Count - 1) + " skin.");
         }
 
+        /// <summary>Puts the chosen item's own picture in the row that chose it.</summary>
+        private void ShowChoicePicture(Choice choice)
+        {
+            if (choice.Picture == null) return;
+
+            CatalogueEntry entry = choice.Selected as CatalogueEntry;
+            if (entry == null)
+            {
+                choice.Picture.gameObject.SetActive(false);
+                return;
+            }
+
+            choice.Picture.gameObject.SetActive(true);
+            ShowIcon(choice.Picture, entry);
+        }
+
         private string LookLabel(object entry)
         {
             string title = Localised(ReadMember(entry, "TitleTextId"));
@@ -3554,6 +3619,11 @@ namespace VaultAdmin
 
             AddChoiceRow(parent, width, _outfit);
             AddChoiceRow(parent, width, _weapon);
+
+            _outfit.OnChange = delegate { ShowChoicePicture(_outfit); };
+            _weapon.OnChange = delegate { ShowChoicePicture(_weapon); };
+            _outfit.Show();
+            _weapon.Show();
 
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
@@ -3879,6 +3949,19 @@ namespace VaultAdmin
             {
                 Log.LogWarning("The drawing check itself failed: " + e.Message);
             }
+        }
+
+        /// <summary>Says what just happened, on screen and in the log together.</summary>
+        private void Say(string message)
+        {
+            Log.LogInfo(message);
+            if (_statusLabel != null) _statusLabel.text = message;
+        }
+
+        private void Trouble(string message)
+        {
+            Log.LogWarning(message);
+            if (_statusLabel != null) _statusLabel.text = message;
         }
 
         /// <summary>
@@ -4319,6 +4402,30 @@ namespace VaultAdmin
                                     "  name=" + entry.Name + "  sprite=" + entry.Sprite);
                 }
 
+                // What the constructor has to offer, per gender. A category that comes back empty
+                // is a filter that is wrong, and the only way to see that without launching twice
+                // is to write it down the first time.
+                text.AppendLine();
+                text.AppendLine("== appearance ==");
+
+                foreach (EGender gender in Genders)
+                {
+                    _genderIndex = Array.IndexOf(Genders, gender);
+                    if (_genderIndex < 0) _genderIndex = 0;
+
+                    RebuildLookOptions();
+
+                    text.AppendLine("  " + gender);
+                    AppendChoice(text, _hair);
+                    AppendChoice(text, _face);
+                    AppendChoice(text, _hairColour);
+                    AppendChoice(text, _helmet);
+                    AppendChoice(text, _skin);
+                }
+
+                _genderIndex = 0;
+                RebuildLookOptions();
+
                 text.AppendLine();
                 text.AppendLine("== atlases ==");
 
@@ -4343,6 +4450,17 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Could not write the icon report: " + e.Message);
             }
+        }
+
+        private static void AppendChoice(System.Text.StringBuilder text, Choice choice)
+        {
+            int count = choice.Options.Count - 1;      // the first is 'leave it alone'
+            text.AppendLine("      " + choice.Caption + ": " + count);
+
+            for (int i = 1; i < choice.Labels.Count && i <= 8; i++)
+                text.AppendLine("          " + choice.Labels[i]);
+
+            if (count > 8) text.AppendLine("          ... and " + (count - 8) + " more");
         }
 
         private void BuildCatalogue()
@@ -4964,7 +5082,7 @@ namespace VaultAdmin
 
                 if (vault.Inventory.EmptySpace() <= 0)
                 {
-                    Log.LogWarning("The inventory is full; " + entry.Name + " was not granted.");
+                    Trouble("The inventory is full; " + entry.Name + " was not granted.");
                     return;
                 }
 
@@ -4997,8 +5115,10 @@ namespace VaultAdmin
                 item.ExtraData = unique as ItemExtraData;
                 vault.Inventory.AddItem(item, false, false);
 
-                Log.LogInfo("Granted pet " + entry.Name + " ('" + entry.PetId + "') with bonus " +
-                            BonusEffects[_petBonusIndex] + " " + _petBonusValue + ".");
+                Say(customise
+                    ? "Created " + (string.IsNullOrEmpty(_petName) ? entry.Name : _petName) +
+                      ", a " + entry.Name + "."
+                    : "Granted " + entry.Name + ".");
             }
             catch (Exception e)
             {
@@ -5079,11 +5199,11 @@ namespace VaultAdmin
                 DwellerItem item = new DwellerItem(entry.Type, entry.Id);
                 vault.Inventory.AddItem(item, false, false);
 
-                Log.LogInfo("Granted " + entry.Name + " (" + entry.Type + " '" + entry.Id + "').");
+                Say("Granted " + entry.Name + ".");
             }
             catch (Exception e)
             {
-                Log.LogWarning("Granting " + entry.Name + " failed: " + e.Message);
+                Trouble("Could not grant " + entry.Name + ": " + e.Message);
             }
         }
 
@@ -5145,11 +5265,11 @@ namespace VaultAdmin
                 // count is kept here, where it means what it says.
                 for (int i = 0; i < quantity; i++) vault.AddLunchBox(type);
 
-                Log.LogInfo("Granted " + quantity + " " + type + " box(es).");
+                Say("Granted " + quantity + " " + type + " box" + (quantity == 1 ? "" : "es") + ".");
             }
             catch (Exception e)
             {
-                Log.LogWarning("Granting " + quantity + " " + type + " box(es) failed: " + e.Message);
+                Trouble("Could not grant that box: " + e.Message);
             }
         }
 
@@ -5225,6 +5345,60 @@ namespace VaultAdmin
             GUILayout.EndScrollView();
         }
 
+        /// <summary>
+        /// What a dweller ended up as, read off the dweller itself.
+        ///
+        /// Every piece here is one that was just set through the game's own methods; naming them
+        /// back turns a silent failure into a line that says which part did not take.
+        /// </summary>
+        private string Describe(Dweller dweller)
+        {
+            string line = (dweller.Name + " " + dweller.LastName).Trim();
+            if (line.Length == 0) line = "a dweller";
+
+            try
+            {
+                line += " (" + Rarities[_rarityIndex] + ", level " + LevelOf(dweller) + ")";
+
+                string hair = PieceName(ReadObject(dweller, "m_hair"));
+                if (!string.IsNullOrEmpty(hair)) line += ", hair " + hair;
+
+                string face = PieceName(ReadObject(dweller, "m_face"));
+                if (!string.IsNullOrEmpty(face)) line += ", face " + face;
+
+                DwellerItem worn = dweller.EquippedOutfit;
+                if (worn != null && !string.IsNullOrEmpty(worn.Id)) line += ", wearing " + worn.Id;
+
+                DwellerItem held = dweller.EquippedWeapon;
+                if (held != null && !string.IsNullOrEmpty(held.Id)) line += ", holding " + held.Id;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("describe", "Could not read the dweller back: " + e.Message);
+            }
+
+            return line;
+        }
+
+        private static string PieceName(object piece)
+        {
+            UnityEngine.Object asset = piece as UnityEngine.Object;
+            return asset == null ? null : asset.name;
+        }
+
+        private static int LevelOf(Dweller dweller)
+        {
+            try
+            {
+                object experience = ReadObject(dweller, "Experience");
+                object level = experience != null ? ReadObject(experience, "CurrentLevel") : null;
+                if (level != null) return Convert.ToInt32(level);
+            }
+            catch { }
+
+            return 1;
+        }
+
         private void CreateDweller() { CreateDweller(true); }
 
         /// <summary>
@@ -5250,7 +5424,7 @@ namespace VaultAdmin
 
                 if (manager.VaultIsWithMaxPopulation)
                 {
-                    Log.LogWarning("The vault is at its population limit; no dweller was created.");
+                    Trouble("The vault is full; no dweller was created.");
                     return;
                 }
 
@@ -5266,7 +5440,7 @@ namespace VaultAdmin
 
                 if (dweller == null)
                 {
-                    Log.LogWarning("The game did not create a dweller; nothing was added.");
+                    Trouble("The game refused to create a dweller.");
                     return;
                 }
 
@@ -5286,12 +5460,14 @@ namespace VaultAdmin
 
                 _created.Add(dweller.GetInstanceID());
 
-                Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
-                            " (" + Rarities[_rarityIndex] + ", level " + level + ") — waiting at the door.");
+                // Read back rather than assume. Applying a look is a chain of reflection calls into
+                // somebody else's object graph, and the only honest way to know it took is to ask
+                // the dweller afterwards what it is actually wearing.
+                Say("Created " + Describe(dweller) + ".");
             }
             catch (Exception e)
             {
-                Log.LogWarning("Creating a dweller failed: " + e.Message);
+                Trouble("Creating a dweller failed: " + e.Message);
             }
         }
 
@@ -5670,9 +5846,11 @@ namespace VaultAdmin
 
                 if (dweller == null)
                 {
-                    Log.LogWarning("The game did not create " + label + "; nothing was added.");
+                    Trouble("The game refused to create " + label + ".");
                     return;
                 }
+
+                Say("Created " + label + " — waiting at the vault door.");
 
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
