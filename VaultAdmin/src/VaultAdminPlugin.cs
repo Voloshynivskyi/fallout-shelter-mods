@@ -30,8 +30,19 @@ namespace VaultAdmin
         public static readonly Color Ink = new Color32(0x08, 0x51, 0x08, 0xFF);      // 085108
         public static readonly Color Rim = new Color32(0x08, 0x60, 0x0A, 0xFF);      // 08600A
 
-        // A window is a dimmed plate, not an opaque one: the vault shows through the game's own.
-        public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xC8);
+        // The same three greens at different weights, and nothing else. The game's own windows
+        // are a dark green wash over the vault with a bright edge; a card inside one is the same
+        // wash again, lighter, so the vault still shows through it; a recess is the dark green
+        // solid, which is what makes it read as a hole rather than a panel.
+        public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xD2);   // the window
+        public static readonly Color Card = new Color32(0x08, 0x51, 0x08, 0x6E);    // a row on it
+        public static readonly Color Hole = new Color32(0x08, 0x51, 0x08, 0xFF);    // a recess
+
+        // Border weights, so every edge in the panel is one of three thicknesses rather than
+        // whatever each piece of code felt like.
+        public const int EdgeWindow = 4;
+        public const int EdgeButton = 3;
+        public const int EdgeCard = 2;
         public static readonly Color Clear = new Color(0f, 0f, 0f, 0f);
 
         private static readonly Dictionary<string, Texture2D> _cache = new Dictionary<string, Texture2D>();
@@ -127,19 +138,19 @@ namespace VaultAdmin
         /// <summary>The window plate: bright outline, dimmed interior.</summary>
         public static Texture2D Window(int width, int height)
         {
-            return Frame(width, height, 18, 3, Bright, Plate, Ink, 2);
+            return Frame(width, height, 18, EdgeWindow, Bright, Plate, Ink, EdgeCard);
         }
 
         /// <summary>An ordinary button: outlined, nothing behind it. Frequent, reversible actions.</summary>
         public static Texture2D Button(int width, int height)
         {
-            return Frame(width, height, 8, 3, Bright, Clear);
+            return Frame(width, height, 8, EdgeButton, Bright, Card);
         }
 
         /// <summary>An emphasis button: solid, with dark text on it. Close, save, confirm.</summary>
         public static Texture2D SolidButton(int width, int height)
         {
-            return Frame(width, height, 8, 3, Bright, Bright);
+            return Frame(width, height, 8, EdgeButton, Bright, Bright);
         }
 
         /// <summary>
@@ -148,7 +159,7 @@ namespace VaultAdmin
         /// </summary>
         public static Texture2D SolidOutlined(int width, int height)
         {
-            return Frame(width, height, 10, 3, Ink, Bright);
+            return Frame(width, height, 10, EdgeButton, Ink, Bright);
         }
 
         /// <summary>A flat square, meant to be tinted by the widget that draws it.</summary>
@@ -165,19 +176,19 @@ namespace VaultAdmin
         /// </summary>
         public static Texture2D Well(int size)
         {
-            return Frame(size, size, 6, 2, Rim, Ink);
+            return Frame(size, size, 6, EdgeCard, Rim, Hole);
         }
 
         /// <summary>A place to type: outlined bright, sunk dark, so it reads as a field.</summary>
         public static Texture2D Field(int width, int height)
         {
-            return Frame(width, height, 6, 2, Bright, Ink);
+            return Frame(width, height, 6, EdgeCard, Bright, Hole);
         }
 
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
-            return Frame(width, height, 6, 2, Rim, Plate);
+            return Frame(width, height, 6, EdgeCard, Rim, Card);
         }
 
         /// <summary>A section header: solid, inverted against the rows beneath it.</summary>
@@ -209,7 +220,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.91.0";
+        public const string PluginVersion = "0.93.0";
 
         internal static ManualLogSource Log;
 
@@ -1263,6 +1274,15 @@ namespace VaultAdmin
         private object _font;            // UIFont or Font, whichever the game's labels use
         private int _fontSize = 28;
 
+        // One ladder of sizes for the whole panel. Every label had been given a multiplier of its
+        // own — nought point seven here, nought point seven-four there, a bare sixteen somewhere
+        // else — and a dozen sizes that are nearly the same read as carelessness rather than as
+        // hierarchy.
+        private int TextTitle { get { return Mathf.RoundToInt(_fontSize * 1.2f); } }
+        private int TextHeading { get { return _fontSize; } }
+        private int TextBody { get { return Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.82f)); } }
+        private int TextSmall { get { return Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f)); } }
+
         private const int WindowDepth = 5000;   // above everything the game draws
 
         // Measured from the interface rather than fixed, so the panel keeps its proportions on any
@@ -1378,7 +1398,7 @@ namespace VaultAdmin
                 UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
                                           0, _windowHeight / 2 - 6, _windowWidth - 60, 52,
                                           Skin.Bright, 4);
-                title.fontSize = Mathf.RoundToInt(_fontSize * 1.2f);
+                title.fontSize = TextTitle;
 
                 // Outlined, so the frame it straddles reads as behind it rather than through it.
                 title.effectStyle = UILabel.Effect.Outline;
@@ -1400,7 +1420,7 @@ namespace VaultAdmin
                     closeFace.mainTexture = Skin.SolidOutlined(closeFace.width, closeFace.height);
 
                 UILabel closeText = close.GetComponentInChildren<UILabel>();
-                if (closeText != null) closeText.fontSize = _fontSize;
+                if (closeText != null) closeText.fontSize = TextHeading;
 
                 _nguiWindow.SetActive(false);
                 Log.LogInfo("Built the panel window under " + root.name + ".");
@@ -1498,7 +1518,7 @@ namespace VaultAdmin
             go.transform.localScale = Vector3.one;
 
             UITexture track = Plate(go.transform, "Track", 0, 0, 10, viewHeight,
-                                    Skin.Frame(10, viewHeight, 5, 1, Skin.Rim, Skin.Plate), 2);
+                                    Skin.Frame(10, viewHeight, 5, Skin.EdgeCard, Skin.Rim, Skin.Hole), 2);
 
             // The scroll view resizes this one to say how much of the list is in view, so its
             // texture has to survive being stretched: a nearly square source with a small radius
@@ -3393,7 +3413,7 @@ namespace VaultAdmin
             UILabel caption = MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
                                             left + 12, y + height / 2 - 13, width - 24, 16,
                                             Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
+            caption.fontSize = TextSmall;
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
             caption.maxLineCount = 1;
             choice.Title = caption;
@@ -3423,7 +3443,7 @@ namespace VaultAdmin
 
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
                                            centreX, lower, span, 22, Skin.Bright, 3);
-                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.8f));
+                choice.Display.fontSize = TextBody;
                 choice.Display.maxLineCount = 1;
                 choice.SwatchIsTheAnswer = true;
             }
@@ -3431,7 +3451,7 @@ namespace VaultAdmin
             {
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
                                            centreX, lower, span, 22, Skin.Bright, 3);
-                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.8f));
+                choice.Display.fontSize = TextBody;
                 choice.Display.maxLineCount = 1;
             }
 
@@ -3621,7 +3641,7 @@ namespace VaultAdmin
 
             UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
                                          left, middle - 12, textWidth, 20, Skin.Bright, 3);
-            note.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            note.fontSize = TextSmall;
             note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             note.maxLineCount = 1;
 
@@ -3850,7 +3870,7 @@ namespace VaultAdmin
 
             UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
                                          left, middle - 12, textWidth, 20, Skin.Bright, 3);
-            note.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            note.fontSize = TextSmall;
             note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             note.maxLineCount = 1;
 
@@ -4839,7 +4859,7 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
 
-            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 62);
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 58);
         }
 
         private string LookLabel(object entry)
@@ -5344,6 +5364,8 @@ namespace VaultAdmin
                     _framedAt = new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
                 }
 
+                KeepItMoving(body);
+
                 _previewCamera.transform.position = _framedAt;
                 _previewCamera.orthographicSize = _framedSize;
 
@@ -5429,6 +5451,37 @@ namespace VaultAdmin
             catch { }
 
             return false;
+        }
+
+        /// <summary>
+        /// Keeps the idle playing instead of letting it stop on its last frame.
+        ///
+        /// A dweller standing in the vault is driven by the state machine that gives it something to
+        /// do. This one has nothing to do and nobody driving it, so its animation ran once and
+        /// stopped — a second of life and then a photograph. Rewinding the state it is in when it
+        /// reaches the end is enough to keep it going.
+        /// </summary>
+        private static void KeepItMoving(GameObject body)
+        {
+            try
+            {
+                Animator[] movers = body.GetComponentsInChildren<Animator>(true);
+
+                for (int i = 0; i < movers.Length; i++)
+                {
+                    Animator mover = movers[i];
+                    if (mover == null || !mover.isActiveAndEnabled || mover.runtimeAnimatorController == null)
+                        continue;
+
+                    mover.speed = 1f;
+
+                    AnimatorStateInfo state = mover.GetCurrentAnimatorStateInfo(0);
+                    if (state.loop || state.normalizedTime < 1f) continue;
+
+                    mover.Play(state.fullPathHash, 0, 0f);
+                }
+            }
+            catch { }
         }
 
         private static void SetLayer(Transform branch, int layer)
@@ -5763,7 +5816,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 100;
+            const int slotHeight = 112;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -5782,83 +5835,74 @@ namespace VaultAdmin
         /// An item is recognised by its picture long before its name is read, and the row it used to
         /// sit in gave it twenty pixels to be recognised in.
         /// </summary>
+        /// <summary>
+        /// One thing the dweller carries, laid out the way the game lays out a card.
+        ///
+        /// What it is and where you are in the list go in the top left, the way to change it goes
+        /// in the top right, and the rest of the card belongs to the thing itself: its picture in a
+        /// recess down the left, and three lines beside it that all start in the same place. The
+        /// recess stops short of the bottom edge, because a card with its contents pressed against
+        /// the frame reads as one that ran out of room.
+        /// </summary>
         private void AddGearSlot(Transform parent, Choice choice, int centreX, int y,
                                  int width, int height)
         {
-            const int icon = 44;
-
             Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
-            // Read down: what this slot is and how to change it along the top, the picture and
-            // the name in the middle, and what the thing does along the bottom in the full width of
-            // the card. Squeezed in beside the arrows, that last line had to shrink to fit and
-            // became the smallest thing on a card it half explains.
             int left = centreX - width / 2;
-            int iconX = left + icon / 2 + 10;
-
-            int textLeft = iconX + icon / 2 + 12;
-            int top = y + height / 2 - 13;
-            int textRight = centreX + width / 2 - 10;
+            int right = centreX + width / 2;
+            int top = y + height / 2 - 15;
 
             Choice captured = choice;
-            int arrowsRight = centreX + width / 2 - 16;
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsRight - 26, top, 22, 20,
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", right - 52, top, 24, 22,
                        false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsRight, top, 22, 20,
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", right - 22, top, 24, 22,
                        false, delegate { captured.Step(1); });
 
-            // The caption used to start at the card's edge while the three lines beneath it began
-            // past the picture, so nothing lined up with anything.
-            int lineStart = left + 16 + 70;
-
             UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                            lineStart, top, width - 74 - 62, 14, Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.78f));
-            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+                                            left + 12, top, width - 78, 18, Skin.Bright, 3);
+            caption.fontSize = TextSmall;
+            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.85f);
             caption.maxLineCount = 1;
             choice.Title = caption;
 
-            // The picture takes the whole height under the caption; the three lines beside it are
-            // the name, what it does, and how rare it is — each on its own line at its own fixed
-            // size, so nothing shrinks to fit anything else.
-            // The recess was three-quarters empty: a box of seventy-four holding a picture of
-            // forty-four. The box came in and the picture went up to meet it.
-            int well = 70;
-            int middle = y - 12;
+            // The recess sits under the caption row and leaves the bottom of the card clear.
+            int well = height - 46;
+            int middle = y - 8;
 
-            Plate(parent, "SlotWell_" + choice.Caption, left + 10 + well / 2, middle, well, well,
+            Plate(parent, "SlotWell_" + choice.Caption, left + 12 + well / 2, middle, well, well,
                   Skin.Well(well), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(left + 10 + well / 2, middle, 0f);
+            pictureGo.transform.localPosition = new Vector3(left + 12 + well / 2, middle, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
-            int lineLeft = lineStart;
-            int lineWidth = Mathf.Max(48, textRight - lineLeft);
+            int lineLeft = left + 22 + well;
+            int lineWidth = Mathf.Max(48, right - 10 - lineLeft);
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           lineLeft, middle + 22, lineWidth, 22, Skin.Bright, 3);
-            choice.Display.fontSize = 16;
+                                           lineLeft, middle + 20, lineWidth, 22, Skin.Bright, 3);
+            choice.Display.fontSize = TextBody;
             choice.Display.maxLineCount = 1;
 
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
                                            lineLeft, middle, lineWidth, 22, Skin.Bright, 3);
-            effect.fontSize = 15;
+            effect.fontSize = TextBody;
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
 
             UILabel grade = MakeLeftLabel(parent, "SlotRarity_" + choice.Caption, "",
-                                          lineLeft, middle - 22, lineWidth, 22, Skin.Bright, 3);
-            grade.fontSize = 14;
+                                          lineLeft, middle - 20, lineWidth, 22, Skin.Bright, 3);
+            grade.fontSize = TextSmall;
             grade.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
             grade.maxLineCount = 1;
             choice.Grade = grade;
@@ -5965,7 +6009,7 @@ namespace VaultAdmin
 
             UILabel plus = MakeLabel(make.transform, "Plus", "+", width / 2 - 30, 0, 30, 40,
                                      Skin.Ink, 6);
-            plus.fontSize = Mathf.RoundToInt(_fontSize * 1.4f);
+            plus.fontSize = TextTitle;
             _cursorY -= 44 + RowGap;
         }
 

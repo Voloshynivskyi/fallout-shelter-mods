@@ -56,6 +56,7 @@ $refs = @(
     (Join-Path $managed "UnityEngine.ImageConversionModule.dll"),  # PNG -> Texture2D for the button icon
     (Join-Path $managed "UnityEngine.TextRenderingModule.dll"),   # Font, for borrowing the game's
     (Join-Path $managed "UnityEngine.PhysicsModule.dll")          # BoxCollider: NGUI routes clicks through colliders
+    (Join-Path $managed "UnityEngine.AnimationModule.dll")        # Animator: the stand-in has to keep moving
 )
 foreach ($r in $refs) { if (-not (Test-Path $r)) { throw "Missing reference: $r" } }
 $refArgs = $refs | ForEach-Object { "/reference:$_" }
