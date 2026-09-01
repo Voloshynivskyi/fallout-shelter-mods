@@ -207,7 +207,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.46.0";
+        public const string PluginVersion = "0.48.0";
 
         internal static ManualLogSource Log;
 
@@ -299,7 +299,69 @@ namespace VaultAdmin
             public int Power;        // the best its bonus can do, for ordering
         }
 
+        // Every record in the catalogue, one per animal per grade.
         private List<PetEntry> _pets;
+
+        /// <summary>
+        /// One animal, with every version of it the game keeps.
+        ///
+        /// The catalogue holds a hundred and thirty records but nothing like that many animals: the
+        /// same creature is filed once per rarity, with the same name, the same breed and the same
+        /// picture, differing only in how strong its bonus is. Listing all of them was a list that
+        /// lied about how much was in it.
+        /// </summary>
+        private sealed class PetGroup
+        {
+            public string Name;
+            public object Breed;
+            public readonly List<PetEntry> Variants = new List<PetEntry>();
+
+            public PetEntry Best
+            {
+                get
+                {
+                    PetEntry best = null;
+                    for (int i = 0; i < Variants.Count; i++)
+                        if (best == null || Variants[i].Power > best.Power) best = Variants[i];
+                    return best;
+                }
+            }
+        }
+
+        private List<PetGroup> _petGroups;
+
+        /// <summary>Collects the catalogue into one entry per animal.</summary>
+        private void GroupPets()
+        {
+            _petGroups = new List<PetGroup>();
+            if (_pets == null) return;
+
+            Dictionary<string, PetGroup> byKind = new Dictionary<string, PetGroup>();
+
+            for (int i = 0; i < _pets.Count; i++)
+            {
+                PetEntry pet = _pets[i];
+
+                // Name and breed together: the same breed carries several different animals, and
+                // the same animal is filed once per rarity.
+                string key = pet.Name + "|" + (pet.Detail == null ? "" : pet.Detail);
+
+                PetGroup group;
+                if (!byKind.TryGetValue(key, out group))
+                {
+                    group = new PetGroup();
+                    group.Name = pet.Name;
+                    group.Breed = pet.PetType;
+                    byKind[key] = group;
+                    _petGroups.Add(group);
+                }
+
+                group.Variants.Add(pet);
+            }
+
+            Log.LogInfo("The pet catalogue holds " + _pets.Count + " records, which are " +
+                        _petGroups.Count + " animals.");
+        }
         private Vector2 _petScroll;
         private string _petName = "";
         private string _petBonusValue = "10";
@@ -2550,13 +2612,15 @@ namespace VaultAdmin
             {
                 PreloadPetArt();
                 if (_pets == null) BuildPetCatalogue();
-                if (_pets != null)
+                if (_petGroups == null) GroupPets();
+
+                if (_petGroups != null)
                 {
-                    for (int i = 0; i < _pets.Count; i++)
+                    for (int i = 0; i < _petGroups.Count; i++)
                     {
                         if (filter.Length > 0 &&
-                            _pets[i].Name.ToLower().IndexOf(filter) < 0) continue;
-                        _shown.Add(_pets[i]);
+                            _petGroups[i].Name.ToLower().IndexOf(filter) < 0) continue;
+                        _shown.Add(_petGroups[i]);
                     }
                 }
             }
@@ -2610,9 +2674,13 @@ namespace VaultAdmin
                 return item.Power;
             }
 
-            PetEntry pet = thing as PetEntry;
-            if (pet != null)
-                return _ordering == Ordering.Rarity ? (int)pet.Rarity : pet.Power;
+            PetGroup group = thing as PetGroup;
+            if (group != null)
+            {
+                PetEntry best = group.Best;
+                if (best == null) return -1;
+                return _ordering == Ordering.Rarity ? (int)best.Rarity : best.Power;
+            }
 
             RandomDweller random = thing as RandomDweller;
             if (random != null) return (int)random.Rarity;
@@ -2664,10 +2732,14 @@ namespace VaultAdmin
                 }
 
                 {
-                    PetEntry pet = (PetEntry)thing;
-                    row.Name.text = pet.Name;
-                    row.Stats.text = PetStats(pet);
+                    PetGroup group = (PetGroup)thing;
+                    PetEntry pet = group.Best;
 
+                    row.Name.text = group.Name;
+                    row.Stats.text = PetStats(pet) +
+                                     (group.Variants.Count > 1
+                                          ? "   " + group.Variants.Count + " grades"
+                                          : "");
                     ShowPetIcon(row.Icon, pet);
                 }
             }
@@ -3035,9 +3107,12 @@ namespace VaultAdmin
                 return;
             }
 
-            // Handed over as the game rolled it. Naming one and choosing its bonus is what the
-            // create tab is for.
-            GrantPet((PetEntry)thing, false);
+            // Handed over as the game rolled it, and which grade of the animal is part of that.
+            // Naming one and choosing its bonus is what the create tab is for.
+            PetGroup group = (PetGroup)thing;
+            if (group.Variants.Count == 0) return;
+
+            GrantPet(group.Variants[UnityEngine.Random.Range(0, group.Variants.Count)], false);
         }
 
         private UIInput _firstNameInput;
@@ -3263,6 +3338,8 @@ namespace VaultAdmin
                                           Skin.Bright, 3);
             _cursorY -= RowHeight + RowGap;
 
+            AddChoiceRow(parent, width, _petGrade);
+
             AddHeader(parent, "NAME AND BONUS", width);
 
             int nameY = _cursorY - RowHeight / 2;
@@ -3296,44 +3373,77 @@ namespace VaultAdmin
             RefreshPetPick();
         }
 
+        private readonly Choice _petGrade = new Choice();
+
         private void StepPet(int by)
         {
-            if (_pets == null) BuildPetCatalogue();
-            if (_pets == null || _pets.Count == 0) return;
+            if (_petGroups == null) { BuildPetCatalogue(); GroupPets(); }
+            if (_petGroups == null || _petGroups.Count == 0) return;
 
-            _petIndex = (_petIndex + by + _pets.Count) % _pets.Count;
+            _petIndex = (_petIndex + by + _petGroups.Count) % _petGroups.Count;
             RefreshPetPick();
+        }
+
+        /// <summary>The versions of the chosen animal, strongest last.</summary>
+        private void RefillGrades()
+        {
+            _petGrade.Caption = "GRADE";
+            _petGrade.Begin("random");
+
+            PetGroup group = CurrentPetGroup();
+            if (group == null) return;
+
+            for (int i = 0; i < group.Variants.Count; i++)
+            {
+                PetEntry variant = group.Variants[i];
+                _petGrade.Add(variant, variant.Rarity + "  " + variant.Power);
+            }
+
+            _petGrade.Show();
+        }
+
+        private PetGroup CurrentPetGroup()
+        {
+            if (_petGroups == null || _petGroups.Count == 0) return null;
+
+            _petIndex = Mathf.Clamp(_petIndex, 0, _petGroups.Count - 1);
+            return _petGroups[_petIndex];
         }
 
         private void RefreshPetPick()
         {
             PreloadPetArt();
             if (_pets == null) BuildPetCatalogue();
+            if (_petGroups == null) GroupPets();
 
-            if (_pets == null || _pets.Count == 0)
+            PetGroup group = CurrentPetGroup();
+            if (group == null)
             {
                 if (_petPickLabel != null) _petPickLabel.text = "no pets in the catalogue";
                 return;
             }
 
-            _petIndex = Mathf.Clamp(_petIndex, 0, _pets.Count - 1);
-            PetEntry pet = _pets[_petIndex];
-
             if (_petPickLabel != null)
-                _petPickLabel.text = pet.Name + "   " + (_petIndex + 1) + "/" + _pets.Count;
+                _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count;
 
-            ShowPetIcon(_petPickIcon, pet);
+            ShowPetIcon(_petPickIcon, group.Best);
+            RefillGrades();
         }
 
         private void CreatePetFromPanel()
         {
-            if (_pets == null || _pets.Count == 0) return;
+            PetGroup group = CurrentPetGroup();
+            if (group == null || group.Variants.Count == 0) return;
 
             if (_petNameInput != null) _petName = _petNameInput.value;
             if (_petValueInput != null && !string.IsNullOrEmpty(_petValueInput.value))
                 _petBonusValue = _petValueInput.value;
 
-            GrantPet(_pets[Mathf.Clamp(_petIndex, 0, _pets.Count - 1)], true);
+            PetEntry chosen = _petGrade.Selected as PetEntry;
+            if (chosen == null)
+                chosen = group.Variants[UnityEngine.Random.Range(0, group.Variants.Count)];
+
+            GrantPet(chosen, true);
         }
 
         private readonly Choice _hair = new Choice();
@@ -3547,8 +3657,129 @@ namespace VaultAdmin
             }
         }
 
+        private Dweller _previewDweller;
+        private UITexture _previewPicture;
+        private UITexture _previewHeadgear;
+        private UILabel _previewCaption;
+
+        /// <summary>
+        /// Draws the dweller being built, the way the game draws one.
+        ///
+        /// A dweller's picture is composed at runtime from the pieces it is wearing, and only a live
+        /// dweller has one — there is no way to render a person who does not exist yet. So the
+        /// constructor works the way the barbershop does: make the dweller, then dress it, with the
+        /// picture following every change. SetUITex is the game's own call for this; it is what the
+        /// character window, the dweller list and the room panels all use.
+        /// </summary>
+        private void RefreshPreview()
+        {
+            if (_previewPicture == null || _previewHeadgear == null) return;
+
+            bool have = _previewDweller != null;
+
+            _previewPicture.gameObject.SetActive(have);
+            _previewHeadgear.gameObject.SetActive(have);
+
+            if (_previewCaption != null)
+                _previewCaption.text = have
+                    ? _previewDweller.Name + " " + _previewDweller.LastName
+                    : "press CREATE to make someone, then dress them";
+
+            if (!have) return;
+
+            try
+            {
+                MethodInfo draw = typeof(Dweller).GetMethod(
+                    "SetUITex",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { typeof(UITexture), typeof(UITexture) }, null);
+
+                if (draw == null)
+                {
+                    ReportOnce("preview", "The game has no SetUITex; the picture cannot be drawn.");
+                    return;
+                }
+
+                draw.Invoke(_previewDweller, new object[] { _previewPicture, _previewHeadgear });
+            }
+            catch (Exception e)
+            {
+                ReportOnce("preview", "Drawing the dweller failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts one changed choice onto the dweller already standing there.
+        ///
+        /// Nothing to dress means nothing to do: the choice is simply remembered for whoever is
+        /// made next.
+        /// </summary>
+        private void LookChanged(Choice choice)
+        {
+            if (_previewDweller == null) return;
+
+            try
+            {
+                if (choice == _skin)
+                {
+                    object shade = _skin.Selected;
+                    if (shade is Color) _previewDweller.SkinColor = (Color)shade;
+                }
+                else if (choice == _outfit) Equip(_previewDweller, _outfit, EItemType.Outfit);
+                else if (choice == _weapon) Equip(_previewDweller, _weapon, EItemType.Weapon);
+                else ApplyOneLook(_previewDweller, choice);
+
+                RefreshPreview();
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not change " + choice.Caption + ": " + e.Message);
+            }
+        }
+
+        private void BuildPreview(Transform parent, int width)
+        {
+            const int tall = 150;
+            int middle = _cursorY - tall / 2;
+
+            Plate(parent, "PreviewPlate", 0, middle, width, tall, Skin.Row(width, tall), 1);
+
+            GameObject picture = new GameObject("PreviewPicture");
+            picture.layer = parent.gameObject.layer;
+            picture.transform.SetParent(parent, false);
+            picture.transform.localPosition = new Vector3(0f, middle + 8, 0f);
+            picture.transform.localScale = Vector3.one;
+
+            _previewPicture = picture.AddComponent<UITexture>();
+            _previewPicture.width = 84;
+            _previewPicture.height = 108;
+            _previewPicture.depth = 3;
+
+            GameObject headgear = new GameObject("PreviewHeadgear");
+            headgear.layer = parent.gameObject.layer;
+            headgear.transform.SetParent(parent, false);
+            headgear.transform.localPosition = new Vector3(0f, middle + 8, 0f);
+            headgear.transform.localScale = Vector3.one;
+
+            _previewHeadgear = headgear.AddComponent<UITexture>();
+            _previewHeadgear.width = 84;
+            _previewHeadgear.height = 108;
+            _previewHeadgear.depth = 4;
+
+            _previewCaption = MakeLabel(parent, "PreviewCaption", "", 0, middle - 58, width - 24,
+                                        24, Skin.Rim, 5);
+
+            _cursorY -= tall + RowGap;
+
+            _previewPicture.gameObject.SetActive(false);
+            _previewHeadgear.gameObject.SetActive(false);
+        }
+
         private void BuildDwellerSection(Transform parent, int width)
         {
+            AddHeader(parent, "WHO YOU ARE MAKING", width);
+            BuildPreview(parent, width);
+
             AddHeader(parent, "NAME", width);
 
             int nameY = _cursorY - RowHeight / 2;
@@ -3620,8 +3851,15 @@ namespace VaultAdmin
             AddChoiceRow(parent, width, _outfit);
             AddChoiceRow(parent, width, _weapon);
 
-            _outfit.OnChange = delegate { ShowChoicePicture(_outfit); };
-            _weapon.OnChange = delegate { ShowChoicePicture(_weapon); };
+            _outfit.OnChange = delegate { ShowChoicePicture(_outfit); LookChanged(_outfit); };
+            _weapon.OnChange = delegate { ShowChoicePicture(_weapon); LookChanged(_weapon); };
+
+            _hair.OnChange = delegate { LookChanged(_hair); };
+            _face.OnChange = delegate { LookChanged(_face); };
+            _hairColour.OnChange = delegate { LookChanged(_hairColour); };
+            _helmet.OnChange = delegate { LookChanged(_helmet); };
+            _skin.OnChange = delegate { LookChanged(_skin); };
+
             _outfit.Show();
             _weapon.Show();
 
@@ -4203,6 +4441,9 @@ namespace VaultAdmin
 
                         thumb.mainTexture = Skin.Frame(10, step, 5, 5, Skin.Bright, Skin.Bright);
                     }
+
+                    if (_making == Making.Dweller && _tab == Tab.Create && _previewDweller != null)
+                        RefreshPreview();
 
                     if (_petArtPending)
                     {
@@ -5463,6 +5704,9 @@ namespace VaultAdmin
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
                 // the dweller afterwards what it is actually wearing.
+                _previewDweller = dweller;
+                RefreshPreview();
+
                 Say("Created " + Describe(dweller) + ".");
             }
             catch (Exception e)
