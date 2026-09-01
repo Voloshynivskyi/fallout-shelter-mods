@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.55.0";
+        public const string PluginVersion = "0.56.0";
 
         internal static ManualLogSource Log;
 
@@ -3226,9 +3226,8 @@ namespace VaultAdmin
         /// name, the thing itself and the two arrows, and nothing else is needed.
         /// </summary>
         private Choice AddCompactChoice(Transform parent, Choice choice,
-                                        int centreX, int y, int width, bool swatchOnly)
+                                        int centreX, int y, int width, int height, bool swatchOnly)
         {
-            const int height = 36;
 
             Plate(parent, "Compact_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
@@ -3239,38 +3238,39 @@ namespace VaultAdmin
             // what it is, then only ever look at the second line.
             // Bright enough to read at a glance. A caption nobody can see is a row with no name.
             UILabel caption = MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
-                                            left + 12, y + height / 2 - 12, width - 24, 16,
+                                            left + 12, y + height / 2 - 13, width - 24, 16,
                                             Skin.Bright, 3);
             caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
 
             Choice captured = choice;
-            int lower = y - 6;
+
+            int arrow = Mathf.Min(28, height - 24);
+            int lower = y - height / 2 + arrow / 2 + 8;
 
             // Well inside the card. At the old offset the button's own outline sat on the card's.
-            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 24, lower, 28, 26,
-                       false, delegate { captured.Step(-1); });
-            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 24, lower,
-                       28, 26, false, delegate { captured.Step(1); });
+            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 8 + arrow / 2, lower,
+                       arrow, arrow - 2, false, delegate { captured.Step(-1); });
+            MakeButton(parent, "CompactFwd_" + choice.Caption, ">",
+                       centreX + width / 2 - 8 - arrow / 2, lower,
+                       arrow, arrow - 2, false, delegate { captured.Step(1); });
 
-            int span = width - 80;
+            int span = width - 2 * (arrow + 20);
 
             if (swatchOnly)
             {
                 // A shade has no name worth reading. The colour is the answer.
                 choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, centreX, lower,
-                                      Mathf.Min(span, 96), 22, Skin.Solid(), 3);
+                                      Mathf.Min(span, 96), Mathf.Min(22, arrow - 4),
+                                      Skin.Solid(), 3);
                 choice.Swatch.gameObject.SetActive(false);
             }
             else
             {
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
-                                           centreX + 8, lower, span - 20, 22, Skin.Bright, 3);
-                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.84f));
-
-                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 52, lower,
-                                      22, 20, Skin.Solid(), 3);
-                choice.Swatch.gameObject.SetActive(false);
+                                           centreX, lower, span, 22, Skin.Bright, 3);
+                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.8f));
+                choice.Display.maxLineCount = 1;
             }
 
             choice.Show();
@@ -3293,6 +3293,7 @@ namespace VaultAdmin
 
             choice.Display = MakeLabel(parent, "ChoiceValue_" + choice.Caption, "-",
                                        width / 2 - 108, y, 116, RowHeight, Skin.Bright, 3);
+            choice.Display.maxLineCount = 1;
 
             MakeButton(parent, "ChoiceFwd_" + choice.Caption, ">", width / 2 - 38, y, 40, 32,
                        false, delegate { captured.Step(1); });
@@ -3423,6 +3424,10 @@ namespace VaultAdmin
                        delegate { StepPet(-1); });
             MakeButton(parent, "PetFwd", ">", -width / 2 + 128, pickY, 40, 32, false,
                        delegate { StepPet(1); });
+
+            // Named before the row is made: AddChoiceRow writes the caption into a label there and
+            // then, and an empty caption stays empty.
+            _petGrade.Caption = "GRADE";
 
             _petPickLabel = MakeLeftLabel(parent, "PetPickName", "-",
                                           -width / 2 + 154, pickY, width - 164, RowHeight,
@@ -3893,6 +3898,28 @@ namespace VaultAdmin
                     {
                         ReportOnce("dressup", "Could not give the stand-in a body: " + e.Message);
                     }
+
+                    // UpdateTexture draws the body out of the outfit being worn: with m_outfit null
+                    // it composes the head and stops, which is exactly what the picture showed. The
+                    // vault's own default is what a dweller wears when it wears nothing.
+                    try
+                    {
+                        if (_previewDweller.EquippedOutfit == null)
+                        {
+                            if (string.IsNullOrEmpty(_defaultOutfitId)) BuildCatalogue();
+
+                            string plain = string.IsNullOrEmpty(_defaultOutfitId)
+                                ? "jumpsuit"
+                                : _defaultOutfitId;
+
+                            _previewDweller.EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
+                            Log.LogInfo("The stand-in is wearing '" + plain + "' so it has a body.");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        ReportOnce("dressplain", "Could not dress the stand-in: " + e.Message);
+                    }
                 }
 
                 if (_previewDweller == null)
@@ -4188,11 +4215,12 @@ namespace VaultAdmin
             int columnWidth = width - PreviewWidth - 34;
             int columnCentre = columnLeft + columnWidth / 2;
 
-            int top = middle + block / 2 - 6 - rowHeight / 2;
+            int top = middle + block / 2 - 7 - rowHeight / 2;
 
             for (int i = 0; i < rows.Length; i++)
                 AddCompactChoice(parent, rows[i], columnCentre,
-                                 top - i * (rowHeight + rowGap), columnWidth, rows[i] == _skin);
+                                 top - i * (rowHeight + rowGap), columnWidth, rowHeight,
+                                 rows[i] == _skin);
 
             // Five rows beside a picture two hundred and sixty tall leaves a gap; the picture is
             // what the gap is for.
@@ -4228,43 +4256,45 @@ namespace VaultAdmin
             Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
-            // The picture on the right, everything to be read on the left: the eye finds the thing
-            // first and the words about it afterwards.
-            int iconX = centreX + width / 2 - icon / 2 - 10;
-            int textRight = iconX - icon / 2 - 8;
+            // The picture on the left, and beside it the name over the arrows: what it is, then
+            // what to press to change it.
+            int left = centreX - width / 2;
+            int iconX = left + icon / 2 + 10;
 
-            UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                            centreX - width / 2 + 12, y + height / 2 - 12,
-                                            width - 24, 16, Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
-            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+            int textLeft = iconX + icon / 2 + 12;
+            int textWidth = Mathf.Max(48, centreX + width / 2 - 10 - textLeft);
 
-            Plate(parent, "SlotWell_" + choice.Caption, iconX, y - 4, icon + 6, icon + 6,
+            Plate(parent, "SlotWell_" + choice.Caption, iconX, y, icon + 6, icon + 6,
                   Skin.Well(icon + 6), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(iconX, y - 4, 0f);
+            pictureGo.transform.localPosition = new Vector3(iconX, y, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
-            Choice captured = choice;
-            int left = centreX - width / 2;
+            UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
+                                            textLeft, y + height / 2 - 12, textWidth, 14,
+                                            Skin.Bright, 3);
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.6f));
+            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", left + 24, y - 4, 28, 26,
-                       false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", left + 58, y - 4, 28, 26,
-                       false, delegate { captured.Step(1); });
-
-            int textLeft = left + 78;
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           textLeft, y - 4, Mathf.Max(40, textRight - textLeft),
-                                           20, Skin.Bright, 3);
+                                           textLeft, y + 4, textWidth, 20, Skin.Bright, 3);
             choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            choice.Display.maxLineCount = 1;
+
+            Choice captured = choice;
+            int arrowsY = y - height / 2 + 18;
+
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", textLeft + 18, arrowsY, 30, 26,
+                       false, delegate { captured.Step(-1); });
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", textLeft + 54, arrowsY, 30, 26,
+                       false, delegate { captured.Step(1); });
 
             choice.Show();
         }
