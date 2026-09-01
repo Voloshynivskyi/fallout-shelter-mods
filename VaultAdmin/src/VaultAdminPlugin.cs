@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.95.0";
+        public const string PluginVersion = "0.96.0";
 
         internal static ManualLogSource Log;
 
@@ -2331,6 +2331,33 @@ namespace VaultAdmin
             FitInk(drawn, size);
         }
 
+        /// <summary>
+        /// A picture on its own: no recess behind it, in whatever colour it is asked for.
+        ///
+        /// AddIcon always sets its sprite into a dark recess, which is right on the panel and wrong
+        /// on a filled button, where a dark box holding a dark picture is just a dark box.
+        /// </summary>
+        private void AddBareIcon(Transform parent, string name, string[] candidates, string what,
+                                 int x, int y, int size, Color colour)
+        {
+            Found found = FindIcon(candidates, what, true, true, null);
+            if (found == null) return;
+
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UISprite drawn = go.AddComponent<UISprite>();
+            drawn.atlas = found.Atlas;
+            drawn.spriteName = found.Sprite;
+            drawn.depth = 7;
+            drawn.color = colour;
+
+            FitInk(drawn, size);
+        }
+
         private void BuildTabs(Transform parent)
         {
             Tab[] tabs = { Tab.Resources, Tab.Grant, Tab.Create, Tab.Powers };
@@ -3775,6 +3802,12 @@ namespace VaultAdmin
         // is sixty allocations a second.
         private static bool _reportedFilm;
         private static Shader _plainShader;
+        private static bool _reportedMovers;
+
+        // Where each animator's clock stood last frame, so a clock that has stopped can be told
+        // apart from one that is merely slow.
+        private static readonly Dictionary<Animator, float> _lastBeat =
+            new Dictionary<Animator, float>();
 
         /// <summary>
         /// Forgets every saved original when the vault underneath us changes.
@@ -5376,6 +5409,11 @@ namespace VaultAdmin
                 Log.LogWarning("Could not put the stand-in away: " + e.Message);
             }
 
+            // A new stand-in is a new set of animators, and the old readings belong to figures
+            // that no longer exist.
+            _lastBeat.Clear();
+            _reportedMovers = false;
+
             _previewDweller = null;
             RefreshPreview();
         }
@@ -5636,19 +5674,102 @@ namespace VaultAdmin
             {
                 Animator[] movers = body.GetComponentsInChildren<Animator>(true);
 
+                if (!_reportedMovers)
+                {
+                    _reportedMovers = true;
+                    ReportMovers(body, movers);
+                }
+
                 for (int i = 0; i < movers.Length; i++)
                 {
                     Animator mover = movers[i];
-                    if (mover == null || !mover.isActiveAndEnabled || mover.runtimeAnimatorController == null)
-                        continue;
+                    if (mover == null || mover.runtimeAnimatorController == null) continue;
 
-                    mover.speed = 1f;
+                    // A dweller out of the pool comes with its animator switched off, and skipping
+                    // the ones that were off is why the last attempt at this changed nothing.
+                    if (!mover.enabled) mover.enabled = true;
+
+                    // Nothing here is on screen the way Unity means it. The stand-in sits on a
+                    // layer of its own, watched by a disabled camera that is told to render by
+                    // hand, so anything culled by visibility is culled for good.
+                    mover.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                    if (mover.speed <= 0f) mover.speed = 1f;
 
                     AnimatorStateInfo state = mover.GetCurrentAnimatorStateInfo(0);
-                    if (state.loop || state.normalizedTime < 1f) continue;
+                    float now = state.normalizedTime;
 
-                    mover.Play(state.fullPathHash, 0, 0f);
+                    float before;
+                    bool seenBefore = _lastBeat.TryGetValue(mover, out before);
+                    _lastBeat[mover] = now;
+
+                    // The honest test, and the one that needs no theory about why. Every previous
+                    // attempt at this idle was a guess about what drives a dweller, and each was
+                    // wrong in a way that cost a round trip to find out. This asks the only
+                    // question that matters -- did the clock move since the last frame -- and winds
+                    // it on itself when the answer is no. If the engine is already driving this
+                    // animator the branch never runs, so it cannot double the speed.
+                    if (seenBefore && now == before) mover.Update(Time.deltaTime);
+
+                    // And a one-shot that has run out goes back to the beginning.
+                    if (!state.loop && now >= 1f && state.fullPathHash != 0)
+                        mover.Play(state.fullPathHash, 0, 0f);
                 }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("keepmoving", "Could not keep the stand-in moving: " + e);
+            }
+        }
+
+        /// <summary>
+        /// Writes down what actually animates the stand-in, once.
+        ///
+        /// Said plainly because the alternative has been tried. If the figure still stands still
+        /// after this, the log says whether there was ever anything there to drive.
+        /// </summary>
+        private static void ReportMovers(GameObject body, Animator[] movers)
+        {
+            try
+            {
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("The stand-in has ").Append(movers.Length).Append(" animator(s)");
+
+                for (int i = 0; i < movers.Length; i++)
+                {
+                    Animator mover = movers[i];
+                    if (mover == null) continue;
+
+                    said.Append("; [").Append(mover.name).Append("] enabled=").Append(mover.enabled)
+                        .Append(" controller=")
+                        .Append(mover.runtimeAnimatorController == null
+                                ? "none"
+                                : mover.runtimeAnimatorController.name)
+                        .Append(" culling=").Append(mover.cullingMode)
+                        .Append(" speed=").Append(mover.speed)
+                        .Append(" layers=").Append(mover.layerCount);
+                }
+
+                Animation[] legacy = body.GetComponentsInChildren<Animation>(true);
+                said.Append(". Legacy Animation components: ").Append(legacy.Length);
+
+                MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
+                said.Append(". Behaviours with 'anim' in the name:");
+
+                bool any = false;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i] == null) continue;
+
+                    string kind = parts[i].GetType().Name;
+                    if (kind.IndexOf("anim", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    said.Append(" ").Append(kind)
+                        .Append("(enabled=").Append(parts[i].enabled).Append(")");
+                    any = true;
+                }
+
+                if (!any) said.Append(" none");
+                Log.LogInfo(said.ToString());
             }
             catch { }
         }
@@ -6165,14 +6286,16 @@ namespace VaultAdmin
             }
             _cursorY -= specialHeight + RowGap;
 
-            // The one button on the bench that does anything, and it looked like a header. A plus
-            // after the words says what it is for, and needs no atlas to say it.
+            // The one button on the bench that does anything. A typed plus sat wherever the
+            // font's baseline put it, which is not the middle of anything; the game has a blank
+            // person in its own art, which is both straight and a better answer to the question
+            // of what this button makes.
             GameObject make = MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0,
                                          _cursorY - 22, width, 44, true, CreateDwellerFromPanel);
 
-            UILabel plus = MakeLabel(make.transform, "Plus", "+", width / 2 - 30, 0, 30, 40,
-                                     Skin.Ink, 6);
-            plus.fontSize = TextTitle;
+            AddBareIcon(make.transform, "CreateMark",
+                        new[] { "Silhouette_Dweller", "Icon_dwellerPlain", "Icon_dweller" },
+                        "silhouette dweller", width / 2 - 32, 0, 30, Skin.Ink);
             _cursorY -= 44 + RowGap;
         }
 
