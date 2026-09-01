@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.83.0";
+        public const string PluginVersion = "0.84.0";
 
         internal static ManualLogSource Log;
 
@@ -3438,22 +3438,22 @@ namespace VaultAdmin
                      new[] { "Icon_RadawayPlain", "Icon_Radaway", "Icon_StimpackPlain" });
             AddPower(parent, width, "MAKE EVERYONE HAPPY",
                      "everyone at 100%", CheerEveryone,
-                     new[] { "Icon_Happiness", "Icon_happy", "Icon_dwellerPlain" });
+                     new[] { "Icon_happiness" });
             AddPower(parent, width, "LEVEL EVERYONE",
                      "everyone to level 50", LevelEveryone,
-                     new[] { "Icon_LevelUp", "Icon_levelup", "Icon_dwellerPlain" });
+                     new[] { "Lvl_Up", "Icon_UpgradePlain" });
             AddPower(parent, width, "MAX SPECIAL FOR EVERYONE",
                      "ten in every stat", PerfectEveryone,
-                     new[] { "Icon_Special", "Icon_special", "Icon_dwellerPlain" });
+                     new[] { "Icon_TrainingStrength", "Icon_TrainingPlain" });
             AddPower(parent, width, "DELIVER EVERY BABY",
                      "every pregnancy ends now", DeliverEveryBaby,
-                     new[] { "new_dweller", "Icon_dwellerPlain" });
+                     new[] { "Icon_Pregnant" });
             AddPower(parent, width, "GROW THE CHILDREN",
                      "every child grows up now", GrowTheChildren,
-                     new[] { "new_dweller", "Icon_dwellerPlain" });
+                     new[] { "Icon_ChildrenGrowthColorGreen" });
             AddPower(parent, width, "FINISH ALL TRAINING",
                      "every training done", FinishAllTraining,
-                     new[] { "Icon_Training", "Icon_training", "Icon_dwellerPlain" });
+                     new[] { "Icon_TrainingPlain", "Icon_Training" });
 
             AddHeader(parent, "THE VAULT", width);
 
@@ -3467,7 +3467,7 @@ namespace VaultAdmin
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
                      "every weapon and outfit", UnlockEveryRecipe,
-                     new[] { "Icon_Craft", "Icon_crafting", "Icon_JunkPlain", "Icon_junk" });
+                     new[] { "Icon_Recipe", "Icon_Junk" });
 
 
             AddHeader(parent, "PEACE AND QUIET", width);
@@ -3475,13 +3475,13 @@ namespace VaultAdmin
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
                                    "no accident from rushing",
                                    ToggleRushing,
-                                   new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
+                                   new[] { "AlarmClock", "TimeRemainingIcon" });
 
-            _incidentSwitch = AddPower(parent, width, "INCIDENTS",
-                                       "fires, pests, raiders", ToggleIncidents,
-                     new[] { "Icon_Fire", "Icon_fire", "Icon_Radawa" });
-            _bottleSwitch = AddPower(parent, width, "BOTTLE AND CAPPY",
-                                     "the wandering pair", ToggleBottleAndCappy,
+            _incidentSwitch = AddPower(parent, width, "NO INCIDENTS",
+                                       "no fires, pests or raiders", ToggleIncidents,
+                     new[] { "Common_icon_fire" });
+            _bottleSwitch = AddPower(parent, width, "NO BOTTLE AND CAPPY",
+                                     "the pair stay away", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
 
             EndScroll(view, width);
@@ -3820,17 +3820,32 @@ namespace VaultAdmin
 
         private void RefreshPowerSwitches()
         {
-            Switch(_incidentSwitch, IncidentsOn());
-            Switch(_bottleSwitch, !BottleAndCappyLocked());
+            // Each switch is a claim, and ON means the claim holds. 'No incidents' being on is
+            // the opposite of the flag the game keeps, which is what made the old labels read
+            // backwards.
+            Switch(_incidentSwitch, !IncidentsOn());
+            Switch(_bottleSwitch, BottleAndCappyLocked());
             Switch(_rushSwitch, RushAlwaysWorks != null && RushAlwaysWorks.Value);
         }
 
+        /// <summary>
+        /// Shows a switch's state, not the action that would change it.
+        ///
+        /// TURN OFF on a thing that is on reads as an instruction to whoever wrote it and as a state
+        /// to everyone else, and the two readings are opposites. So it says ON or OFF, and what
+        /// pressing does follows from that.
+        /// </summary>
         private static void Switch(GameObject button, bool on)
         {
             if (button == null) return;
 
             UILabel text = button.GetComponentInChildren<UILabel>();
-            if (text != null) text.text = on ? "TURN OFF" : "TURN ON";
+            if (text == null) return;
+
+            text.text = on ? "ON" : "OFF";
+            text.color = on
+                ? Skin.Bright
+                : new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.5f);
         }
 
         private bool BottleAndCappyLocked()
