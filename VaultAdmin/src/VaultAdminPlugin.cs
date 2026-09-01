@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.81.0";
+        public const string PluginVersion = "0.82.0";
 
         internal static ManualLogSource Log;
 
@@ -1281,6 +1281,7 @@ namespace VaultAdmin
         private int _refreshFrames;
         private int _filmFrames;
         private int _upkeepFrames;
+        private Room[] _rushingRooms;
         private UIAtlas _menuAtlas;
         private readonly List<UITexture> _thumbs = new List<UITexture>();
 
@@ -3589,6 +3590,46 @@ namespace VaultAdmin
                 ReportOnce("upkeep", "Could not hold the powers on: " + e.Message);
             }
         }
+
+        /// <summary>Holds the failure chance down for every room that is being rushed right now.</summary>
+        private void GuardTheRushes()
+        {
+            try
+            {
+                if (_rushingRooms == null)
+                {
+                    List<Room> found = new List<Room>();
+                    Room[] all = Resources.FindObjectsOfTypeAll<Room>();
+
+                    for (int i = 0; i < all.Length; i++)
+                        if (all[i] != null && all[i].gameObject.activeInHierarchy) found.Add(all[i]);
+
+                    _rushingRooms = found.ToArray();
+                }
+
+                if (_rushReset == null)
+                    _rushReset = typeof(Room).GetMethod(
+                        "Cheat_ResetRushFailureChance",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (_rushReset == null) return;
+
+                for (int i = 0; i < _rushingRooms.Length; i++)
+                {
+                    Room room = _rushingRooms[i];
+                    if (room == null || !room.IsRushing) continue;
+
+                    try { _rushReset.Invoke(room, null); }
+                    catch { }
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("rushguard", "Could not hold the rush chance down: " + e.Message);
+            }
+        }
+
+        private MethodInfo _rushReset;
 
         private int ClearRushChances()
         {
@@ -6342,7 +6383,13 @@ namespace VaultAdmin
             {
                 _upkeepFrames = 0;
                 KeepThePowersOn();
+                _rushingRooms = null;      // rooms are built and sold; the list goes stale
             }
+
+            // A slow beat leaves a gap, and a rush that finishes inside that gap can still go
+            // wrong. While anything is being rushed the chance is cleared every frame, which costs
+            // one call per rushing room — and a vault rarely rushes more than one at a time.
+            if (RushAlwaysWorks != null && RushAlwaysWorks.Value) GuardTheRushes();
 
             // A window that builds without error and draws nothing is the failure this mod has
             // already paid for once. Rather than trust that it appeared, look: a widget that is
