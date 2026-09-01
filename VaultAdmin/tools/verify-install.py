@@ -23,9 +23,9 @@ SOURCE = r"D:\FalloutShelter-Mods\VaultAdmin\src\VaultAdminPlugin.cs"
 # only that feature puts in the assembly, so a missing one means a feature quietly did not ship.
 REQUIRED = [
     ("VAULT ADMIN", "the window itself"),
-    ("STOCK", "the resources tab"),
-    ("GRANT", "the grant tab"),
-    ("CREATE", "the create tab"),
+    ("RESOURCES", "the resources tab"),
+    ("ITEMS", "the items tab"),
+    ("WORKSHOP", "the workshop tab"),
     ("ApplyCustomization", "the dweller's looks"),
     ("m_dwellerCustomizationData", "the appearance catalogue"),
     ("LocalizedBonusWithValue", "the game's wording for pet bonuses"),

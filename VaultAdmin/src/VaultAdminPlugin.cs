@@ -284,11 +284,20 @@ namespace VaultAdmin
                         // The pips, sunk into whichever face the pixel belongs to.
                         float ink = 0f;
 
+                        // Dark spots on the two brighter faces, bright ones on the face in
+                        // shadow. One colour for all three left the shadowed face's pips
+                        // invisible, which is a third of the die saying nothing.
+                        Color spot = Ink;
+
                         if (paint == lit) ink = PipCover(p, back, right, near, left, pips[0], w);
                         else if (paint == shaded) ink = PipCover(p, right, rightLow, nearLow, near, pips[1], w);
-                        else ink = PipCover(p, near, nearLow, leftLow, left, pips[2], w);
+                        else
+                        {
+                            ink = PipCover(p, near, nearLow, leftLow, left, pips[2], w);
+                            spot = Bright;
+                        }
 
-                        if (ink > 0f) paint = Color.Lerp(paint, Ink, ink);
+                        if (ink > 0f) paint = Color.Lerp(paint, spot, ink);
                     }
 
                     // Drawn last and over everything, so the cube keeps its shape against whatever
@@ -334,15 +343,15 @@ namespace VaultAdmin
             float t = (u.x * q.y - u.y * q.x) / denom;
 
             int[] mask = PipMask(pips);
-            float radius = 0.10f;
+            float radius = 0.125f;
             float best = 0f;
 
             for (int cell = 0; cell < 9; cell++)
             {
                 if (mask[cell] == 0) continue;
 
-                float ds = s - (0.26f + 0.24f * (cell % 3));
-                float dt = t - (0.26f + 0.24f * (cell / 3));
+                float ds = s - (0.25f + 0.25f * (cell % 3));
+                float dt = t - (0.25f + 0.25f * (cell / 3));
 
                 // Softened in face space, then scaled back to pixels so the feather is even.
                 float cover = Mathf.Clamp01((radius - Mathf.Sqrt(ds * ds + dt * dt)) * w * 0.35f);
@@ -414,15 +423,17 @@ namespace VaultAdmin
             int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
             Color[] px = new Color[w * w];
 
+            // Lifted off the floor of its box. The whole lock had been sitting low enough to
+            // look like it was resting on the frame rather than standing in it.
             float bodyLeft = w * 0.22f, bodyRight = w * 0.78f;
-            float bodyLow = w * 0.08f, bodyHigh = w * 0.54f;
+            float bodyLow = w * 0.15f, bodyHigh = w * 0.60f;
             float round = w * 0.09f;
 
-            Vector2 shackleAt = new Vector2(w * 0.50f, w * 0.56f);
+            Vector2 shackleAt = new Vector2(w * 0.50f, w * 0.62f);
             float shackleR = w * 0.20f;
             float shackleT = w * 0.075f;
 
-            Vector2 keyAt = new Vector2(w * 0.50f, w * 0.36f);
+            Vector2 keyAt = new Vector2(w * 0.50f, w * 0.42f);
 
             for (int y = 0; y < w; y++)
             {
@@ -447,7 +458,7 @@ namespace VaultAdmin
 
                     // The keyhole, cut back out of the body.
                     float hole = Vector2.Distance(p, keyAt) - w * 0.075f;
-                    float stem = ToSegment(p, keyAt, new Vector2(keyAt.x, w * 0.19f)) - w * 0.032f;
+                    float stem = ToSegment(p, keyAt, new Vector2(keyAt.x, w * 0.26f)) - w * 0.032f;
                     float cut = Mathf.Clamp01(-Mathf.Min(hole, stem) + 0.5f);
 
                     if (cut > 0f) paint = Color.Lerp(paint, Clear, cut);
@@ -555,7 +566,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.4.0";
 
         internal static ManualLogSource Log;
 
@@ -1773,7 +1784,11 @@ namespace VaultAdmin
             // resolution and is the same on every run, which the borrowed size was not.
             _fontSize = Mathf.Clamp(Mathf.RoundToInt(virtualHeight * 0.0375f), 18, 34);
 
-            _windowWidth = Mathf.Clamp(virtualWidth / 3, 380, 900);
+            // A tenth wider than a third of the screen. Every row in here is a name, a figure
+            // and a control in a line, and at a third of the screen the name was the part that
+            // gave way. Nothing else changes: margins, gaps and text keep their sizes, so the
+            // extra width lands where it was short rather than being spread about.
+            _windowWidth = Mathf.Clamp(Mathf.RoundToInt(virtualWidth / 3f * 1.1f), 418, 900);
             _windowHeight = Mathf.Max(320, virtualHeight - VerticalInset * 2);
             _windowX = -virtualWidth / 2 + _windowWidth / 2 + EdgeMargin;
 
@@ -2789,7 +2804,10 @@ namespace VaultAdmin
         private void BuildTabs(Transform parent)
         {
             Tab[] tabs = { Tab.Resources, Tab.Grant, Tab.Create, Tab.Powers };
-            string[] names = { "STOCK", "GRANT", "CREATE", "POWERS" };
+            // What each page is, rather than what you do to it. STOCK and GRANT were verbs
+            // pretending to be places, and POWERS was a word from a different kind of game: this
+            // page holds the switches that override the vault's own rules, so it says so.
+            string[] names = { "RESOURCES", "ITEMS", "WORKSHOP", "OVERRIDES" };
 
             int usable = _windowWidth - Margin * 2;
             int width = (usable - 18) / 4;
@@ -2799,9 +2817,21 @@ namespace VaultAdmin
             for (int i = 0; i < tabs.Length; i++)
             {
                 Tab captured = tabs[i];
-                _tabButtons[tabs[i]] = MakeButton(parent, "Tab_" + tabs[i], names[i],
-                                                  x, y, width, 42, false,
-                                                  delegate { ShowTab(captured); });
+                GameObject tab = MakeButton(parent, "Tab_" + tabs[i], names[i],
+                                            x, y, width, 42, false,
+                                            delegate { ShowTab(captured); });
+
+                // Sized for the longest of the four rather than left to shrink itself. NGUI will
+                // squeeze a word that does not fit, and a row of tabs each squeezed by a different
+                // amount is four sizes of text pretending to be one.
+                UILabel word = tab.GetComponentInChildren<UILabel>();
+                if (word != null)
+                {
+                    word.fontSize = TextBody;
+                    word.maxLineCount = 1;
+                }
+
+                _tabButtons[tabs[i]] = tab;
                 x += width + 6;
             }
         }
@@ -3206,8 +3236,10 @@ namespace VaultAdmin
             row.Icon.height = IconBox;
             row.Icon.depth = 4;
 
-            int textLeft = -width / 2 + 62;
-            int textWidth = width - 160;
+            // The same margin the powers use: the picture's recess ends, and then there is air
+            // before anything is said.
+            int textLeft = -width / 2 + 76;
+            int textWidth = width - 176;
 
             row.Name = MakeLeftLabel(row.Root.transform, "Name", "",
                                      textLeft, 11, textWidth, 24, Skin.Bright, 3);
@@ -4384,9 +4416,11 @@ namespace VaultAdmin
                         true, null, true);
             }
 
+            // Clear of the icon's recess rather than touching it. Two units of air read as a
+            // mistake; fourteen reads as a margin.
             int button = 100;
-            int left = -width / 2 + 18 + box;
-            int textWidth = width - button - box - 54;
+            int left = -width / 2 + 32 + box;
+            int textWidth = width - button - box - 68;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
                                           left, middle + 13, textWidth, 22, Skin.Bright, 3);
@@ -4700,10 +4734,12 @@ namespace VaultAdmin
             AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box,
                     true, null, true);
 
-            int button = 84;
-            int field = 84;
-            int left = -width / 2 + 18 + box;
-            int textWidth = width - button - field - box - 60;
+            // The field holds three digits and the button one short word; both had been sized
+            // for a great deal more than they carry, and the words to their left paid for it.
+            int button = 62;
+            int field = 60;
+            int left = -width / 2 + 32 + box;
+            int textWidth = width - button - field - box - 74;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
                                           left, middle + 13, textWidth, 22, Skin.Bright, 3);
@@ -7309,13 +7345,14 @@ namespace VaultAdmin
 
             const int rowGap = 4;
 
-            // Room under the figure for the one control that belongs to it. On the header it was
-            // a dark word crammed into a bright bar, next to a title it had nothing to do with;
-            // under the figure it is plainly the button that changes the figure.
-            const int rollHeight = 34;
-            const int rollRoom = 34;
+            // The figure and the die share one container, each in a recess of its own: the die
+            // changes the person above it, and standing them in the same box says so without a
+            // word. Tucked into the corner of the figure's own recess it was something in the way
+            // of the picture rather than a control.
+            const int rollHeight = 46;
+            const int dieRoom = 60;
 
-            int block = PreviewHeight + 14 + rollRoom;
+            int block = PreviewHeight + 14 + dieRoom;
             int middle = _cursorY - block / 2;
 
             // The rows share the picture's height between them rather than bunching at the top and
@@ -7324,10 +7361,9 @@ namespace VaultAdmin
 
             Plate(parent, "LooksPlate", 0, middle, width, block, Skin.Row(width, block), 1);
 
-            // The picture, down the left, lifted by half the room the button takes so that the
-            // pair of them sit centred together.
+            // The picture, down the left, raised by the room the die takes below it.
             int pictureX = -width / 2 + PreviewWidth / 2 + 10;
-            int pictureY = middle + rollRoom / 2;
+            int pictureY = middle + dieRoom / 2;
 
             Plate(parent, "PreviewWell", pictureX, pictureY, PreviewWidth + 8, PreviewHeight + 8,
                   Skin.Well(PreviewWidth + 8), 2);
@@ -7354,16 +7390,17 @@ namespace VaultAdmin
             _previewHeadgear.height = PreviewHeight;
             _previewHeadgear.depth = 4;
 
-            // Directly beneath the figure and exactly as wide as its recess, so it reads as
-            // belonging to the picture rather than to the panel.
-            int wellBottom = pictureY - (PreviewHeight + 8) / 2;
-            int blockBottom = middle - block / 2;
+            // Its own recess under the figure's, the same width, so the two read as one column.
+            int dieWellHeight = dieRoom - 12;
+            int dieY = pictureY - (PreviewHeight + 8) / 2 - 6 - dieWellHeight / 2;
+
+            Plate(parent, "RollWell", pictureX, dieY, PreviewWidth + 8, dieWellHeight,
+                  Skin.Well(PreviewWidth + 8), 2);
 
             GameObject die = new GameObject("RollLooks");
             die.layer = parent.gameObject.layer;
             die.transform.SetParent(parent, false);
-            die.transform.localPosition =
-                new Vector3(pictureX, (wellBottom + blockBottom) / 2, 0f);
+            die.transform.localPosition = new Vector3(pictureX, dieY, 0f);
             die.transform.localScale = Vector3.one;
 
             _dieFace = die.AddComponent<UITexture>();
