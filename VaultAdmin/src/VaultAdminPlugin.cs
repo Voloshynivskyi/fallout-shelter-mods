@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.89.0";
+        public const string PluginVersion = "0.90.0";
 
         internal static ManualLogSource Log;
 
@@ -1989,16 +1989,25 @@ namespace VaultAdmin
         /// a recess of its own it puts the picture off to one side, which is what an upward arrow
         /// leaning right turned out to be.
         /// </summary>
+        /// <summary>
+        /// Sizes an icon by the whole of what is drawn, then slides it so the picture sits centred.
+        ///
+        /// Two things were fighting here. In Simple mode NGUI draws the padded rectangle, margins
+        /// and all, so the widget has to keep the padded proportions or the picture is stretched —
+        /// that was the squashing. But those margins are rarely even, so a widget sized that way
+        /// puts the picture off to one side — that was the leaning arrow. Sizing by the padded box
+        /// and then moving the widget by however far off-centre the picture sits answers both.
+        /// </summary>
         private static void FitInk(UISprite sprite, int box)
         {
             if (sprite == null || sprite.atlas == null) return;
 
             try
             {
-                // Drawn whole. A sprite with a border is nine-sliced by default, and slicing
-                // stretches its middle to fill whatever it is given — which is exactly what made
-                // the arrow, the fire and the rest come out squashed one way or the other.
+                // A sprite with a border is nine-sliced by default, and slicing stretches its
+                // middle to fill whatever it is given.
                 sprite.type = UIBasicSprite.Type.Simple;
+
                 UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
                 if (data == null || data.width <= 0 || data.height <= 0)
                 {
@@ -2007,9 +2016,22 @@ namespace VaultAdmin
                     return;
                 }
 
-                float scale = Mathf.Min((float)box / data.width, (float)box / data.height);
-                sprite.width = Mathf.Max(1, Mathf.RoundToInt(data.width * scale));
-                sprite.height = Mathf.Max(1, Mathf.RoundToInt(data.height * scale));
+                float wide = data.width + data.paddingLeft + data.paddingRight;
+                float tall = data.height + data.paddingTop + data.paddingBottom;
+                if (wide <= 0f) wide = data.width;
+                if (tall <= 0f) tall = data.height;
+
+                float scale = Mathf.Min(box / wide, box / tall);
+
+                sprite.width = Mathf.Max(1, Mathf.RoundToInt(wide * scale));
+                sprite.height = Mathf.Max(1, Mathf.RoundToInt(tall * scale));
+
+                // How far the picture's own centre sits from the middle of the padded box.
+                float offX = (data.paddingLeft + data.width * 0.5f - wide * 0.5f) * scale;
+                float offY = (data.paddingBottom + data.height * 0.5f - tall * 0.5f) * scale;
+
+                Vector3 at = sprite.transform.localPosition;
+                sprite.transform.localPosition = new Vector3(at.x - offX, at.y - offY, at.z);
             }
             catch
             {
@@ -4816,7 +4838,7 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
 
-            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 44);
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 54);
         }
 
         private string LookLabel(object entry)
@@ -5777,8 +5799,12 @@ namespace VaultAdmin
             MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsRight, top, 22, 20,
                        false, delegate { captured.Step(1); });
 
+            // The caption used to start at the card's edge while the three lines beneath it began
+            // past the picture, so nothing lined up with anything.
+            int lineStart = left + 16 + 62;
+
             UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                            left + 10, top, width - 74, 14, Skin.Bright, 3);
+                                            lineStart, top, width - 74 - 62, 14, Skin.Bright, 3);
             caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
             caption.maxLineCount = 1;
@@ -5787,7 +5813,9 @@ namespace VaultAdmin
             // The picture takes the whole height under the caption; the three lines beside it are
             // the name, what it does, and how rare it is — each on its own line at its own fixed
             // size, so nothing shrinks to fit anything else.
-            int well = height - 30;
+            // The recess was three-quarters empty: a box of seventy-four holding a picture of
+            // forty-four. The box came in and the picture went up to meet it.
+            int well = 62;
             int middle = y - 13;
 
             Plate(parent, "SlotWell_" + choice.Caption, left + 10 + well / 2, middle, well, well,
@@ -5803,7 +5831,7 @@ namespace VaultAdmin
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
-            int lineLeft = left + 16 + well;
+            int lineLeft = lineStart;
             int lineWidth = Mathf.Max(48, textRight - lineLeft);
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
@@ -5920,8 +5948,13 @@ namespace VaultAdmin
             }
             _cursorY -= specialHeight + RowGap;
 
+            // The one button on the bench that does anything, and it looked like a header. A
+            // picture beside the words is what tells them apart at a glance.
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
+
+            AddIcon(parent, "CreateDwellerIcon", new[] { "Icon_dwellerPlain", "Icon_dweller" },
+                    "create dweller", -width / 2 + 34, _cursorY - 22, 28, true, null, false);
             _cursorY -= 44 + RowGap;
         }
 
@@ -6502,14 +6535,14 @@ namespace VaultAdmin
                 ReportDrawing();
             }
 
-            // A render texture is not kept for you: the game reclaims it whenever it is busy —
-            // assigning a dweller to a room was enough — and the picture went blank until something
-            // else happened to redraw it. Filming again is one camera and one object, so it is
-            // cheap enough to do on a slow beat rather than waiting to be asked.
+            // Filmed every frame while the bench is open, which makes it a living picture rather
+            // than three stills that never quite agreed. It also settles the older complaint by
+            // itself: a render texture is not kept for you — the game reclaims it whenever it is
+            // busy — and a picture taken every frame cannot go stale. One camera and one object is
+            // a small price for a figure that stands there breathing.
             if (_panelOpen && _tab == Tab.Create && _making == Making.Dweller &&
-                _previewDweller != null && ++_filmFrames >= 45)
+                _previewDweller != null)
             {
-                _filmFrames = 0;
                 RefreshPreview();
             }
 
