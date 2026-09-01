@@ -209,13 +209,14 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.58.0";
+        public const string PluginVersion = "0.59.0";
 
         internal static ManualLogSource Log;
 
         private static ConfigEntry<bool> Enabled;
         private static ConfigEntry<string> ToggleKey;
         private static ConfigEntry<bool> WriteIconReport;
+        private static ConfigEntry<bool> PreviewWholeSheet;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
@@ -423,6 +424,11 @@ namespace VaultAdmin
                 "Master switch, off by default. While this is false the mod reads nothing, draws " +
                 "nothing and binds no key: the game behaves exactly as it does without the plugin. " +
                 "This is a debug tool, so it stays out of the way until it is asked for.");
+
+            PreviewWholeSheet = Config.Bind("Diagnostics", "PreviewWholeSheet", true,
+                "Draws the whole of the dweller's composed picture in the constructor rather than " +
+                "the corner of it the game's own call selects. On, the figure is whole; off, it is " +
+                "cropped the way the game crops it for its own panels.");
 
             WriteIconReport = Config.Bind("Diagnostics", "WriteIconReport", false,
                 "Writes VaultAdmin-icons.txt beside the plugin, listing every picture the item " +
@@ -4059,6 +4065,17 @@ namespace VaultAdmin
                 }
 
                 draw.Invoke(_previewDweller, new object[] { _previewPicture, _previewHeadgear });
+
+                // Every piece is bound — body, outfit, hands, face — so nothing is missing from the
+                // composition. What was missing was the part of it being looked at: SetUITex leaves
+                // the widget sampling a corner of the sheet, and that corner is the head. The whole
+                // sheet is shown instead, which is where the rest of the dweller was all along.
+                if (PreviewWholeSheet.Value)
+                {
+                    _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
+                    if (_previewHeadgear != null) _previewHeadgear.uvRect = new Rect(0f, 0f, 1f, 1f);
+                }
+
                 FitPreview();
 
                 if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
