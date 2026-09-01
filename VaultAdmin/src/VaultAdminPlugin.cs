@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.86.0";
+        public const string PluginVersion = "0.89.0";
 
         internal static ManualLogSource Log;
 
@@ -287,7 +287,8 @@ namespace VaultAdmin
             public string Name;      // for the human only
             public EItemRarity Rarity;
             public string Sprite;    // name of this item's sprite inside its family's atlas
-            public string Stats;     // rarity, what it does, what it sells for
+            public string Stats;     // rarity and what it does, for a list row
+            public string Effect;    // only what it does, for a card that names the rarity itself
             public int Power;        // the same in one number, for ordering
             public int[] Stats7;     // an outfit's seven bonuses, kept so one can be sorted on
         }
@@ -1283,6 +1284,8 @@ namespace VaultAdmin
         private int _filmFrames;
         private int _upkeepFrames;
         private Room[] _rushingRooms;
+        private float _framedSize = -1f;
+        private Vector3 _framedAt;
         private UIAtlas _menuAtlas;
         private readonly List<UITexture> _thumbs = new List<UITexture>();
 
@@ -1992,6 +1995,10 @@ namespace VaultAdmin
 
             try
             {
+                // Drawn whole. A sprite with a border is nine-sliced by default, and slicing
+                // stretches its middle to fill whatever it is given — which is exactly what made
+                // the arrow, the fire and the rest come out squashed one way or the other.
+                sprite.type = UIBasicSprite.Type.Simple;
                 UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
                 if (data == null || data.width <= 0 || data.height <= 0)
                 {
@@ -2063,6 +2070,7 @@ namespace VaultAdmin
 
             icon.atlas = found.Atlas;
             icon.spriteName = found.Sprite;
+            icon.type = UIBasicSprite.Type.Simple;
             FitSprite(icon, IconBox);
         }
 
@@ -2194,17 +2202,24 @@ namespace VaultAdmin
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size)
         {
-            AddIcon(parent, name, candidates, what, x, y, size, true);
+            AddIcon(parent, name, candidates, what, x, y, size, true, null, false);
         }
 
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size, bool preferMenu)
         {
-            AddIcon(parent, name, candidates, what, x, y, size, preferMenu, null);
+            AddIcon(parent, name, candidates, what, x, y, size, preferMenu, null, false);
         }
 
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size, bool preferMenu, string preferredAtlas)
+        {
+            AddIcon(parent, name, candidates, what, x, y, size, preferMenu, preferredAtlas, false);
+        }
+
+        private void AddIcon(Transform parent, string name, string[] candidates, string what,
+                             int x, int y, int size, bool preferMenu, string preferredAtlas,
+                             bool tint)
         {
             Found found = FindIcon(candidates, what, preferMenu, true, preferredAtlas);
             if (found == null) return;
@@ -2225,10 +2240,10 @@ namespace VaultAdmin
             drawn.spriteName = sprite;
             drawn.depth = 4;
 
-            // In the panel's own green. These are the interface's pictograms, drawn white or grey
-            // for whatever screen they came from; a row of them in three colours reads as three
-            // different programs.
-            drawn.color = Skin.Bright;
+            // Only where it was asked for. A resource's picture is a nuka bottle or a drop of
+            // water and it is meant to look like one; the powers are pictograms and read better in
+            // the panel's own green.
+            if (tint) drawn.color = Skin.Bright;
 
             FitInk(drawn, size);
         }
@@ -3150,6 +3165,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
+            icon.type = UIBasicSprite.Type.Simple;
             FitSprite(icon, IconBox);
         }
 
@@ -3183,6 +3199,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
+            icon.type = UIBasicSprite.Type.Simple;
             FitSprite(icon, IconBox);
         }
 
@@ -3241,6 +3258,7 @@ namespace VaultAdmin
             public UILabel Title;      // the parameter's name, and how far through its list you are
             public UILabel Display;
             public UILabel Detail;     // what the thing chosen actually does
+            public UILabel Grade;      // and how rare it is, on a line of its own
 
             // Some choices are better looked at than read: a colour is a colour, and an outfit is
             // the picture of it.
@@ -3274,11 +3292,17 @@ namespace VaultAdmin
                 if (Display != null)
                     Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
 
+                CatalogueEntry chosenItem = Selected as CatalogueEntry;
+
                 if (Detail != null)
-                {
-                    CatalogueEntry thing = Selected as CatalogueEntry;
-                    Detail.text = thing == null || thing.Stats == null ? "" : thing.Stats;
-                }
+                    Detail.text = chosenItem == null || chosenItem.Effect == null
+                        ? ""
+                        : chosenItem.Effect;
+
+                if (Grade != null)
+                    Grade.text = chosenItem == null
+                        ? ""
+                        : chosenItem.Rarity.ToString().ToUpper();
 
                 // The count belongs beside the thing being counted — the name of the parameter —
                 // not tacked onto whichever value happens to be showing. Counted from nought,
@@ -3561,7 +3585,8 @@ namespace VaultAdmin
             Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
 
             int iconCentre = -width / 2 + 10 + (box + 6) / 2;
-            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box);
+            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box,
+                    true, null, true);
 
             int button = 100;
             int left = -width / 2 + 18 + box;
@@ -3788,7 +3813,8 @@ namespace VaultAdmin
             Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
 
             int iconCentre = -width / 2 + 10 + (box + 6) / 2;
-            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box);
+            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box,
+                    true, null, true);
 
             int button = 84;
             int field = 84;
@@ -4971,7 +4997,6 @@ namespace VaultAdmin
             }
         }
 
-        private UILabel _mainStatLabel;
         private Dweller _previewDweller;
         private bool _reportedPieces;
         private UITexture _previewPicture;
@@ -5279,12 +5304,20 @@ namespace VaultAdmin
                 Call(_previewDweller, "ForceUpdateTexture", true);
 
                 // Framed on what is actually there, so a tall dweller and a child both fit.
-                Bounds seen;
-                if (!MeasureRenderers(body, out seen)) return false;
+                // Framed once and left. The bounds shift a little as pieces are put on and taken
+                // off, and re-framing every shot made the figure breathe in and out — very slightly,
+                // three times, exactly as it was opening.
+                if (_framedSize <= 0f)
+                {
+                    Bounds seen;
+                    if (!MeasureRenderers(body, out seen)) return false;
 
-                _previewCamera.transform.position =
-                    new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
-                _previewCamera.orthographicSize = Mathf.Max(0.2f, seen.extents.y * 1.12f);
+                    _framedSize = Mathf.Max(0.2f, seen.extents.y * 1.12f);
+                    _framedAt = new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
+                }
+
+                _previewCamera.transform.position = _framedAt;
+                _previewCamera.orthographicSize = _framedSize;
 
                 // Last look before the shutter. Anything that throws when it is seen must be gone
                 // by now, and if it is not, no picture is worth the game stopping for.
@@ -5302,8 +5335,8 @@ namespace VaultAdmin
 
                 _previewCamera.Render();
 
-                ReportOnce("filmed", "Filmed the stand-in: bounds " + seen.size +
-                                     ", camera size " + _previewCamera.orthographicSize + ".");
+                ReportOnce("filmed", "Filmed the stand-in at camera size " +
+                                     _previewCamera.orthographicSize + ".");
                 return true;
             }
             catch (Exception e)
@@ -5491,82 +5524,8 @@ namespace VaultAdmin
         /// on rewrites the face beneath it — so applying one at a time left the rest behind. The
         /// whole set is cheap to reapply, because each is a field being written.
         /// </summary>
-        /// <summary>
-        /// Which stat the dweller leads with, and what its outfit adds to that.
-        ///
-        /// This is the line a stats panel shows and the bench did not: the figures were all here —
-        /// the seven typed in below, the outfit's bonuses read off its record — but nothing put them
-        /// together, so choosing a coat told you nothing about what it was for.
-        /// </summary>
-        private void RefreshMainStat()
-        {
-            if (_mainStatLabel == null) return;
-
-            try
-            {
-                ReadSpecialInputs();
-
-                CatalogueEntry coat = _outfit.Selected as CatalogueEntry;
-                int[] adds = coat == null ? null : coat.Stats7;
-
-                int best = 0;
-                for (int i = 1; i < Specials.Length; i++)
-                {
-                    int here = _special[i] + (adds != null ? adds[i] : 0);
-                    int there = _special[best] + (adds != null ? adds[best] : 0);
-                    if (here > there) best = i;
-                }
-
-                int bonus = adds != null ? adds[best] : 0;
-                string line = "STRONGEST: " + Specials[best].ToString().ToUpper() + " " +
-                              (_special[best] + bonus);
-
-                if (bonus != 0)
-                    line += "   (" + _special[best] + (bonus > 0 ? " +" : " ") + bonus +
-                            " from the outfit)";
-
-                if (coat != null && !string.IsNullOrEmpty(coat.Stats))
-                    line += "   " + coat.Stats;
-
-                // What the game itself can work out about the body standing there: its health and
-                // what it hits for, both read off the dweller rather than reckoned here.
-                if (_previewDweller != null)
-                {
-                    try
-                    {
-                        object health = ReadObject(_previewDweller, "Health");
-                        object most = health == null ? null : ReadObject(health, "HealthMax");
-                        if (most != null) line += "   HP " + Convert.ToSingle(most).ToString("0");
-
-                        MethodInfo hits = typeof(Dweller).GetMethod(
-                            "GetDamage",
-                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                            null, Type.EmptyTypes, null);
-
-                        if (hits != null)
-                        {
-                            object blow = hits.Invoke(_previewDweller, null);
-                            if (blow != null)
-                                line += "   DMG " + Convert.ToSingle(blow).ToString("0.#");
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        ReportOnce("combat", "Could not read the combat figures: " + e.Message);
-                    }
-                }
-
-                _mainStatLabel.text = line;
-            }
-            catch (Exception e)
-            {
-                ReportOnce("mainstat", "Could not work out the strongest stat: " + e.Message);
-            }
-        }
-
         private void LookChanged(Choice choice)
         {
-            RefreshMainStat();
             if (_previewDweller == null) return;
 
             try
@@ -5772,7 +5731,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 92;
+            const int slotHeight = 104;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -5808,6 +5767,7 @@ namespace VaultAdmin
 
             int textLeft = iconX + icon / 2 + 12;
             int top = y + height / 2 - 13;
+            int textRight = centreX + width / 2 - 10;
 
             Choice captured = choice;
             int arrowsRight = centreX + width / 2 - 16;
@@ -5824,35 +5784,46 @@ namespace VaultAdmin
             caption.maxLineCount = 1;
             choice.Title = caption;
 
-            int middle = y - 2;
+            // The picture takes the whole height under the caption; the three lines beside it are
+            // the name, what it does, and how rare it is — each on its own line at its own fixed
+            // size, so nothing shrinks to fit anything else.
+            int well = height - 30;
+            int middle = y - 13;
 
-            Plate(parent, "SlotWell_" + choice.Caption, iconX, middle, icon + 6, icon + 6,
-                  Skin.Well(icon + 6), 2);
+            Plate(parent, "SlotWell_" + choice.Caption, left + 10 + well / 2, middle, well, well,
+                  Skin.Well(well), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(iconX, middle, 0f);
+            pictureGo.transform.localPosition = new Vector3(left + 10 + well / 2, middle, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
+            int lineLeft = left + 16 + well;
+            int lineWidth = Mathf.Max(48, textRight - lineLeft);
+
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           textLeft, middle,
-                                           Mathf.Max(48, centreX + width / 2 - 10 - textLeft),
-                                           22, Skin.Bright, 3);
-            choice.Display.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.82f));
+                                           lineLeft, middle + 18, lineWidth, 20, Skin.Bright, 3);
+            choice.Display.fontSize = 15;
             choice.Display.maxLineCount = 1;
 
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
-                                           left + 10, y - height / 2 + 14, width - 20, 20,
-                                           Skin.Bright, 3);
-            effect.fontSize = Mathf.Max(14, Mathf.RoundToInt(_fontSize * 0.86f));
+                                           lineLeft, middle - 2, lineWidth, 20, Skin.Bright, 3);
+            effect.fontSize = 14;
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
+
+            UILabel grade = MakeLeftLabel(parent, "SlotRarity_" + choice.Caption, "",
+                                          lineLeft, middle - 22, lineWidth, 20, Skin.Bright, 3);
+            grade.fontSize = 13;
+            grade.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
+            grade.maxLineCount = 1;
+            choice.Grade = grade;
 
             choice.Show();
         }
@@ -5949,22 +5920,9 @@ namespace VaultAdmin
             }
             _cursorY -= specialHeight + RowGap;
 
-            // The one line a stats panel would show: which stat this dweller leads with, and what
-            // the coat on its back adds to it.
-            _mainStatLabel = MakeLabel(parent, "MainStat", "", 0, _cursorY - 24, width - 16, 46,
-                                       Skin.Bright, 3);
-            _mainStatLabel.maxLineCount = 2;
-            _mainStatLabel.overflowMethod = UILabel.Overflow.ShrinkContent;
-            _cursorY -= 48 + RowGap;
-
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
             _cursorY -= 44 + RowGap;
-
-            MakeLabel(parent, "DwellerNote",
-                      "Arrives at the vault door, waiting to be let in.",
-                      0, _cursorY - 13, width, 26, Skin.Rim, 3);
-            _cursorY -= 26 + RowGap;
         }
 
         /// <summary>A label, a value, and a pair of arrows — the game's own way of offering a choice.</summary>
@@ -6092,7 +6050,6 @@ namespace VaultAdmin
             if (_specialInputs[index] != null)
                 _specialInputs[index].value = _special[index].ToString();
 
-            RefreshMainStat();
         }
 
         /// <summary>Takes the typed figures, so a stat can be set rather than clicked up to.</summary>
@@ -6945,6 +6902,7 @@ namespace VaultAdmin
                     entry.Rarity = data.ItemRarity;
                     entry.Sprite = ReadMember(data, spriteMember);
                     entry.Stats = Describe(data, type);
+                    entry.Effect = Describe(data, type, false);
                     entry.Power = Rate(data, type);
                     if (type == EItemType.Outfit) entry.Stats7 = OutfitStats(data);
                     _catalogue.Add(entry);
@@ -7181,12 +7139,19 @@ namespace VaultAdmin
         /// </summary>
         private string Describe(DwellerBaseItem data, EItemType type)
         {
+            return Describe(data, type, true);
+        }
+
+        private string Describe(DwellerBaseItem data, EItemType type, bool withRarity)
+        {
             try
             {
-                string line = data.ItemRarity.ToString().ToUpper();
+                string line = withRarity ? data.ItemRarity.ToString().ToUpper() : "";
 
                 if (type == EItemType.Weapon)
                 {
+                    if (line.Length > 0) line += " ";
+
                     // The game writes its own damage line; there is no reason to write another.
                     string damage = CallText(data, "GetDamageAsString");
                     if (string.IsNullOrEmpty(damage))
