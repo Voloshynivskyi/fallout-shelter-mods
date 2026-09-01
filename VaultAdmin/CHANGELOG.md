@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.5.0
+
+The release. Everything below this line was found by playing the thing.
+
+**The bench was minting weapons.** Dressing the preview figure calls the game's own `EquipWeapon`,
+and the game does what it always does when a dweller's weapon is swapped: it hands the old one back
+to storage. The old one was fabricated for a picture and never came from storage, so every re-dress
+left a real weapon behind — on every gender change, every visit to the page, every creation. Thirty
+or fifty of them in an afternoon. The bench now leaves the storage as it found it, and only ever
+takes back an item it can prove it minted.
+
+**The preview no longer outlives the state that made it.** It is put back to a plain random person
+before the bench's choices go on it, its picture is composed again whenever it is dressed again, and
+the panel opens with someone already standing there. If the game's spawner ever hands back the very
+object the bench was using, that dweller is returned to its own layer and position and let go of,
+rather than kept and re-randomised.
+
+**Pets.** The grant list holds every record — one row per animal per grade, each with its own rarity
+— rather than one row per animal with a grade rolled at random behind it. The constructor still
+picks from the ninety-nine animals, and its animal row no longer prints a rarity that belongs to the
+row beneath it.
+
+**Dwellers arrive in a good mood**, are created as the gender the panel says, and stand about
+properly: they carry no `Animator` at all, and the idle is driven through the legacy `Animation`
+component with the game's own controller switched off.
+
+**Grants confirm themselves** on the row that was pressed, and hairstyles and hair colours are named
+after what they are rather than after the group they belong to.
+
+## 1.0.0
+
+The interface settled on the three greens, three border weights and four text sizes it uses now, and
+an independent audit of the whole file was acted on: a guard that fails closed rather than open,
+restore paths for every vault-wide switch, and a build that shows its warnings instead of hiding
+them behind a green success line.
+
 ## 0.10.0
 
 The panel now opens from a button in the game's own interface, in the bottom-left corner beside the

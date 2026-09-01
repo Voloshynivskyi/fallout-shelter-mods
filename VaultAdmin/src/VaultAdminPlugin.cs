@@ -204,16 +204,17 @@ namespace VaultAdmin
     /// <summary>
     /// Vault Admin — a debug panel for Fallout Shelter.
     ///
-    /// Reads live vault state, and grants resources and boxes.
+    /// Reads live vault state; grants resources, boxes, weapons, outfits, junk and pets;
+    /// builds dwellers and animals to order; and holds a set of vault-wide switches.
     ///
     /// Everything is written through the game's own methods rather than by assigning fields.
     /// Storage.AddResource clamps to the vault's cap and raises the callbacks the interface
     /// listens to; a field assignment would leave the number on screen stale and skip whatever
     /// else the game does when a resource changes.
     ///
-    /// The panel is drawn with IMGUI here and only here. The finished panel is built from the
-    /// game's own NGUI widgets so it belongs to the interface rather than floating over it; doing
-    /// that is the next change. Separating the two means a failure there is a UI failure and
+    /// The panel is built from the game's own NGUI widgets, so it belongs to the interface
+    /// rather than floating over it. An IMGUI scaffold remains as a fallback for when the window
+    /// cannot be built at all; separating the two means a failure there is a UI failure and
     /// nothing else.
     ///
     /// Disabled by default. Installing this without deliberately switching it on changes nothing.
@@ -223,7 +224,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.5.1";
 
         internal static ManualLogSource Log;
 
@@ -556,6 +557,10 @@ namespace VaultAdmin
         // search: looking every frame would be wasteful, and looking twice a second made the
         // button visibly late.
         private GameObject _hudButton;
+
+        // The picture loaded for the HUD button, kept so the next one can replace it rather than
+        // leave it behind.
+        private Texture2D _hudImage;
         private bool _hudPathReported;
         private bool _spriteNamesReported;
 
@@ -656,7 +661,10 @@ namespace VaultAdmin
                 UISprite sprite = clone.GetComponentInChildren<UISprite>(true);
                 if (sprite == null) return;
 
-                ReportSpriteNames(sprite);
+                // Behind the switch that the rest of the diagnostics are behind. This walks
+                // every UISprite in memory and prints the atlas -- useful once, while working out
+                // what the HUD button could borrow, and noise in a stranger's log for ever after.
+                if (WriteIconReport != null && WriteIconReport.Value) ReportSpriteNames(sprite);
 
                 // A picture of our own, if there is one. Tried first: when it works the borrowed
                 // sprite underneath is hidden and the tint stops mattering.
@@ -727,7 +735,13 @@ namespace VaultAdmin
                     return false;
                 }
 
+                // The last one goes before a new one is made. A destroyed GameObject compares
+                // equal to null, so the HUD button is cloned again after every vault load, and
+                // each clone used to leave its predecessor's texture behind.
+                if (_hudImage != null) UnityEngine.Object.Destroy(_hudImage);
+
                 Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                _hudImage = texture;
                 if (!ImageConversion.LoadImage(texture, System.IO.File.ReadAllBytes(path)))
                 {
                     Log.LogWarning("Could not read " + path + " as an image; keeping the borrowed sprite.");
@@ -1255,23 +1269,33 @@ namespace VaultAdmin
         /// <summary>Opens or closes the panel. Shared by the hotkey and the HUD button.</summary>
         public void TogglePanel()
         {
-            _panelOpen = !_panelOpen;
-            if (!_panelOpen) HoldCamera(false);
-            if (!_panelOpen) DisposePreview();
-
-            if (_nguiWindow == null) BuildWindow();
-
-            if (_panelOpen)
+            // Reached straight from a button. NGUI's dispatch does not catch, so an
+            // exception here abandons the rest of that frame's UI events -- and the spec
+            // says a failure in the panel never reaches the game.
+            try
             {
-                _drawChecked = false;
-                _drawCheckFrames = 0;
+                _panelOpen = !_panelOpen;
+                if (!_panelOpen) HoldCamera(false);
+                if (!_panelOpen) DisposePreview();
 
-                // Closing the panel puts the figure away and nothing was bringing it back: the tab
-                // has not changed, so ShowTab never runs, and the bench sat empty until the gender
-                // was stepped. Reopening is a good enough reason to stand someone there.
-                if (_tab == Tab.Create && _making == Making.Dweller) RemakePreview();
+                if (_nguiWindow == null) BuildWindow();
+
+                if (_panelOpen)
+                {
+                    _drawChecked = false;
+                    _drawCheckFrames = 0;
+
+                    // Closing the panel puts the figure away and nothing was bringing it back: the tab
+                    // has not changed, so ShowTab never runs, and the bench sat empty until the gender
+                    // was stepped. Reopening is a good enough reason to stand someone there.
+                    if (_tab == Tab.Create && _making == Making.Dweller) RemakePreview();
+                }
+                if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
+        }
+            catch (Exception e)
+            {
+                ReportOnce("toggle", "toggle failed: " + e);
             }
-            if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
         }
 
         // ---- the window, built from the game's own widget types ----
@@ -2410,40 +2434,50 @@ namespace VaultAdmin
         /// </summary>
         private void ShowTab(Tab tab)
         {
-            _tab = tab;
-
-            foreach (KeyValuePair<Tab, GameObject> entry in _tabPages)
+            // Reached straight from a button. NGUI's dispatch does not catch, so an
+            // exception here abandons the rest of that frame's UI events -- and the spec
+            // says a failure in the panel never reaches the game.
+            try
             {
-                if (entry.Value != null) entry.Value.SetActive(entry.Key == tab);
-            }
+                _tab = tab;
 
-            // A page that has been hidden comes back where it was left, which for a list is
-            // wherever the last search happened to end.
-            if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
+                foreach (KeyValuePair<Tab, GameObject> entry in _tabPages)
+                {
+                    if (entry.Value != null) entry.Value.SetActive(entry.Key == tab);
+                }
 
-            // Made afresh rather than reused. A stand-in kept from last time is wearing what was
-            // last applied to it, so coming back to this page showed the dweller already created
-            // -- or, when the old one had gone, nothing at all until the gender was changed.
-            if (tab == Tab.Create && _making == Making.Dweller && _panelOpen) RemakePreview();
-            else DisposePreview();
+                // A page that has been hidden comes back where it was left, which for a list is
+                // wherever the last search happened to end.
+                if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
 
-            RefreshPreview();
+                // Made afresh rather than reused. A stand-in kept from last time is wearing what was
+                // last applied to it, so coming back to this page showed the dweller already created
+                // -- or, when the old one had gone, nothing at all until the gender was changed.
+                if (tab == Tab.Create && _making == Making.Dweller && _panelOpen) RemakePreview();
+                else DisposePreview();
 
-            // The chosen tab is solid, the rest outlined — the game's own distinction between an
-            // emphasised control and an ordinary one.
-            foreach (KeyValuePair<Tab, GameObject> entry in _tabButtons)
+                RefreshPreview();
+
+                // The chosen tab is solid, the rest outlined — the game's own distinction between an
+                // emphasised control and an ordinary one.
+                foreach (KeyValuePair<Tab, GameObject> entry in _tabButtons)
+                {
+                    if (entry.Value == null) continue;
+
+                    UITexture face = entry.Value.GetComponent<UITexture>();
+                    UILabel text = entry.Value.GetComponentInChildren<UILabel>();
+                    if (face == null) continue;
+
+                    bool active = entry.Key == tab;
+                    face.mainTexture = active
+                        ? Skin.SolidButton(face.width, face.height)
+                        : Skin.Button(face.width, face.height);
+                    if (text != null) text.color = active ? Skin.Ink : Skin.Bright;
+                }
+        }
+            catch (Exception e)
             {
-                if (entry.Value == null) continue;
-
-                UITexture face = entry.Value.GetComponent<UITexture>();
-                UILabel text = entry.Value.GetComponentInChildren<UILabel>();
-                if (face == null) continue;
-
-                bool active = entry.Key == tab;
-                face.mainTexture = active
-                    ? Skin.SolidButton(face.width, face.height)
-                    : Skin.Button(face.width, face.height);
-                if (text != null) text.color = active ? Skin.Ink : Skin.Bright;
+                ReportOnce("showtab", "showtab failed: " + e);
             }
         }
 
@@ -2830,88 +2864,97 @@ namespace VaultAdmin
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
         private void RefreshThings()
         {
-            _shown.Clear();
-
-            string filter = _filter == null ? "" : _filter.Trim().ToLowerInvariant();
-
-            if (_grantFamily == Family.Dweller)
+            // Reached straight from a button. NGUI's dispatch does not catch, so an
+            // exception here abandons the rest of that frame's UI events -- and the spec
+            // says a failure in the panel never reaches the game.
+            try
             {
-                // The named dwellers the game ships: each brings its own look, stats and story, so
-                // this list hands them over whole rather than offering to edit them.
-                // Ordinary newcomers first: most of the time what is wanted is a body at the door,
-                // not one of the fifty-odd people the game has written.
-                for (int i = 0; i < Rarities.Length; i++)
+                _shown.Clear();
+
+                string filter = _filter == null ? "" : _filter.Trim().ToLowerInvariant();
+
+                if (_grantFamily == Family.Dweller)
                 {
-                    string label = "Random " + Rarities[i] + " dweller";
-                    if (filter.Length > 0 && Missing(label, filter)) continue;
-
-                    RandomDweller random = new RandomDweller();
-                    random.Rarity = Rarities[i];
-                    _shown.Add(random);
-                }
-
-                DwellerManager manager = SafeDwellerManager();
-                UniqueDwellerData[] legends = manager != null ? manager.LegendaryDwellers : null;
-
-                if (legends != null)
-                {
-                    for (int i = 0; i < legends.Length; i++)
+                    // The named dwellers the game ships: each brings its own look, stats and story, so
+                    // this list hands them over whole rather than offering to edit them.
+                    // Ordinary newcomers first: most of the time what is wanted is a body at the door,
+                    // not one of the fifty-odd people the game has written.
+                    for (int i = 0; i < Rarities.Length; i++)
                     {
-                        if (legends[i] == null) continue;
-
-                        string label = LegendName(legends[i]);
-                        if (string.IsNullOrEmpty(label)) continue;
+                        string label = "Random " + Rarities[i] + " dweller";
                         if (filter.Length > 0 && Missing(label, filter)) continue;
 
-                        _shown.Add(legends[i]);
+                        RandomDweller random = new RandomDweller();
+                        random.Rarity = Rarities[i];
+                        _shown.Add(random);
                     }
-                }
-            }
-            else if (_grantFamily == Family.Pet)
-            {
-                PreloadPetArt();
-                if (_pets == null) BuildPetCatalogue();
-                if (_petGroups == null) GroupPets();
 
-                if (_pets != null)
-                {
-                    // Every record, not every animal. Folding the hundred and thirty records into
-                    // ninety-nine animals is the right thing for the constructor, where you pick a
-                    // creature and then say what grade of it you want. Handing one over is the
-                    // other question: a common mole rat and a legendary one are two different
-                    // things to be given, and the list that gives them should say so.
-                    for (int i = 0; i < _pets.Count; i++)
+                    DwellerManager manager = SafeDwellerManager();
+                    UniqueDwellerData[] legends = manager != null ? manager.LegendaryDwellers : null;
+
+                    if (legends != null)
                     {
-                        if (filter.Length > 0 && Missing(_pets[i].Name, filter)) continue;
-                        _shown.Add(_pets[i]);
+                        for (int i = 0; i < legends.Length; i++)
+                        {
+                            if (legends[i] == null) continue;
+
+                            string label = LegendName(legends[i]);
+                            if (string.IsNullOrEmpty(label)) continue;
+                            if (filter.Length > 0 && Missing(label, filter)) continue;
+
+                            _shown.Add(legends[i]);
+                        }
                     }
                 }
-            }
-            else
-            {
-                if (_catalogue == null) BuildCatalogue();
-                if (_catalogue != null)
+                else if (_grantFamily == Family.Pet)
                 {
-                    for (int i = 0; i < _catalogue.Count; i++)
+                    PreloadPetArt();
+                    if (_pets == null) BuildPetCatalogue();
+                    if (_petGroups == null) GroupPets();
+
+                    if (_pets != null)
                     {
-                        CatalogueEntry entry = _catalogue[i];
-                        if (entry.Type != _family) continue;
-                        if (filter.Length > 0 && Missing(entry.Name, filter)) continue;
-                        _shown.Add(entry);
+                        // Every record, not every animal. Folding the hundred and thirty records into
+                        // ninety-nine animals is the right thing for the constructor, where you pick a
+                        // creature and then say what grade of it you want. Handing one over is the
+                        // other question: a common mole rat and a legendary one are two different
+                        // things to be given, and the list that gives them should say so.
+                        for (int i = 0; i < _pets.Count; i++)
+                        {
+                            if (filter.Length > 0 && Missing(_pets[i].Name, filter)) continue;
+                            _shown.Add(_pets[i]);
+                        }
                     }
                 }
+                else
+                {
+                    if (_catalogue == null) BuildCatalogue();
+                    if (_catalogue != null)
+                    {
+                        for (int i = 0; i < _catalogue.Count; i++)
+                        {
+                            CatalogueEntry entry = _catalogue[i];
+                            if (entry.Type != _family) continue;
+                            if (filter.Length > 0 && Missing(entry.Name, filter)) continue;
+                            _shown.Add(entry);
+                        }
+                    }
+                }
+
+                UpdateOrderingSwitches();
+                if (_ordering != Ordering.None) _shown.Sort(CompareShown);
+
+                EnsureRows(_shown.Count);
+                ClearConfirmations();
+                FillRows();
+                UpdateGrantArea(Mathf.Min(_shown.Count, MaxGrantRows));
+        }
+            catch (Exception e)
+            {
+                ReportOnce("refresh", "refresh failed: " + e);
             }
-
-            UpdateOrderingSwitches();
-            if (_ordering != Ordering.None) _shown.Sort(CompareShown);
-
-            EnsureRows(_shown.Count);
-            ClearConfirmations();
-            FillRows();
-            UpdateGrantArea(Mathf.Min(_shown.Count, MaxGrantRows));
         }
 
-        /// <summary>Writes this page of the list into rows that already exist.</summary>
         /// <summary>
         /// Orders the list by rarity or by what an item does.
         ///
@@ -2937,6 +2980,12 @@ namespace VaultAdmin
                 if (_statPick >= 0 && item.Stats7 != null) return item.Stats7[_statPick];
                 return item.Power;
             }
+
+            // A record, which is what the grant list now holds. Without this every pet sorted to
+            // the same key and the RARITY and STATS buttons sat there doing nothing at all.
+            PetEntry pet = thing as PetEntry;
+            if (pet != null)
+                return _ordering == Ordering.Rarity ? (int)pet.Rarity : pet.Power;
 
             PetGroup group = thing as PetGroup;
             if (group != null)
@@ -2982,6 +3031,7 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>Writes this page of the list into rows that already exist.</summary>
         private void FillRows()
         {
             for (int i = 0; i < _itemRows.Count; i++)
@@ -3895,9 +3945,11 @@ namespace VaultAdmin
 
             EventDelegate.Callback wrapped = delegate
             {
+                // Cleared even when the action throws. Left set, the next power's answer was
+                // written onto this row instead of its own.
                 _pressed = power;
-                action();
-                _pressed = null;
+                try { action(); }
+                finally { _pressed = null; }
             };
 
             GameObject press = MakeButton(parent, "PowerDo_" + name, "DO IT",
@@ -4001,9 +4053,12 @@ namespace VaultAdmin
                 Vault now = SafeVault();
                 if (ReferenceEquals(now, _knownVault)) return;
 
+                // Not _wasChancePerTier. That one is read off GameParameters, which outlives
+                // every vault -- forgetting it on a vault change lost the original, so the switch
+                // could never put it back and the whole process was left with a rush disaster
+                // chance of zero and a switch reading OFF.
                 _knownVault = now;
                 _wasMinimumChance = -1f;
-                _wasChancePerTier = -1f;
                 _knowIncidents = false;
                 _knowPairLocked = false;
                 _wasMaxDwellers = -1;
@@ -4211,9 +4266,11 @@ namespace VaultAdmin
 
             EventDelegate.Callback wrapped = delegate
             {
+                // Cleared even when the action throws. Left set, the next power's answer was
+                // written onto this row instead of its own.
                 _pressed = power;
-                action();
-                _pressed = null;
+                try { action(); }
+                finally { _pressed = null; }
             };
 
             GameObject press = MakeButton(parent, "PowerDo_" + name, "SET",
@@ -5385,12 +5442,6 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// The colour an appearance entry stands for.
-        ///
-        /// A hair colour is filed either as a shade of its own or as an index into the palette for
-        /// this gender, and either way it is a colour — which is the only useful way to show it.
-        /// </summary>
-        /// <summary>
         /// A hair colour named after the colour it is.
         ///
         /// The catalogue's own label is the name of the group the entry belongs to, not of the
@@ -5461,6 +5512,12 @@ namespace VaultAdmin
             return "PINK";
         }
 
+        /// <summary>
+        /// The colour an appearance entry stands for.
+        ///
+        /// A hair colour is filed either as a shade of its own or as an index into the palette for
+        /// this gender, and either way it is a colour — which is the only useful way to show it.
+        /// </summary>
         private Color? ColourOf(object entry)
         {
             if (entry == null) return null;
@@ -5603,7 +5660,7 @@ namespace VaultAdmin
         ///
         /// The fix is not to stop dressing the figure but to leave the storage as it was found.
         /// </summary>
-        private void PutStorageBack(int was)
+        private void PutStorageBack(int was, string mintedId)
         {
             if (was < 0) return;
 
@@ -5616,6 +5673,8 @@ namespace VaultAdmin
                 int extra = inventory.Items.Count - was;
                 if (extra <= 0) return;
 
+                int taken = 0;
+
                 for (int i = 0; i < extra; i++)
                 {
                     int last = inventory.Items.Count - 1;
@@ -5623,13 +5682,33 @@ namespace VaultAdmin
 
                     DwellerItem leftover = inventory.Items[last];
 
+                    // Only what this bench minted. Deleting by position alone assumed the newest
+                    // row was ours, and the newest row belongs to whoever put it there -- a
+                    // finished craft, a squad home from the wasteland. This code deletes from the
+                    // player's save, so it is going to be sure first.
+                    string id = ReadAsText(leftover, "Id");
+
+                    if (id != mintedId)
+                    {
+                        Log.LogWarning("Something else reached storage while the bench was " +
+                                       "dressing ('" + id + "', expected '" + mintedId +
+                                       "'); leaving it alone.");
+                        break;
+                    }
+
+                    int before = inventory.Items.Count;
+
                     // The game's own removal if it has one that takes an item; the list itself if
-                    // not. Asked for by name because the type is not documented anywhere, and it
-                    // writes down what it does have the one time nothing answers.
-                    if (!TookItBack(inventory, leftover)) inventory.Items.RemoveAt(last);
+                    // not -- and either way, believed only if the count actually falls.
+                    if (!TookItBack(inventory, leftover) && inventory.Items.Count == before)
+                        inventory.Items.RemoveAt(last);
+
+                    if (inventory.Items.Count >= before) break;
+                    taken++;
                 }
 
-                Log.LogInfo("Took back " + extra + " item(s) the dressing table left in storage.");
+                if (taken > 0)
+                    Log.LogInfo("Took back " + taken + " item(s) the dressing table left in storage.");
             }
             catch (Exception e)
             {
@@ -5653,7 +5732,13 @@ namespace VaultAdmin
 
                     if (go == null) continue;
 
-                    go.Invoke(inventory, new object[] { leftover });
+                    // Believed only if it says so. A removal that returns false, or that removes
+                    // by reference and finds nothing, used to be reported as a success -- and the
+                    // caller then skipped its own fallback, so nothing was removed and the log
+                    // said otherwise.
+                    object said = go.Invoke(inventory, new object[] { leftover });
+                    if (said is bool && !(bool)said) continue;
+
                     return true;
                 }
                 catch { }
@@ -5739,8 +5824,10 @@ namespace VaultAdmin
                 if (_weapon.Selected == null && who.EquippedWeapon != null)
                 {
                     int was = CountStorage();
+                    string mintedId = ReadAsText(who.EquippedWeapon, "Id");
+
                     who.EquipWeapon(null);
-                    PutStorageBack(was);
+                    PutStorageBack(was, mintedId);
                 }
             }
             catch (Exception e)
@@ -5770,8 +5857,10 @@ namespace VaultAdmin
                 if (wrong)
                 {
                     int was = CountStorage();
+                    string mintedId = worn == null ? null : ReadAsText(worn, "Id");
+
                     who.EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
-                    PutStorageBack(was);
+                    PutStorageBack(was, mintedId);
                 }
             }
             catch (Exception e)
@@ -5801,11 +5890,12 @@ namespace VaultAdmin
                 // Counted before and put back after, because the game returns whatever was being
                 // worn to the vault -- and on the bench, what was being worn never came from there.
                 int was = dweller == _previewDweller ? CountStorage() : -1;
+                string mintedId = worn == null ? null : ReadAsText(worn, "Id");
 
                 if (type == EItemType.Outfit) dweller.EquipOutfit(item, false);
                 else dweller.EquipWeapon(item);
 
-                PutStorageBack(was);
+                PutStorageBack(was, mintedId);
             }
             catch (Exception e)
             {
@@ -5925,6 +6015,16 @@ namespace VaultAdmin
             return _previewDweller;
         }
 
+        /// <summary>Puts a stand-in back on its own layer, where it stood.</summary>
+        private void PutTheFigureBack(GameObject body)
+        {
+            if (body == null || _standInLayer < 0) return;
+
+            SetLayer(body.transform, _standInLayer);
+            body.transform.position = _standInHome;
+            _standInLayer = -1;
+        }
+
         /// <summary>
         /// Puts the stand-in away without giving it back.
         ///
@@ -5948,13 +6048,7 @@ namespace VaultAdmin
                 // change of gender put the new figure slightly off.
                 _framedSize = -1f;
 
-                if (_standInLayer >= 0)
-                {
-                    SetLayer(body.transform, _standInLayer);
-                    body.transform.position = _standInHome;
-                    _standInLayer = -1;
-                }
-
+                PutTheFigureBack(body);
                 body.SetActive(false);
             }
             catch (Exception e)
@@ -5970,7 +6064,6 @@ namespace VaultAdmin
             // A new stand-in is a new set of animators, and the old readings belong to figures
             // that no longer exist.
             _lastBeat.Clear();
-            _reportedMovers = false;
             _posed = false;
             _framedLocked = false;
 
@@ -6039,6 +6132,14 @@ namespace VaultAdmin
 
             try
             {
+                // The camera's object dies with the scene; this does not. Without letting the
+                // old one go first, every scene load stranded a quarter of a megabyte.
+                if (_previewFilm != null)
+                {
+                    _previewFilm.Release();
+                    UnityEngine.Object.Destroy(_previewFilm);
+                }
+
                 _previewFilm = new RenderTexture(256, 512, 16, RenderTextureFormat.ARGB32);
                 _previewFilm.name = "VaultAdmin_Preview";
                 _previewFilm.Create();
@@ -7062,7 +7163,7 @@ namespace VaultAdmin
         private void StepRarity(int by)
         {
             _rarityIndex = (_rarityIndex + by + Rarities.Length) % Rarities.Length;
-            if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString();
+            if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString().ToUpper();
 
             RemakePreview();
         }
@@ -9231,8 +9332,18 @@ namespace VaultAdmin
                 {
                     Log.LogWarning("The spawner handed back the stand-in itself; letting go of it.");
 
+                    // Given back whole. Detecting this and then dropping the reference was worse
+                    // than not detecting it at all: the layer and the position were captured when
+                    // the figure was borrowed, and forgetting them left a real dweller eight
+                    // thousand units under the vault on a layer nothing draws. Worse, the cache
+                    // still held it, so the next visit to this page adopted the player's new
+                    // dweller all over again and re-randomised their face.
+                    PutTheFigureBack(dweller.gameObject);
+                    dweller.gameObject.SetActive(true);
+
+                    _standIns.Remove(Genders[_genderIndex].ToString());
+
                     _previewDweller = null;
-                    _standInLayer = -1;
                     _texturedOnce = false;
                     _framedSize = -1f;
                     _framedLocked = false;
