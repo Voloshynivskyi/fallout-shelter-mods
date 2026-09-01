@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.60.0";
+        public const string PluginVersion = "0.61.0";
 
         internal static ManualLogSource Log;
 
@@ -4019,6 +4019,126 @@ namespace VaultAdmin
         /// SetUITex is the game's own call for this: it is what the character window, the dweller
         /// list and the room panels all use to turn a dweller into a picture.
         /// </summary>
+        private Camera _previewCamera;
+        private RenderTexture _previewFilm;
+
+        // A layer of its own, so the camera that films the stand-in sees nothing else and nothing
+        // else sees the stand-in.
+        private const int PreviewLayer = 30;
+
+        /// <summary>
+        /// Sets up a camera pointed at nothing in particular, to film the stand-in.
+        ///
+        /// SetUITex draws a head and is meant to: the game's own picture widget for it is ninety by
+        /// ninety, a square, and a square is a portrait. The full-height figure in the character
+        /// window and the barbershop is the actual dweller, filmed. So this films one too.
+        /// </summary>
+        private void EnsurePreviewCamera()
+        {
+            if (_previewCamera != null) return;
+
+            try
+            {
+                _previewFilm = new RenderTexture(256, 512, 16, RenderTextureFormat.ARGB32);
+                _previewFilm.name = "VaultAdmin_Preview";
+                _previewFilm.Create();
+
+                GameObject go = new GameObject("VaultAdmin_PreviewCamera");
+                go.transform.position = new Vector3(0f, -8000f, -10f);
+
+                _previewCamera = go.AddComponent<Camera>();
+                _previewCamera.orthographic = true;
+                _previewCamera.orthographicSize = 1.2f;
+                _previewCamera.nearClipPlane = 0.01f;
+                _previewCamera.farClipPlane = 100f;
+                _previewCamera.clearFlags = CameraClearFlags.SolidColor;
+                _previewCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                _previewCamera.cullingMask = 1 << PreviewLayer;
+                _previewCamera.targetTexture = _previewFilm;
+
+                // Filmed on demand, not sixty times a second for a picture that rarely changes.
+                _previewCamera.enabled = false;
+
+                Log.LogInfo("A camera is standing by to film the stand-in.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("previewcamera", "Could not set up the camera: " + e.Message);
+            }
+        }
+
+        /// <summary>Moves the stand-in in front of the camera, frames it, and takes one picture.</summary>
+        private bool FilmStandIn()
+        {
+            if (_previewDweller == null) return false;
+
+            EnsurePreviewCamera();
+            if (_previewCamera == null || _previewFilm == null) return false;
+
+            GameObject body = _previewDweller.gameObject;
+            bool woken = !body.activeSelf;
+
+            try
+            {
+                // Far from the vault, on a layer only this camera looks at.
+                body.transform.position = new Vector3(0f, -8000f, 0f);
+                body.transform.rotation = Quaternion.identity;
+                SetLayer(body.transform, PreviewLayer);
+
+                if (woken) body.SetActive(true);
+
+                Call(_previewDweller, "SetupTexture");
+                Call(_previewDweller, "ForceUpdateTexture", true);
+
+                // Framed on what is actually there, so a tall dweller and a child both fit.
+                Bounds seen;
+                if (!MeasureRenderers(body, out seen)) return false;
+
+                _previewCamera.transform.position =
+                    new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
+                _previewCamera.orthographicSize = Mathf.Max(0.2f, seen.extents.y * 1.12f);
+
+                _previewCamera.Render();
+
+                ReportOnce("filmed", "Filmed the stand-in: bounds " + seen.size +
+                                     ", camera size " + _previewCamera.orthographicSize + ".");
+                return true;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("filming", "Could not film the stand-in: " + e.Message);
+                return false;
+            }
+            finally
+            {
+                if (woken) body.SetActive(false);
+            }
+        }
+
+        private static void SetLayer(Transform branch, int layer)
+        {
+            branch.gameObject.layer = layer;
+            for (int i = 0; i < branch.childCount; i++) SetLayer(branch.GetChild(i), layer);
+        }
+
+        private static bool MeasureRenderers(GameObject body, out Bounds seen)
+        {
+            seen = new Bounds();
+
+            Renderer[] parts = body.GetComponentsInChildren<Renderer>(true);
+            bool any = false;
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i] == null || !parts[i].enabled) continue;
+
+                if (!any) { seen = parts[i].bounds; any = true; }
+                else seen.Encapsulate(parts[i].bounds);
+            }
+
+            return any;
+        }
+
         private void RefreshPreview()
         {
             if (_previewPicture == null || _previewHeadgear == null) return;
@@ -4026,7 +4146,7 @@ namespace VaultAdmin
             bool have = _previewDweller != null;
 
             _previewPicture.gameObject.SetActive(have);
-            _previewHeadgear.gameObject.SetActive(have);
+            _previewHeadgear.gameObject.SetActive(false);
 
             if (!have) return;
 
@@ -4034,27 +4154,22 @@ namespace VaultAdmin
             // what is drawn until the texture is built again. This is the pair of calls the game
             // makes for itself after a change, and leaving them out is why the hair colour never
             // moved and why a face came back wrong once a helmet went on.
-            // UpdateTexture begins by returning if the object is switched off, and a dweller taken
-            // from the pool arrives switched off — which is why the picture came back as a white
-            // rectangle. It is woken for exactly as long as it takes to compose itself, and put
-            // back to sleep afterwards so that nobody is left standing in the vault.
-            bool woken = false;
-
-            try
+            if (FilmStandIn())
             {
-                GameObject body = _previewDweller.gameObject;
-                if (!body.activeSelf)
-                {
-                    body.SetActive(true);
-                    woken = true;
-                }
+                // The film is an ordinary texture, so the widget goes back to drawing one plainly
+                // rather than wearing the dweller's own material.
+                _previewPicture.material = null;
 
-                Call(_previewDweller, "SetupTexture");
-                Call(_previewDweller, "ForceUpdateTexture", true);
-            }
-            catch (Exception e)
-            {
-                ReportOnce("rebuild", "Rebuilding the picture failed: " + e.Message);
+                Shader plain = Shader.Find("Unlit/Transparent Colored");
+                if (plain != null) _previewPicture.shader = plain;
+
+                _previewPicture.mainTexture = _previewFilm;
+                _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
+                _previewPicture.width = PreviewWidth;
+                _previewPicture.height = PreviewHeight;
+
+                if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
+                return;
             }
 
             try
@@ -4086,20 +4201,11 @@ namespace VaultAdmin
 
                 FitPreview();
 
-                if (!_reportedPieces)
-                {
-                    _reportedPieces = true;
-                    ReportPieces();
-                    CopyGameGeometry();
-                }
+                if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
             }
             catch (Exception e)
             {
                 ReportOnce("preview", "Drawing the dweller failed: " + e.Message);
-            }
-            finally
-            {
-                if (woken && _previewDweller != null) _previewDweller.gameObject.SetActive(false);
             }
         }
 
@@ -4155,68 +4261,6 @@ namespace VaultAdmin
         /// stops the theorising: the material's own texture properties say what is bound and what is
         /// empty, and the dweller's fields say which pieces it thinks it has.
         /// </summary>
-        /// <summary>
-        /// Measures the game's own dweller picture and takes its shape.
-        ///
-        /// The character window does nothing but call SetUITex — the same call, on the same
-        /// material — and it shows a whole person. So the difference is in the widget, not in the
-        /// drawing, and the only honest way to find it is to go and look at theirs. Whatever it
-        /// says wins over anything guessed at here.
-        /// </summary>
-        private void CopyGameGeometry()
-        {
-            try
-            {
-                DwellerInfoWindow[] windows = Resources.FindObjectsOfTypeAll<DwellerInfoWindow>();
-                if (windows.Length == 0)
-                {
-                    Log.LogInfo("No dweller info window in the scene to measure.");
-                    return;
-                }
-
-                for (int i = 0; i < windows.Length; i++)
-                {
-                    UITexture theirs = ReadObject(windows[i], "m_dwellerPicture") as UITexture;
-                    if (theirs == null) continue;
-
-                    Log.LogInfo("The game's own dweller picture: " + theirs.width + "x" +
-                                theirs.height + " uv=" + theirs.uvRect +
-                                " pivot=" + theirs.pivot +
-                                " aspect=" + theirs.keepAspectRatio +
-                                " type=" + theirs.type);
-
-                    if (_previewPicture != null && PreviewCopyGame.Value)
-                    {
-                        _previewPicture.uvRect = theirs.uvRect;
-                        _previewPicture.type = theirs.type;
-                        _previewPicture.keepAspectRatio = theirs.keepAspectRatio;
-
-                        float shape = theirs.height > 0 ? (float)theirs.width / theirs.height : 0.5f;
-                        _previewPicture.height = PreviewHeight;
-                        _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(PreviewHeight * shape));
-
-                        if (_previewHeadgear != null)
-                        {
-                            _previewHeadgear.uvRect = theirs.uvRect;
-                            _previewHeadgear.width = _previewPicture.width;
-                            _previewHeadgear.height = _previewPicture.height;
-                        }
-
-                        Log.LogInfo("  copied onto the preview: " + _previewPicture.width + "x" +
-                                    _previewPicture.height + " uv=" + _previewPicture.uvRect);
-                    }
-
-                    return;
-                }
-
-                Log.LogInfo("The dweller info window has no picture widget to measure.");
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Could not measure the game's dweller picture: " + e.Message);
-            }
-        }
-
         private void ReportPieces()
         {
             if (_previewDweller == null) return;
