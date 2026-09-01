@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.54.0";
+        public const string PluginVersion = "0.55.0";
 
         internal static ManualLogSource Log;
 
@@ -3180,9 +3180,10 @@ namespace VaultAdmin
                     // Where you are in the list, and how much of it there is. Without it every
                     // choice is a walk in the dark: no telling whether there are three more or
                     // forty.
+                    // Counted from nought, because the first entry is a real choice — leave it
+                    // alone — and not an absence of one.
                     int total = Options.Count - 1;
-                    if (total > 0 && Index > 0) text += "   " + Index + "/" + total;
-                    else if (total > 0) text += "   " + total;
+                    if (total > 0) text += "   " + Index + "/" + total;
 
                     Display.text = text;
                 }
@@ -3236,45 +3237,40 @@ namespace VaultAdmin
 
             // The name quietly above, the choice itself plainly below: read the row once to know
             // what it is, then only ever look at the second line.
+            // Bright enough to read at a glance. A caption nobody can see is a row with no name.
             UILabel caption = MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
-                                            left + 10, y + 11, width - 20, 14, Skin.Rim, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+                                            left + 12, y + height / 2 - 12, width - 24, 16,
+                                            Skin.Bright, 3);
+            caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
+            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
 
             Choice captured = choice;
+            int lower = y - 6;
 
-            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 16, y - 8, 24, 22,
+            // Well inside the card. At the old offset the button's own outline sat on the card's.
+            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 24, lower, 28, 26,
                        false, delegate { captured.Step(-1); });
-            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 16, y - 8,
-                       24, 22, false, delegate { captured.Step(1); });
+            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 24, lower,
+                       28, 26, false, delegate { captured.Step(1); });
 
-            int span = width - 64;
+            int span = width - 80;
 
             if (swatchOnly)
             {
                 // A shade has no name worth reading. The colour is the answer.
-                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, centreX, y - 8,
-                                      Mathf.Min(span, 84), 20, Skin.Solid(), 3);
+                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, centreX, lower,
+                                      Mathf.Min(span, 96), 22, Skin.Solid(), 3);
                 choice.Swatch.gameObject.SetActive(false);
             }
             else
             {
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
-                                           centreX + 10, y - 8, span - 24, 20, Skin.Bright, 3);
-                choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.8f));
+                                           centreX + 8, lower, span - 20, 22, Skin.Bright, 3);
+                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.84f));
 
-                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 42, y - 8,
-                                      20, 18, Skin.Solid(), 3);
+                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 52, lower,
+                                      22, 20, Skin.Solid(), 3);
                 choice.Swatch.gameObject.SetActive(false);
-
-                GameObject pictureGo = new GameObject("CompactPic_" + choice.Caption);
-                pictureGo.layer = parent.gameObject.layer;
-                pictureGo.transform.SetParent(parent, false);
-                pictureGo.transform.localPosition = new Vector3(left + 42, y - 8, 0f);
-                pictureGo.transform.localScale = Vector3.one;
-
-                choice.Picture = pictureGo.AddComponent<UISprite>();
-                choice.Picture.depth = 3;
-                choice.Picture.gameObject.SetActive(false);
             }
 
             choice.Show();
@@ -3876,6 +3872,29 @@ namespace VaultAdmin
 
                 _previewDweller = make.Invoke(pool, new object[] { Genders[_genderIndex] }) as Dweller;
 
+                // A pooled dweller has no pieces on it. UpdateTexture does not compose one picture —
+                // it hands the shader a texture per piece, hair here, face there — so with nothing
+                // assigned the shader has nothing to assemble and draws white. This is the call the
+                // spawner makes to fill them in.
+                if (_previewDweller != null)
+                {
+                    try
+                    {
+                        MethodInfo dress = typeof(Dweller).GetMethod(
+                            "GenerateRandomCustomization",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                        if (dress != null)
+                            dress.Invoke(_previewDweller, new object[] { true, null, null, null });
+                        else
+                            ReportOnce("dressup", "The game has no GenerateRandomCustomization.");
+                    }
+                    catch (Exception e)
+                    {
+                        ReportOnce("dressup", "Could not give the stand-in a body: " + e.Message);
+                    }
+                }
+
                 if (_previewDweller == null)
                 {
                     ReportOnce("previewmake", "The game did not make anyone to draw.");
@@ -4111,8 +4130,8 @@ namespace VaultAdmin
             }
         }
 
-        private const int PreviewWidth = 132;
-        private const int PreviewHeight = 262;
+        private const int PreviewWidth = 138;
+        private const int PreviewHeight = 296;
 
         /// <summary>
         /// The dweller down the left, the choices about it down the right.
@@ -4127,7 +4146,7 @@ namespace VaultAdmin
 
             const int rowGap = 4;
 
-            int block = PreviewHeight + 12;
+            int block = PreviewHeight + 14;
             int middle = _cursorY - block / 2;
 
             // The rows share the picture's height between them rather than bunching at the top and
@@ -4209,20 +4228,24 @@ namespace VaultAdmin
             Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
-            UILabel caption = MakeLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                        centreX, y + height / 2 - 10, width - 16, 14, Skin.Rim, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.58f));
+            // The picture on the right, everything to be read on the left: the eye finds the thing
+            // first and the words about it afterwards.
+            int iconX = centreX + width / 2 - icon / 2 - 10;
+            int textRight = iconX - icon / 2 - 8;
 
-            // The arrows sit on the picture's own line, so the eye travels straight across.
-            int iconY = y + 4;
+            UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
+                                            centreX - width / 2 + 12, y + height / 2 - 12,
+                                            width - 24, 16, Skin.Bright, 3);
+            caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
+            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
 
-            Plate(parent, "SlotWell_" + choice.Caption, centreX, iconY, icon + 6, icon + 6,
+            Plate(parent, "SlotWell_" + choice.Caption, iconX, y - 4, icon + 6, icon + 6,
                   Skin.Well(icon + 6), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(centreX, iconY, 0f);
+            pictureGo.transform.localPosition = new Vector3(iconX, y - 4, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
@@ -4230,15 +4253,18 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(false);
 
             Choice captured = choice;
+            int left = centreX - width / 2;
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", centreX - width / 2 + 18, iconY,
-                       26, 24, false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", centreX + width / 2 - 18, iconY,
-                       26, 24, false, delegate { captured.Step(1); });
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", left + 24, y - 4, 28, 26,
+                       false, delegate { captured.Step(-1); });
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", left + 58, y - 4, 28, 26,
+                       false, delegate { captured.Step(1); });
 
-            choice.Display = MakeLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                       centreX, y - height / 2 + 13, width - 12, 18, Skin.Bright, 3);
-            choice.Display.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.68f));
+            int textLeft = left + 78;
+            choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
+                                           textLeft, y - 4, Mathf.Max(40, textRight - textLeft),
+                                           20, Skin.Bright, 3);
+            choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
 
             choice.Show();
         }
