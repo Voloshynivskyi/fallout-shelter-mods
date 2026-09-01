@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.76.0";
+        public const string PluginVersion = "0.77.0";
 
         internal static ManualLogSource Log;
 
@@ -3418,6 +3418,10 @@ namespace VaultAdmin
                      "ten in every stat, for every dweller", PerfectEveryone);
             AddPower(parent, width, "DELIVER EVERY BABY",
                      "every expecting mother gives birth now", DeliverEveryBaby);
+            AddPower(parent, width, "GROW THE CHILDREN",
+                     "every child becomes an adult now", GrowTheChildren);
+            AddPower(parent, width, "FINISH ALL TRAINING",
+                     "every dweller in a training room is done", FinishAllTraining);
 
             AddHeader(parent, "THE VAULT", width);
 
@@ -3429,17 +3433,27 @@ namespace VaultAdmin
                      "raises the population limit", RaisePopulation);
             AddPower(parent, width, "TENFOLD STORAGE",
                      "raises what the vault can hold", RaiseStorage);
+            AddPower(parent, width, "UNLOCK EVERY RECIPE",
+                     "every weapon and outfit becomes craftable", UnlockEveryRecipe);
+
+            AddHeader(parent, "THE WASTELAND", width);
+
+            AddPower(parent, width, "TEN HOURS OUT THERE",
+                     "adds ten hours to the team's time away", AddWastelandHours);
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
             _incidentSwitch = AddPower(parent, width, "INCIDENTS",
                                        "fires, infestations and raiders", ToggleIncidents);
+            _bottleSwitch = AddPower(parent, width, "BOTTLE AND CAPPY",
+                                     "the pair that wander the vault", ToggleBottleAndCappy);
 
             EndScroll(view, width);
             RefreshPowerSwitches();
         }
 
         private GameObject _incidentSwitch;
+        private GameObject _bottleSwitch;
 
         /// <summary>One thing the vault can be told to do, with the reason it exists beside it.</summary>
         private GameObject AddPower(Transform parent, int width, string name, string what,
@@ -3475,12 +3489,229 @@ namespace VaultAdmin
 
         private void RefreshPowerSwitches()
         {
-            if (_incidentSwitch == null) return;
+            Switch(_incidentSwitch, IncidentsOn());
+            Switch(_bottleSwitch, !BottleAndCappyLocked());
+        }
 
-            UILabel text = _incidentSwitch.GetComponentInChildren<UILabel>();
-            if (text == null) return;
+        private static void Switch(GameObject button, bool on)
+        {
+            if (button == null) return;
 
-            text.text = IncidentsOn() ? "TURN OFF" : "TURN ON";
+            UILabel text = button.GetComponentInChildren<UILabel>();
+            if (text != null) text.text = on ? "TURN OFF" : "TURN ON";
+        }
+
+        private bool BottleAndCappyLocked()
+        {
+            try
+            {
+                BottleAndCappyMgr pair = BottleAndCappyMgr.Instance;
+                object locked = pair == null ? null : ReadObject(pair, "m_locked");
+
+                return locked is bool && (bool)locked;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Stops the bottle and the cap wandering about, or lets them back.
+        ///
+        /// The manager keeps a lock of its own for the times the game does not want them — it is
+        /// the same switch, thrown by hand.
+        /// </summary>
+        private void ToggleBottleAndCappy()
+        {
+            try
+            {
+                BottleAndCappyMgr pair = BottleAndCappyMgr.Instance;
+                if (pair == null) { Trouble("Bottle and Cappy are not about."); return; }
+
+                bool wanted = !BottleAndCappyLocked();
+                if (!WriteMember(pair, "m_locked", wanted))
+                {
+                    Trouble("That pair cannot be locked from here.");
+                    return;
+                }
+
+                RefreshPowerSwitches();
+                Say(wanted ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not settle Bottle and Cappy: " + e.Message);
+            }
+        }
+
+        /// <summary>Every child grown, through the call the game makes when one comes of age.</summary>
+        private void GrowTheChildren()
+        {
+            int grown = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null || !one.IsChild) continue;
+
+                try
+                {
+                    Component child = one.GetComponentInChildren(
+                        typeof(MonoBehaviour), true) as Component;
+
+                    MonoBehaviour[] parts = one.GetComponentsInChildren<MonoBehaviour>(true);
+
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        if (parts[i] == null || parts[i].GetType().Name != "DwellerChild") continue;
+
+                        MethodInfo grow = parts[i].GetType().GetMethod(
+                            "OnGrowUp",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                        if (grow == null) continue;
+
+                        grow.Invoke(parts[i], new object[] { true });
+                        grown++;
+                        break;
+                    }
+                }
+                catch { }
+            }
+
+            Say(grown == 0 ? "There are no children." : "Grew " + grown + " child(ren) up.");
+        }
+
+        /// <summary>Every training slot finished, through the slot's own call.</summary>
+        private void FinishAllTraining()
+        {
+            int finished = 0;
+
+            try
+            {
+                // A training slot is not a Unity object and cannot be searched for; it belongs to
+                // its room, and the rooms are what the scene holds.
+                TrainingRoom[] rooms = Resources.FindObjectsOfTypeAll<TrainingRoom>();
+
+                MethodInfo finish = null;
+
+                for (int i = 0; i < rooms.Length; i++)
+                {
+                    if (rooms[i] == null || !rooms[i].gameObject.activeInHierarchy) continue;
+
+                    System.Collections.IEnumerable slots =
+                        ReadObject(rooms[i], "m_slots") as System.Collections.IEnumerable;
+
+                    if (slots == null) continue;
+
+                    foreach (object slot in slots)
+                    {
+                        if (slot == null) continue;
+
+                        if (finish == null)
+                            finish = slot.GetType().GetMethod(
+                                "FinishTraining",
+                                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                                null, Type.EmptyTypes, null);
+
+                        if (finish == null)
+                        {
+                            Trouble("Training cannot be finished from here.");
+                            return;
+                        }
+
+                        try { finish.Invoke(slot, null); finished++; }
+                        catch { }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not finish the training: " + e.Message);
+                return;
+            }
+
+            Say(finished == 0 ? "Nobody is training." : "Finished " + finished + " training(s).");
+        }
+
+        /// <summary>
+        /// Unlocks every recipe, through the window that keeps the list of them.
+        ///
+        /// This unlocks what can be made, not what has been made: the game still wants the
+        /// ingredients. Crafting for nothing is a different thing and is not possible without
+        /// changing how the game itself behaves.
+        /// </summary>
+        private void UnlockEveryRecipe()
+        {
+            int opened = 0;
+
+            try
+            {
+                VaultGUIManager gui = VaultGUIManager.Instance;
+                object window = gui == null ? null : ReadObject(gui, "m_survivalWindow");
+
+                if (window == null) { Trouble("The survival guide is not open to be written to."); return; }
+
+                MethodInfo unlock = window.GetType().GetMethod(
+                    "UnlockRecipe",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (unlock == null) { Trouble("Recipes cannot be unlocked from here."); return; }
+
+                if (_catalogue == null) BuildCatalogue();
+                if (_catalogue == null) return;
+
+                for (int i = 0; i < _catalogue.Count; i++)
+                {
+                    CatalogueEntry entry = _catalogue[i];
+                    if (entry.Type != EItemType.Weapon && entry.Type != EItemType.Outfit) continue;
+
+                    try
+                    {
+                        unlock.Invoke(window, new object[] { new DwellerItem(entry.Type, entry.Id) });
+                        opened++;
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not unlock the recipes: " + e.Message);
+                return;
+            }
+
+            Say("Unlocked " + opened + " recipe(s).");
+        }
+
+        /// <summary>
+        /// Adds to the time the wasteland team has been away.
+        ///
+        /// The game keeps one figure for it — how long they have been out — and everything about
+        /// what they find follows from that. The figure is written down before and after, because
+        /// its unit is not stated anywhere and the log is the only way to see it.
+        /// </summary>
+        private void AddWastelandHours()
+        {
+            try
+            {
+                QuestDataManager quests = QuestDataManager.Instance;
+                object team = quests == null ? null : ReadObject(quests, "CurrentWastelandTeam");
+
+                if (team == null) { Trouble("Nobody is out in the wasteland."); return; }
+
+                object spent = ReadObject(team, "m_questSpentTime");
+                double was = spent == null ? 0d : Convert.ToDouble(spent);
+
+                double now = was + 10d * 3600d;
+                if (!WriteMember(team, "m_questSpentTime", now))
+                {
+                    Trouble("The team's time cannot be changed from here.");
+                    return;
+                }
+
+                Say("The team has been out " + was.ToString("0") + " -> " + now.ToString("0") + ".");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not add to the team's time: " + e.Message);
+            }
         }
 
         private bool IncidentsOn()
