@@ -236,8 +236,8 @@ namespace VaultAdmin
             float cx = w * 0.5f;
             float cy = w * 0.5f;
 
-            float half = w * 0.38f;    // half the width of the top rhombus
-            float rise = w * 0.40f;    // the length of a vertical edge
+            float half = w * 0.44f;    // half the width of the top rhombus
+            float rise = w * 0.46f;    // the length of a vertical edge
 
             // The six corners of the silhouette, and the one in the middle where all three faces
             // meet -- the near vertical edge, pointing at the viewer.
@@ -343,7 +343,7 @@ namespace VaultAdmin
             float t = (u.x * q.y - u.y * q.x) / denom;
 
             int[] mask = PipMask(pips);
-            float radius = 0.125f;
+            float radius = 0.15f;
             float best = 0f;
 
             for (int cell = 0; cell < 9; cell++)
@@ -354,7 +354,7 @@ namespace VaultAdmin
                 float dt = t - (0.25f + 0.25f * (cell / 3));
 
                 // Softened in face space, then scaled back to pixels so the feather is even.
-                float cover = Mathf.Clamp01((radius - Mathf.Sqrt(ds * ds + dt * dt)) * w * 0.35f);
+                float cover = Mathf.Clamp01((radius - Mathf.Sqrt(ds * ds + dt * dt)) * w * 0.55f);
                 if (cover > best) best = cover;
             }
 
@@ -566,7 +566,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.0";
+        public const string PluginVersion = "1.5.0";
 
         internal static ManualLogSource Log;
 
@@ -1712,15 +1712,28 @@ namespace VaultAdmin
         // own — nought point seven here, nought point seven-four there, a bare sixteen somewhere
         // else — and a dozen sizes that are nearly the same read as carelessness rather than as
         // hierarchy.
-        private int TextTitle { get { return Mathf.RoundToInt(_fontSize * 1.2f); } }
-        private int TextHeading { get { return _fontSize; } }
-        private int TextBody { get { return Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.82f)); } }
-        private int TextSmall { get { return Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f)); } }
+        // Six sizes, and every label in the panel is one of them. The ladder existed before
+        // this; what did not was anything applying it, so most labels were drawn at the borrowed
+        // font's own size and the panel read as though everything in it were equally important.
+        // MakeLabel now starts every label at TextRow, and the tiers below are asked for by the
+        // few places that want something quieter.
+        //
+        //   Title    the window's name, once
+        //   Heading  a section, and the tabs
+        //   Row      what a row is: an item, a power, a resource, a chosen value
+        //   Body     a figure or a caption beside one
+        //   Note     what a thing does, under its name
+        //   Tiny     an index, a count, a position in a list
+        private int TextTitle { get { return Mathf.RoundToInt(_fontSize * 1.15f); } }
+        private int TextHeading { get { return Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.92f)); } }
+        private int TextRow { get { return Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.74f)); } }
+        private int TextBody { get { return Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.62f)); } }
+        private int TextTiny { get { return Mathf.Max(9, Mathf.RoundToInt(_fontSize * 0.46f)); } }
 
         // Under a power's name, where the line explains rather than names. It had been the same
         // size as the small text everywhere else and, being twice the length of most of it, read
         // as the louder half of its own row.
-        private int TextNote { get { return Mathf.Max(9, Mathf.RoundToInt(_fontSize * 0.56f)); } }
+        private int TextNote { get { return Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.52f)); } }
 
         private const int WindowDepth = 5000;   // above everything the game draws
 
@@ -2827,7 +2840,7 @@ namespace VaultAdmin
                 UILabel word = tab.GetComponentInChildren<UILabel>();
                 if (word != null)
                 {
-                    word.fontSize = TextBody;
+                    word.fontSize = TextHeading;
                     word.maxLineCount = 1;
                 }
 
@@ -3248,6 +3261,7 @@ namespace VaultAdmin
             // worth is the reason to pick one item out of two hundred.
             row.Stats = MakeLeftLabel(row.Root.transform, "Stats", "",
                                       textLeft, -12, textWidth, 20, Skin.Bright, 3);
+            row.Stats.fontSize = TextNote;
             row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
 
             int captured = index;
@@ -4172,7 +4186,7 @@ namespace VaultAdmin
             UILabel caption = MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
                                             left + 12, y + height / 2 - 13, width - 24, 16,
                                             Skin.Bright, 3);
-            caption.fontSize = TextSmall;
+            caption.fontSize = TextBody;
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
             caption.maxLineCount = 1;
             choice.Title = caption;
@@ -4202,7 +4216,7 @@ namespace VaultAdmin
 
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
                                            centreX, lower, span, 22, Skin.Bright, 3);
-                choice.Display.fontSize = TextBody;
+                choice.Display.fontSize = TextRow;
                 choice.Display.maxLineCount = 1;
                 choice.SwatchIsTheAnswer = true;
             }
@@ -4210,7 +4224,7 @@ namespace VaultAdmin
             {
                 choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
                                            centreX, lower, span, 22, Skin.Bright, 3);
-                choice.Display.fontSize = TextBody;
+                choice.Display.fontSize = TextRow;
                 choice.Display.maxLineCount = 1;
             }
 
@@ -7330,7 +7344,7 @@ namespace VaultAdmin
         }
 
         private const int PreviewWidth = 138;
-        private const int PreviewHeight = 296;
+        private const int PreviewHeight = 214;
 
         /// <summary>
         /// The dweller down the left, the choices about it down the right.
@@ -7345,28 +7359,37 @@ namespace VaultAdmin
 
             const int rowGap = 4;
 
-            // The figure and the die share one container, each in a recess of its own: the die
-            // changes the person above it, and standing them in the same box says so without a
-            // word. Tucked into the corner of the figure's own recess it was something in the way
-            // of the picture rather than a control.
-            const int rollHeight = 46;
-            const int dieRoom = 60;
+            // One box holding two compartments, divided by a line, the way a handset used to
+            // put the screen above the keys. Two separate boxes made the figure and its die look
+            // like two unrelated things that happened to be stacked; one box with a line in it
+            // says they belong together and that the lower half does something.
+            //
+            // Everything inside is measured from a single padding, so the gap above the figure,
+            // below the die and either side of both is the same number.
+            const int pad = 8;
+            const int dieRoom = 52;
+            const int rollHeight = dieRoom - 12;
 
-            int block = PreviewHeight + 14 + dieRoom;
+            int wellWidth = PreviewWidth + pad * 2;
+            int wellHeight = PreviewHeight + dieRoom + pad * 3 + 2;
+
+            int block = wellHeight + pad * 2;
             int middle = _cursorY - block / 2;
 
-            // The rows share the picture's height between them rather than bunching at the top and
+            // The rows share the box's height between them rather than bunching at the top and
             // leaving a hole underneath it.
-            int rowHeight = (block - 12 - (rows.Length - 1) * rowGap) / rows.Length;
+            int rowHeight = (block - pad * 2 - (rows.Length - 1) * rowGap) / rows.Length;
 
             Plate(parent, "LooksPlate", 0, middle, width, block, Skin.Row(width, block), 1);
 
-            // The picture, down the left, raised by the room the die takes below it.
-            int pictureX = -width / 2 + PreviewWidth / 2 + 10;
-            int pictureY = middle + dieRoom / 2;
+            // The box, down the left, and everything inside it measured from its own top edge.
+            int pictureX = -width / 2 + pad + wellWidth / 2;
 
-            Plate(parent, "PreviewWell", pictureX, pictureY, PreviewWidth + 8, PreviewHeight + 8,
-                  Skin.Well(PreviewWidth + 8), 2);
+            Plate(parent, "PreviewWell", pictureX, middle, wellWidth, wellHeight,
+                  Skin.Well(wellWidth), 2);
+
+            int wellTop = middle + wellHeight / 2;
+            int pictureY = wellTop - pad - PreviewHeight / 2;
 
             GameObject picture = new GameObject("PreviewPicture");
             picture.layer = parent.gameObject.layer;
@@ -7390,12 +7413,13 @@ namespace VaultAdmin
             _previewHeadgear.height = PreviewHeight;
             _previewHeadgear.depth = 4;
 
-            // Its own recess under the figure's, the same width, so the two read as one column.
-            int dieWellHeight = dieRoom - 12;
-            int dieY = pictureY - (PreviewHeight + 8) / 2 - 6 - dieWellHeight / 2;
+            // The line, and the die below it: the same padding above the line as below it.
+            int lineY = pictureY - PreviewHeight / 2 - pad;
+            int dieY = lineY - 1 - pad - dieRoom / 2;
 
-            Plate(parent, "RollWell", pictureX, dieY, PreviewWidth + 8, dieWellHeight,
-                  Skin.Well(PreviewWidth + 8), 2);
+            UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
+                                      Skin.Solid(), 3);
+            divider.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.55f);
 
             GameObject die = new GameObject("RollLooks");
             die.layer = parent.gameObject.layer;
@@ -7420,12 +7444,13 @@ namespace VaultAdmin
             press.tweenTarget = die;
             press.onClick.Add(new EventDelegate(RollTheLooks));
 
-            // The choices, down the right.
-            int columnLeft = -width / 2 + PreviewWidth + 24;
-            int columnWidth = width - PreviewWidth - 34;
+            // The choices, down the right, with the same padding from the box as the box has
+            // from the plate and as the rows have from each other's ends.
+            int columnLeft = -width / 2 + pad + wellWidth + pad;
+            int columnWidth = width - wellWidth - pad * 3;
             int columnCentre = columnLeft + columnWidth / 2;
 
-            int top = middle + block / 2 - 7 - rowHeight / 2;
+            int top = middle + block / 2 - pad - rowHeight / 2;
 
             for (int i = 0; i < rows.Length; i++)
                 AddCompactChoice(parent, rows[i], columnCentre,
@@ -7480,7 +7505,7 @@ namespace VaultAdmin
 
             UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
                                             left + 12, top, width - 78, 18, Skin.Bright, 3);
-            caption.fontSize = TextSmall;
+            caption.fontSize = TextBody;
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.85f);
             caption.maxLineCount = 1;
             choice.Title = caption;
@@ -7507,19 +7532,19 @@ namespace VaultAdmin
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
                                            lineLeft, middle + 20, lineWidth, 22, Skin.Bright, 3);
-            choice.Display.fontSize = TextBody;
+            choice.Display.fontSize = TextRow;
             choice.Display.maxLineCount = 1;
 
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
                                            lineLeft, middle, lineWidth, 22, Skin.Bright, 3);
-            effect.fontSize = TextBody;
+            effect.fontSize = TextNote;
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
 
             UILabel grade = MakeLeftLabel(parent, "SlotRarity_" + choice.Caption, "",
                                           lineLeft, middle - 20, lineWidth, 22, Skin.Bright, 3);
-            grade.fontSize = TextSmall;
+            grade.fontSize = TextNote;
             grade.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
             grade.maxLineCount = 1;
             choice.Grade = grade;
@@ -7792,7 +7817,9 @@ namespace VaultAdmin
         {
             int y = _cursorY - 17;
             Plate(parent, "Header_" + text, 0, y, width, 34, Skin.Header(width, 34), 1);
-            MakeLabel(parent, "HeaderText_" + text, text, 0, y, width - 20, 34, Skin.Ink, 3);
+            UILabel heading = MakeLabel(parent, "HeaderText_" + text, text, 0, y, width - 20, 34,
+                                        Skin.Ink, 3);
+            heading.fontSize = TextHeading;
             _cursorY -= 34 + RowGap;
         }
 
@@ -7807,6 +7834,28 @@ namespace VaultAdmin
         // Room for a picture that is worth looking at, with everything else to the right of it.
         private const int ResourceCell = 80;
         private const int ResourceIcon = 62;
+
+        /// <summary>
+        /// What a resource is called, rather than what the enum calls it.
+        ///
+        /// StimPack, RadAway and NukaColaQuantum are the names of fields in somebody's code. The
+        /// things themselves are a Stimpak, a RadAway and a Nuka-Cola Quantum, and a panel that
+        /// says otherwise is showing the player the inside of the game rather than the game.
+        /// Anything not in this list is at least split into words rather than left as one.
+        /// </summary>
+        private static string ResourceName(EResource resource)
+        {
+            switch (resource)
+            {
+                case EResource.Energy:           return "POWER";
+                case EResource.Food:             return "FOOD";
+                case EResource.Water:            return "WATER";
+                case EResource.StimPack:         return "STIMPAK";
+                case EResource.RadAway:          return "RADAWAY";
+                case EResource.NukaColaQuantum:  return "NUKA-COLA QUANTUM";
+                default:                         return Tidy(resource.ToString()).ToUpper();
+            }
+        }
 
         private void AddResourceRow(Transform parent, EResource resource, int width)
         {
@@ -7827,7 +7876,7 @@ namespace VaultAdmin
             int right = width / 2 - 8;
             int span = right - left;
 
-            MakeLeftLabel(parent, "Name_" + resource, resource.ToString(),
+            MakeLeftLabel(parent, "Name_" + resource, ResourceName(resource),
                           left, top, span - 150, 26, Skin.Bright, 3);
 
             _resourceLabels[resource] = MakeRightLabel(parent, "Value_" + resource, "-",
@@ -8124,6 +8173,12 @@ namespace VaultAdmin
             label.depth = depthOffset;
             label.alignment = NGUIText.Alignment.Center;
             label.overflowMethod = UILabel.Overflow.ShrinkContent;
+
+            // The tier everything starts on. Left unset, a label takes the borrowed font's own
+            // size -- which is how a panel of forty labels came to have no relationship at all
+            // between what a thing was and how loudly it said so. The few places that want
+            // quieter or louder ask for it straight after this.
+            label.fontSize = TextRow;
 
             return label;
         }
