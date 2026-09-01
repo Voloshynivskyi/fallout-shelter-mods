@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.90.0";
+        public const string PluginVersion = "0.91.0";
 
         internal static ManualLogSource Log;
 
@@ -1284,6 +1284,7 @@ namespace VaultAdmin
         private int _filmFrames;
         private int _upkeepFrames;
         private Room[] _rushingRooms;
+        private bool _texturedOnce;
         private float _framedSize = -1f;
         private Vector3 _framedAt;
         private UIAtlas _menuAtlas;
@@ -4838,7 +4839,7 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
 
-            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 54);
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 62);
         }
 
         private string LookLabel(object entry)
@@ -5305,7 +5306,6 @@ namespace VaultAdmin
             if (!_previewFilm.IsCreated() && !_previewFilm.Create()) return false;
 
             GameObject body = _previewDweller.gameObject;
-            bool woken = !body.activeSelf;
 
             try
             {
@@ -5320,10 +5320,16 @@ namespace VaultAdmin
                 body.transform.rotation = Quaternion.identity;
                 SetLayer(body.transform, PreviewLayer());
 
-                if (woken) body.SetActive(true);
+                if (!body.activeSelf) body.SetActive(true);
 
-                Call(_previewDweller, "SetupTexture");
-                Call(_previewDweller, "ForceUpdateTexture", true);
+                // Rebuilt when something about the look changes, not sixty times a second: the
+                // composition does not move on its own, only the animation does.
+                if (!_texturedOnce)
+                {
+                    _texturedOnce = true;
+                    Call(_previewDweller, "SetupTexture");
+                    Call(_previewDweller, "ForceUpdateTexture", true);
+                }
 
                 // Framed on what is actually there, so a tall dweller and a child both fit.
                 // Framed once and left. The bounds shift a little as pieces are put on and taken
@@ -5368,7 +5374,10 @@ namespace VaultAdmin
             }
             finally
             {
-                if (woken) body.SetActive(false);
+                // Left awake on purpose. A dweller that is switched off does not animate, and the
+                // figure was a photograph; kept running it idles the way one in the vault does. It
+                // is out of sight regardless — far from the vault, on a layer only this camera
+                // looks at — and it is put to sleep when the bench is left.
             }
         }
 
@@ -5553,6 +5562,7 @@ namespace VaultAdmin
             try
             {
                 ApplyLooks(_previewDweller);
+                _texturedOnce = false;
                 RefreshPreview();
             }
             catch (Exception e)
@@ -5753,7 +5763,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 104;
+            const int slotHeight = 100;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -5801,11 +5811,11 @@ namespace VaultAdmin
 
             // The caption used to start at the card's edge while the three lines beneath it began
             // past the picture, so nothing lined up with anything.
-            int lineStart = left + 16 + 62;
+            int lineStart = left + 16 + 70;
 
             UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
                                             lineStart, top, width - 74 - 62, 14, Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+            caption.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.78f));
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
             caption.maxLineCount = 1;
             choice.Title = caption;
@@ -5815,8 +5825,8 @@ namespace VaultAdmin
             // size, so nothing shrinks to fit anything else.
             // The recess was three-quarters empty: a box of seventy-four holding a picture of
             // forty-four. The box came in and the picture went up to meet it.
-            int well = 62;
-            int middle = y - 13;
+            int well = 70;
+            int middle = y - 12;
 
             Plate(parent, "SlotWell_" + choice.Caption, left + 10 + well / 2, middle, well, well,
                   Skin.Well(well), 2);
@@ -5835,20 +5845,20 @@ namespace VaultAdmin
             int lineWidth = Mathf.Max(48, textRight - lineLeft);
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           lineLeft, middle + 18, lineWidth, 20, Skin.Bright, 3);
-            choice.Display.fontSize = 15;
+                                           lineLeft, middle + 22, lineWidth, 22, Skin.Bright, 3);
+            choice.Display.fontSize = 16;
             choice.Display.maxLineCount = 1;
 
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
-                                           lineLeft, middle - 2, lineWidth, 20, Skin.Bright, 3);
-            effect.fontSize = 14;
+                                           lineLeft, middle, lineWidth, 22, Skin.Bright, 3);
+            effect.fontSize = 15;
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
 
             UILabel grade = MakeLeftLabel(parent, "SlotRarity_" + choice.Caption, "",
-                                          lineLeft, middle - 22, lineWidth, 20, Skin.Bright, 3);
-            grade.fontSize = 13;
+                                          lineLeft, middle - 22, lineWidth, 22, Skin.Bright, 3);
+            grade.fontSize = 14;
             grade.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
             grade.maxLineCount = 1;
             choice.Grade = grade;
@@ -5948,13 +5958,14 @@ namespace VaultAdmin
             }
             _cursorY -= specialHeight + RowGap;
 
-            // The one button on the bench that does anything, and it looked like a header. A
-            // picture beside the words is what tells them apart at a glance.
-            MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
-                       CreateDwellerFromPanel);
+            // The one button on the bench that does anything, and it looked like a header. A plus
+            // after the words says what it is for, and needs no atlas to say it.
+            GameObject make = MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0,
+                                         _cursorY - 22, width, 44, true, CreateDwellerFromPanel);
 
-            AddIcon(parent, "CreateDwellerIcon", new[] { "Icon_dwellerPlain", "Icon_dweller" },
-                    "create dweller", -width / 2 + 34, _cursorY - 22, 28, true, null, false);
+            UILabel plus = MakeLabel(make.transform, "Plus", "+", width / 2 - 30, 0, 30, 40,
+                                     Skin.Ink, 6);
+            plus.fontSize = Mathf.RoundToInt(_fontSize * 1.4f);
             _cursorY -= 44 + RowGap;
         }
 
