@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.52.0";
+        public const string PluginVersion = "0.53.0";
 
         internal static ManualLogSource Log;
 
@@ -1330,7 +1330,7 @@ namespace VaultAdmin
                 // way out says what the last press actually did, which is the difference between
                 // using the panel and guessing at it.
                 _statusLabel = MakeLabel(_nguiWindow.transform, "Status", "",
-                                         0, -_windowHeight / 2 + 52, _windowWidth - 56, 26,
+                                         0, -_windowHeight / 2 + 40, _windowWidth - 56, 22,
                                          Skin.Bright, 4);
                 _statusLabel.alignment = NGUIText.Alignment.Center;
 
@@ -2249,7 +2249,7 @@ namespace VaultAdmin
 
         // Below the title and the tab bar; above the close button.
         private int ContentTop() { return _windowHeight / 2 - 86; }
-        private int ContentBottom() { return -_windowHeight / 2 + 84; }
+        private int ContentBottom() { return -_windowHeight / 2 + 62; }
 
         // ---- the items and pets page ----
 
@@ -3635,6 +3635,8 @@ namespace VaultAdmin
 
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
+
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 56);
         }
 
         private string LookLabel(object entry)
@@ -3838,24 +3840,29 @@ namespace VaultAdmin
                 DwellerManager manager = SafeDwellerManager();
                 if (manager == null) return;
 
-                MethodInfo make = typeof(DwellerManager).GetMethod(
-                    "CreateNPCDweller",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(EDwellerRarity), typeof(EGender), typeof(Vector3), typeof(Quaternion) },
-                    null);
-
-                if (make == null)
+                // Where the game gets the figures for its own display windows:
+                // CreateDwellerToDisplay is nothing but DwellerPool.GetInstance and a customisation
+                // applied on top. A dweller built any other way came out as a head, because a
+                // pooled one is the one that arrives already assembled.
+                DwellerPool pool = DwellerPool.Instance;
+                if (pool == null)
                 {
-                    ReportOnce("previewmake", "The game has no CreateNPCDweller; nothing to draw.");
+                    ReportOnce("previewmake", "The dweller pool is not up yet; nothing to draw.");
                     return;
                 }
 
-                _previewDweller = make.Invoke(manager, new object[]
+                MethodInfo make = typeof(DwellerPool).GetMethod(
+                    "GetInstance",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { typeof(EGender) }, null);
+
+                if (make == null)
                 {
-                    Rarities[_rarityIndex], Genders[_genderIndex],
-                    Vector3.zero, Quaternion.identity
-                }) as Dweller;
+                    ReportOnce("previewmake", "The pool has no GetInstance; nothing to draw.");
+                    return;
+                }
+
+                _previewDweller = make.Invoke(pool, new object[] { Genders[_genderIndex] }) as Dweller;
 
                 if (_previewDweller == null)
                 {
@@ -3895,14 +3902,14 @@ namespace VaultAdmin
 
             try
             {
-                DwellerManager manager = SafeDwellerManager();
-                MethodInfo remove = manager == null ? null : typeof(DwellerManager).GetMethod(
-                    "RemoveNPCDweller",
+                DwellerPool pool = DwellerPool.Instance;
+                MethodInfo release = pool == null ? null : typeof(DwellerPool).GetMethod(
+                    "ReleaseInstance",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                     null, new[] { typeof(Dweller) }, null);
 
-                if (remove != null) remove.Invoke(manager, new object[] { _previewDweller });
-                else ReportOnce("previewdrop", "The game has no RemoveNPCDweller; the stand-in stays.");
+                if (release != null) release.Invoke(pool, new object[] { _previewDweller });
+                else ReportOnce("previewdrop", "The pool has no ReleaseInstance; the stand-in stays.");
             }
             catch (Exception e)
             {
@@ -4087,7 +4094,7 @@ namespace VaultAdmin
         /// </summary>
         private void BuildLooksBlock(Transform parent, int width)
         {
-            Choice[] rows = { _hair, _face, _hairColour, _skin, _helmet, _outfit, _weapon };
+            Choice[] rows = { _hair, _face, _hairColour, _skin, _helmet };
 
             const int rowHeight = 36;
             const int rowGap = 3;
@@ -4136,10 +4143,70 @@ namespace VaultAdmin
                 AddCompactChoice(parent, rows[i], columnCentre,
                                  top - i * (rowHeight + rowGap), columnWidth, rows[i] == _skin);
 
+            // Five rows beside a picture two hundred and sixty tall leaves a gap; the picture is
+            // what the gap is for.
+
             _cursorY -= block + RowGap;
+
+            // What the dweller carries, in two slots side by side, the way the game shows equipment.
+            const int slotHeight = 104;
+            int slotWidth = (width - 8) / 2;
+            int slotY = _cursorY - slotHeight / 2;
+
+            AddGearSlot(parent, _outfit, -width / 2 + slotWidth / 2, slotY, slotWidth, slotHeight);
+            AddGearSlot(parent, _weapon, width / 2 - slotWidth / 2, slotY, slotWidth, slotHeight);
+
+            _cursorY -= slotHeight + RowGap;
 
             _previewPicture.gameObject.SetActive(false);
             _previewHeadgear.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// One thing the dweller carries, shown as a slot with the picture large.
+        ///
+        /// An item is recognised by its picture long before its name is read, and the row it used to
+        /// sit in gave it twenty pixels to be recognised in.
+        /// </summary>
+        private void AddGearSlot(Transform parent, Choice choice, int centreX, int y,
+                                 int width, int height)
+        {
+            const int icon = 56;
+
+            Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
+                  Skin.Row(width, height), 1);
+
+            UILabel caption = MakeLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
+                                        centreX, y + height / 2 - 12, width - 16, 16, Skin.Rim, 3);
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+
+            int iconY = y + 4;
+            Plate(parent, "SlotWell_" + choice.Caption, centreX, iconY, icon + 8, icon + 8,
+                  Skin.Well(icon + 8), 2);
+
+            GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
+            pictureGo.layer = parent.gameObject.layer;
+            pictureGo.transform.SetParent(parent, false);
+            pictureGo.transform.localPosition = new Vector3(centreX, iconY, 0f);
+            pictureGo.transform.localScale = Vector3.one;
+
+            choice.Picture = pictureGo.AddComponent<UISprite>();
+            choice.Picture.depth = 4;
+            choice.Picture.gameObject.SetActive(false);
+
+            Choice captured = choice;
+            int arrowsY = y - height / 2 + 18;
+
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", centreX - width / 2 + 20, arrowsY,
+                       28, 24, false, delegate { captured.Step(-1); });
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", centreX + width / 2 - 20, arrowsY,
+                       28, 24, false, delegate { captured.Step(1); });
+
+            choice.Display = MakeLabel(parent, "SlotValue_" + choice.Caption, "-",
+                                       centreX, arrowsY, width - 76, 20, Skin.Bright, 3);
+            choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.75f));
+
+            choice.Show();
         }
 
         private void BuildDwellerSection(Transform parent, int width)
