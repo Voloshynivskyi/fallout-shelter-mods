@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.75.0";
+        public const string PluginVersion = "0.76.0";
 
         internal static ManualLogSource Log;
 
@@ -3947,7 +3947,13 @@ namespace VaultAdmin
                                         BonusEffects[_petBonusIndex].ToString(),
                                         -width / 2 + 98, bonusY, width - 200, RowHeight,
                                         Skin.Bright, 3);
-            _petValueInput = AddInput(parent, "PetValue", width / 2 - 52, bonusY, 80, "10");
+            _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, bonusY, 76, "10");
+
+            // The strongest the game itself ever gives for this effect. A pet's bonus is one number
+            // and it can be any number, but the highest the game uses is the one worth knowing.
+            MakeButton(parent, "PetValueMax", "MAX", width / 2 - 32, bonusY, 52, 32, false,
+                       MaxOutPetBonus);
+
             _cursorY -= RowHeight + RowGap;
 
             MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22, width, 44, true,
@@ -4038,6 +4044,64 @@ namespace VaultAdmin
 
             ShowPetIcon(_petPickIcon, group.Best);
             RefillGrades();
+        }
+
+        /// <summary>
+        /// Fills the value in with the best the game gives for this effect.
+        ///
+        /// A pet carries exactly one bonus and one number — the game compares its single Bonus with
+        /// the effect being asked about and returns its single BonusValue, so a second bonus would
+        /// never be read. What can be maxed is the number, and the honest ceiling is the largest one
+        /// the game hands out for that effect anywhere in its own catalogue.
+        /// </summary>
+        private void MaxOutPetBonus()
+        {
+            if (_petValueInput == null) return;
+
+            try
+            {
+                if (_pets == null) BuildPetCatalogue();
+
+                EBonusEffect wanted = BonusEffects[_petBonusIndex];
+                float best = 0f;
+
+                if (_pets != null)
+                {
+                    for (int i = 0; i < _pets.Count; i++)
+                    {
+                        Array bonuses = ReadObject(_pets[i].Template, "BonusEffectList") as Array;
+                        if (bonuses == null) continue;
+
+                        for (int j = 0; j < bonuses.Length; j++)
+                        {
+                            object bonus = bonuses.GetValue(j);
+                            if (bonus == null) continue;
+
+                            object effect = ReadObject(bonus, "Effect");
+                            if (effect == null || !effect.Equals(wanted)) continue;
+
+                            float high = ReadFloat(bonus, "MaxValue");
+                            if (high > best) best = high;
+                        }
+                    }
+                }
+
+                if (best <= 0f)
+                {
+                    Trouble("The game never gives " + BonusText(wanted, "?") +
+                            " to a pet; type a number instead.");
+                    return;
+                }
+
+                _petValueInput.value = Figure(best);
+                _petBonusValue = _petValueInput.value;
+
+                Say("The most the game gives for that is " + Figure(best) + ".");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not find the best value: " + e.Message);
+            }
         }
 
         private void CreatePetFromPanel()
