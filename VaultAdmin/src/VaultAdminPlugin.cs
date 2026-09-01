@@ -270,9 +270,13 @@ namespace VaultAdmin
             Vector2 leftLow  = new Vector2(cx - half, cy - rise * 0.5f);
             Vector2 nearLow  = new Vector2(cx, cy - half * 0.5f - rise * 0.5f);
 
-            Color lit = Bright;
-            Color shaded = Color.Lerp(Bright, Ink, 0.42f);
-            Color shadow = Color.Lerp(Bright, Ink, 0.70f);
+            // Three colours and no shading. Lighting the faces differently was a small painting
+            // where an icon was wanted: at this size the tones read as smudges rather than as
+            // form, and the shape is already told by its edges. Bright for the solid, dark for the
+            // numbers, darker still for the edges between them.
+            Color solid = Bright;
+            Color spots = Ink;
+            Color edge = Color.Lerp(Ink, Color.black, 0.45f);
 
             float stroke = Mathf.Max(1.2f, 1.4f * Scale);
 
@@ -294,30 +298,25 @@ namespace VaultAdmin
                     Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
                     Color paint;
 
-                    if (InQuad(p, back, right, near, left)) paint = lit;
-                    else if (InQuad(p, right, rightLow, nearLow, near)) paint = shaded;
-                    else if (InQuad(p, near, nearLow, leftLow, left)) paint = shadow;
-                    else paint = Clear;
+                    int which = 0;
 
-                    if (paint.a > 0f)
+                    if (InQuad(p, back, right, near, left)) which = 1;
+                    else if (InQuad(p, right, rightLow, nearLow, near)) which = 2;
+                    else if (InQuad(p, near, nearLow, leftLow, left)) which = 3;
+
+                    paint = which == 0 ? Clear : solid;
+
+                    if (which != 0)
                     {
-                        // The pips, sunk into whichever face the pixel belongs to.
-                        float ink = 0f;
+                        // The numbers, sunk into whichever face the pixel belongs to. One colour
+                        // for all three faces, because all three faces are one colour.
+                        float ink;
 
-                        // Dark spots on the two brighter faces, bright ones on the face in
-                        // shadow. One colour for all three left the shadowed face's pips
-                        // invisible, which is a third of the die saying nothing.
-                        Color spot = Ink;
+                        if (which == 1) ink = PipCover(p, back, right, near, left, pips[0], w);
+                        else if (which == 2) ink = PipCover(p, right, rightLow, nearLow, near, pips[1], w);
+                        else ink = PipCover(p, near, nearLow, leftLow, left, pips[2], w);
 
-                        if (paint == lit) ink = PipCover(p, back, right, near, left, pips[0], w);
-                        else if (paint == shaded) ink = PipCover(p, right, rightLow, nearLow, near, pips[1], w);
-                        else
-                        {
-                            ink = PipCover(p, near, nearLow, leftLow, left, pips[2], w);
-                            spot = Bright;
-                        }
-
-                        if (ink > 0f) paint = Color.Lerp(paint, spot, ink);
+                        if (ink > 0f) paint = Color.Lerp(paint, spots, ink);
                     }
 
                     // Drawn last and over everything, so the cube keeps its shape against whatever
@@ -331,7 +330,7 @@ namespace VaultAdmin
 
                     float onEdge = Mathf.Clamp01(stroke - nearest + 0.5f);
                     if (onEdge > 0f)
-                        paint = Color.Lerp(paint, Ink, onEdge * (paint.a > 0f ? 1f : 0.9f));
+                        paint = Color.Lerp(paint, edge, onEdge * (paint.a > 0f ? 1f : 0.9f));
 
                     px[y * w + x] = paint;
                 }
@@ -628,7 +627,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.7.0";
+        public const string PluginVersion = "1.7.1";
 
         internal static ManualLogSource Log;
 
@@ -5185,6 +5184,7 @@ namespace VaultAdmin
         }
 
         private static bool _reportedItemShape;
+        private static bool _reportedThemeShape;
         private static bool _reportedMood;
 
         /// <summary>Writes down what an inventory item is made of, once, when it cannot be read.</summary>
@@ -5269,14 +5269,31 @@ namespace VaultAdmin
                     string id = ReadMember(theme, "ThemeId");
                     if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "Id");
                     if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "m_themeId");
-                    if (string.IsNullOrEmpty(id)) continue;
+                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "m_id");
+                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "Name");
+
+                    if (string.IsNullOrEmpty(id))
+                    {
+                        // The list was found and its records were not. Rather than skip them in
+                        // silence -- which is what "no themes could be unlocked" was -- the record
+                        // says what it is made of, once.
+                        if (!_reportedThemeShape)
+                        {
+                            _reportedThemeShape = true;
+                            SayWhatAnItemIs(theme);
+                        }
+                        continue;
+                    }
 
                     try
                     {
                         unlock.Invoke(window, new object[] { new DwellerItem((EItemType)themeKind, id) });
                         opened++;
                     }
-                    catch { }
+                    catch (Exception e)
+                    {
+                        ReportOnce("themeunlock", "The game refused to unlock theme '" + id + "': " + e);
+                    }
                 }
             }
             catch (Exception e)
@@ -7567,8 +7584,11 @@ namespace VaultAdmin
             Plate(parent, "PreviewWell", pictureX, middle, wellWidth, wellHeight,
                   Skin.Well(wellWidth, wellHeight), 2);
 
+            // The figure sits a little below the top of its half rather than against it, and the
+            // line that divides the box sits lower with it, which leaves the die where the eye
+            // expects a control to be.
             int wellTop = middle + wellHeight / 2;
-            int pictureY = wellTop - pad - PreviewHeight / 2;
+            int pictureY = wellTop - pad - 6 - PreviewHeight / 2;
 
             GameObject picture = new GameObject("PreviewPicture");
             picture.layer = parent.gameObject.layer;
@@ -7593,8 +7613,8 @@ namespace VaultAdmin
             _previewHeadgear.depth = 4;
 
             // The line, and the die below it: the same padding above the line as below it.
-            int lineY = pictureY - PreviewHeight / 2 - pad;
-            int dieY = lineY - 1 - pad - dieRoom / 2;
+            int lineY = pictureY - PreviewHeight / 2 - pad + 2;
+            int dieY = lineY - 1 - pad + 2 - dieRoom / 2;
 
             UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
                                       Skin.Solid(), 3);
@@ -7689,34 +7709,38 @@ namespace VaultAdmin
             caption.maxLineCount = 1;
             choice.Title = caption;
 
-            // The recess sits under the caption row and leaves the bottom of the card clear.
-            int well = height - 46;
-            int middle = y - 8;
+            // A larger recess holding a slightly smaller picture: the picture had been drawn to
+            // the recess's own size and was standing on its edges.
+            int well = height - 38;
+            int middle = y - 6;
 
-            Plate(parent, "SlotWell_" + choice.Caption, left + 12 + well / 2, middle, well, well,
+            Plate(parent, "SlotWell_" + choice.Caption, left + 8 + well / 2, middle, well, well,
                   Skin.Well(well), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(left + 12 + well / 2, middle, 0f);
+            pictureGo.transform.localPosition = new Vector3(left + 8 + well / 2, middle, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
-            int lineLeft = left + 22 + well;
-            int lineWidth = Mathf.Max(48, right - 10 - lineLeft);
+            // Three lines of one size, set lower so they sit against the picture rather than
+            // above it. Three sizes over three lines that say three parts of the same thing is
+            // hierarchy invented where there is none.
+            int lineLeft = left + 16 + well;
+            int lineWidth = Mathf.Max(48, right - 8 - lineLeft);
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           lineLeft, middle + 20, lineWidth, 22, Skin.Bright, 3);
-            choice.Display.fontSize = TextRow;
+                                           lineLeft, middle + 15, lineWidth, 20, Skin.Bright, 3);
+            choice.Display.fontSize = TextBody;
             choice.Display.maxLineCount = 1;
 
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
-                                           lineLeft, middle, lineWidth, 22, Skin.Bright, 3);
-            effect.fontSize = TextNote;
+                                           lineLeft, middle - 5, lineWidth, 20, Skin.Bright, 3);
+            effect.fontSize = TextBody;
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
@@ -7740,15 +7764,27 @@ namespace VaultAdmin
 
             int nameY = _cursorY - RowHeight / 2;
             Plate(parent, "NameRow", 0, nameY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            int nameWidth = (width - 116) / 2;
-            _firstNameInput = AddInput(parent, "First", -width / 2 + 8 + nameWidth / 2, nameY,
+            // Three things in a line with the same margin at each end and the same gap between
+            // them. It had eight units of margin on the left, four on the right and two before the
+            // switch, which is not a row so much as three things that happened to stop where they
+            // stopped.
+            const int nameGap = 8;
+            const int genderWidth = 92;
+
+            int nameWidth = (width - nameGap * 4 - genderWidth) / 2;
+            int nameLeft = -width / 2 + nameGap;
+
+            _firstNameInput = AddInput(parent, "First", nameLeft + nameWidth / 2, nameY,
                                        nameWidth, "FIRST");
-            _lastNameInput = AddInput(parent, "Last", -width / 2 + 14 + nameWidth + nameWidth / 2,
-                                      nameY, nameWidth, "LAST");
+            _lastNameInput = AddInput(parent, "Last",
+                                      nameLeft + nameWidth + nameGap + nameWidth / 2, nameY,
+                                      nameWidth, "LAST");
+
             // Gender belongs on the name row: it is one of two things, so a switch says it in the
             // space a whole row was taking. It decides what the looks can be, so it comes first.
             _genderSwitch = MakeButton(parent, "Gender", Genders[_genderIndex].ToString().ToUpper(),
-                                       width / 2 - 52, nameY, 96, RowHeight - 10, false,
+                                       width / 2 - nameGap - genderWidth / 2, nameY,
+                                       genderWidth, RowHeight - 10, false,
                                        delegate { StepGender(1); });
 
             _cursorY -= RowHeight + RowGap;
@@ -7812,18 +7848,25 @@ namespace VaultAdmin
 
                 // The letter is the name of the stat and the loudest thing in the cell; the box
                 // beneath holds one or two digits and had been sized as though it held a word.
+                // Down the cell: the letter, air, the box, air, the two keys. The letter names
+                // the stat and is the loudest thing here; the box holds one or two digits; the
+                // keys are keys.
                 UILabel letter = MakeLabel(parent, "SpecLetter" + i,
                                            Specials[i].ToString().Substring(0, 1),
-                                           x, specialY + 32, cell, 24, Skin.Bright, 3);
-                letter.fontSize = TextHeading;
+                                           x, specialY + 34, cell, 26, Skin.Bright, 3);
+                letter.fontSize = TextTitle;
 
-                _specialInputs[i] = AddInput(parent, "Spec" + i, x, specialY + 10, cell - 18,
-                                             _special[i].ToString(), true);
+                UIInput box = AddInput(parent, "Spec" + i, x, specialY + 6, cell - 24,
+                                       _special[i].ToString(), true);
+                _specialInputs[i] = box;
 
-                MakeSignButton(parent, "SpecDown" + i, false, x - cell / 4, specialY - 22,
-                               cell / 2 - 3, 26, delegate { StepSpecial(index, -1); });
-                MakeSignButton(parent, "SpecUp" + i, true, x + cell / 4, specialY - 22,
-                               cell / 2 - 3, 26, delegate { StepSpecial(index, 1); });
+                UILabel typed = box.GetComponentInChildren<UILabel>();
+                if (typed != null) typed.fontSize = TextBody;
+
+                MakeSignButton(parent, "SpecDown" + i, false, x - cell / 4 - 1, specialY - 26,
+                               cell / 2 - 8, 22, delegate { StepSpecial(index, -1); });
+                MakeSignButton(parent, "SpecUp" + i, true, x + cell / 4 + 1, specialY - 26,
+                               cell / 2 - 8, 22, delegate { StepSpecial(index, 1); });
             }
             _cursorY -= specialHeight + RowGap;
 
@@ -8040,6 +8083,9 @@ namespace VaultAdmin
 
             switch (resource)
             {
+                // Caps live in the enum under Nuka, which is why every rule aimed at the word
+                // "cap" walked straight past them.
+                case EResource.Nuka:             return "CAPS";
                 case EResource.Energy:           return "POWER";
                 case EResource.Food:             return "FOOD";
                 case EResource.Water:            return "WATER";
@@ -8111,6 +8157,17 @@ namespace VaultAdmin
             return amount.ToString("0");
         }
 
+        /// <summary>What a box is called: Regular is the lunchbox everyone means by lunchbox.</summary>
+        private static string BoxName(ELunchBoxType type)
+        {
+            switch (type)
+            {
+                case ELunchBoxType.MrHandy:     return "MR HANDY";
+                case ELunchBoxType.PetCarrier:  return "PET CARRIER";
+                default:                        return "LUNCHBOX";
+            }
+        }
+
         private void AddBoxRow(Transform parent, ELunchBoxType type, int width)
         {
             int middle = _cursorY - ResourceCell / 2;
@@ -8128,7 +8185,7 @@ namespace VaultAdmin
             int right = width / 2 - 8;
             int span = right - left;
 
-            MakeLeftLabel(parent, "BoxName_" + type, Tidy(type.ToString()).ToUpper(),
+            MakeLeftLabel(parent, "BoxName_" + type, BoxName(type),
                           left, top, span, 26, Skin.Bright, 3);
 
             ELunchBoxType captured = type;
@@ -8378,7 +8435,9 @@ namespace VaultAdmin
 
         private static void WarnIfStretched(string name, Texture2D texture, int width, int height)
         {
-            if (texture == null || texture.width <= 2 || texture.height <= 2) return;
+            // A fill with no corners has nothing to pull out of round, and Solid is drawn small
+            // on purpose so it can be stretched over anything.
+            if (texture == null || texture.width <= 16 || texture.height <= 16) return;
 
             int wantWide = Mathf.RoundToInt(width * Skin.Scale);
             int wantTall = Mathf.RoundToInt(height * Skin.Scale);
