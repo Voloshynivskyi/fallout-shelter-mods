@@ -188,6 +188,88 @@ namespace VaultAdmin
             return Frame(width, height, 6, EdgeCard, Bright, Hole);
         }
 
+        /// <summary>
+        /// A die, drawn: a rounded square with the pips of the face asked for.
+        ///
+        /// The game has no dice in any of its atlases, and a word saying RANDOM is a poor picture
+        /// of chance. Six faces, cached like every other texture here, so spinning through them
+        /// costs nothing after the first turn.
+        /// </summary>
+        public static Texture2D Die(int size, int pips)
+        {
+            pips = Mathf.Clamp(pips, 1, 6);
+
+            string key = "die" + size + "p" + pips + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            Texture2D body = Frame(size, size, Mathf.Max(3, size / 5), EdgeButton, Bright, Card);
+
+            int w = body.width;
+            int h = body.height;
+
+            Color[] pixels = body.GetPixels();
+
+            // Three columns and three rows, the way pips have always been laid out. Which of the
+            // nine are inked is the whole of what tells one face from another.
+            float[] at = { 0.27f, 0.5f, 0.73f };
+            int[] faces = PipMask(pips);
+            float radius = w * 0.082f;
+
+            for (int cell = 0; cell < 9; cell++)
+            {
+                if (faces[cell] == 0) continue;
+
+                float cx = at[cell % 3] * w;
+                float cy = at[2 - cell / 3] * h;
+
+                int lo = Mathf.Max(0, Mathf.FloorToInt(cy - radius - 1f));
+                int hi = Mathf.Min(h - 1, Mathf.CeilToInt(cy + radius + 1f));
+
+                for (int y = lo; y <= hi; y++)
+                {
+                    for (int x = Mathf.Max(0, Mathf.FloorToInt(cx - radius - 1f));
+                         x <= Mathf.Min(w - 1, Mathf.CeilToInt(cx + radius + 1f)); x++)
+                    {
+                        float dx = x + 0.5f - cx;
+                        float dy = y + 0.5f - cy;
+
+                        // Feathered by a pixel, like the corners: a hard edge on a small circle
+                        // reads as a square with the corners bitten off.
+                        float cover = Mathf.Clamp01(radius - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
+                        if (cover <= 0f) continue;
+
+                        int i = y * w + x;
+                        pixels[i] = Color.Lerp(pixels[i], Bright, cover);
+                    }
+                }
+            }
+
+            Texture2D die = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            die.filterMode = FilterMode.Bilinear;
+            die.wrapMode = TextureWrapMode.Clamp;
+            die.SetPixels(pixels);
+            die.Apply();
+
+            _cache[key] = die;
+            return die;
+        }
+
+        /// <summary>Which of the nine places carry a pip, for each face of a die.</summary>
+        private static int[] PipMask(int pips)
+        {
+            switch (pips)
+            {
+                case 1:  return new[] { 0, 0, 0,  0, 1, 0,  0, 0, 0 };
+                case 2:  return new[] { 1, 0, 0,  0, 0, 0,  0, 0, 1 };
+                case 3:  return new[] { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+                case 4:  return new[] { 1, 0, 1,  0, 0, 0,  1, 0, 1 };
+                case 5:  return new[] { 1, 0, 1,  0, 1, 0,  1, 0, 1 };
+                default: return new[] { 1, 0, 1,  1, 0, 1,  1, 0, 1 };
+            }
+        }
+
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
@@ -224,7 +306,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.2.0";
 
         internal static ManualLogSource Log;
 
@@ -6944,7 +7026,7 @@ namespace VaultAdmin
             // Room under the figure for the one control that belongs to it. On the header it was
             // a dark word crammed into a bright bar, next to a title it had nothing to do with;
             // under the figure it is plainly the button that changes the figure.
-            const int rollHeight = 26;
+            const int rollHeight = 34;
             const int rollRoom = 34;
 
             int block = PreviewHeight + 14 + rollRoom;
@@ -6991,8 +7073,29 @@ namespace VaultAdmin
             int wellBottom = pictureY - (PreviewHeight + 8) / 2;
             int blockBottom = middle - block / 2;
 
-            MakeButton(parent, "RollLooks", "RANDOM", pictureX, (wellBottom + blockBottom) / 2,
-                       PreviewWidth + 8, rollHeight, false, delegate { RollTheLooks(); });
+            GameObject die = new GameObject("RollLooks");
+            die.layer = parent.gameObject.layer;
+            die.transform.SetParent(parent, false);
+            die.transform.localPosition =
+                new Vector3(pictureX, (wellBottom + blockBottom) / 2, 0f);
+            die.transform.localScale = Vector3.one;
+
+            _dieFace = die.AddComponent<UITexture>();
+            _dieFace.mainTexture = Skin.Die(rollHeight, 6);
+            _dieFace.width = rollHeight;
+            _dieFace.height = rollHeight;
+            _dieFace.depth = 5;
+
+            Shader flat = Shader.Find("Unlit/Transparent Colored");
+            if (flat != null) _dieFace.shader = flat;
+
+            BoxCollider hit = die.AddComponent<BoxCollider>();
+            hit.size = new Vector3(rollHeight + 10, rollHeight + 10, 1f);
+            hit.isTrigger = true;
+
+            UIButton press = die.AddComponent<UIButton>();
+            press.tweenTarget = die;
+            press.onClick.Add(new EventDelegate(RollTheLooks));
 
             // The choices, down the right.
             int columnLeft = -width / 2 + PreviewWidth + 24;
@@ -7773,6 +7876,7 @@ namespace VaultAdmin
             {
                 ForgetOldAnswers();
                 if (_tab == Tab.Grant) TickConfirmations();
+                if (_tab == Tab.Create) TickTheDie();
             }
 
             if (++_upkeepFrames >= 90)
@@ -9370,8 +9474,52 @@ namespace VaultAdmin
             }
         }
 
+        private UITexture _dieFace;
+        private float _dieSpinUntil;
+        private float _dieNextFace;
+
+        private const float DieSpin = 0.55f;
+
+        /// <summary>
+        /// Turns the die while it settles.
+        ///
+        /// The look changes the instant it is pressed -- waiting half a second to see the figure
+        /// would be a worse button, not a better one -- so the spin is what the press felt like
+        /// rather than what it is waiting on. Two turns, slowing as they go, with the face changing
+        /// under them.
+        /// </summary>
+        private void TickTheDie()
+        {
+            if (_dieFace == null || _dieSpinUntil <= 0f) return;
+
+            float now = Time.time;
+
+            if (now >= _dieSpinUntil)
+            {
+                _dieSpinUntil = 0f;
+                _dieFace.transform.localRotation = Quaternion.identity;
+                return;
+            }
+
+            float left = (_dieSpinUntil - now) / DieSpin;
+
+            // Squared, so it comes to rest rather than stopping.
+            _dieFace.transform.localRotation = Quaternion.Euler(0f, 0f, left * left * 720f);
+
+            if (now < _dieNextFace) return;
+
+            _dieNextFace = now + 0.06f;
+            _dieFace.mainTexture = Skin.Die(_dieFace.width, UnityEngine.Random.Range(1, 7));
+        }
+
         private void RollTheLooks()
         {
+            if (_dieFace != null)
+            {
+                _dieSpinUntil = Time.time + DieSpin;
+                _dieNextFace = 0f;
+            }
+
             Choice[] rolled = { _hair, _face, _hairColour, _skin };
 
             for (int i = 0; i < rolled.Length; i++)
