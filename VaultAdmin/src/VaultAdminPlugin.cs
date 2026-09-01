@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.3";
+        public const string PluginVersion = "1.5.0";
 
         internal static ManualLogSource Log;
 
@@ -2873,13 +2873,17 @@ namespace VaultAdmin
                 if (_pets == null) BuildPetCatalogue();
                 if (_petGroups == null) GroupPets();
 
-                if (_petGroups != null)
+                if (_pets != null)
                 {
-                    for (int i = 0; i < _petGroups.Count; i++)
+                    // Every record, not every animal. Folding the hundred and thirty records into
+                    // ninety-nine animals is the right thing for the constructor, where you pick a
+                    // creature and then say what grade of it you want. Handing one over is the
+                    // other question: a common mole rat and a legendary one are two different
+                    // things to be given, and the list that gives them should say so.
+                    for (int i = 0; i < _pets.Count; i++)
                     {
-                        if (filter.Length > 0 &&
-                            Missing(_petGroups[i].Name, filter)) continue;
-                        _shown.Add(_petGroups[i]);
+                        if (filter.Length > 0 && Missing(_pets[i].Name, filter)) continue;
+                        _shown.Add(_pets[i]);
                     }
                 }
             }
@@ -3019,15 +3023,25 @@ namespace VaultAdmin
                     continue;
                 }
 
+                PetGroup group = thing as PetGroup;
+                if (group != null)
                 {
-                    PetGroup group = (PetGroup)thing;
-                    PetEntry pet = group.Best;
+                    PetEntry best = group.Best;
 
                     row.Name.text = group.Name;
-                    SetStats(row, PetStats(pet) +
-                                     (group.Variants.Count > 1
-                                          ? "   " + group.Variants.Count + " grades"
-                                          : ""));
+                    SetStats(row, PetStats(best) +
+                                  (group.Variants.Count > 1
+                                       ? "   " + group.Variants.Count + " grades"
+                                       : ""));
+                    ShowPetIcon(row.Icon, best);
+                    continue;
+                }
+
+                {
+                    PetEntry pet = (PetEntry)thing;
+
+                    row.Name.text = pet.Name;
+                    SetStats(row, RarityWord(pet.Rarity) + "   " + PetStats(pet));
                     ShowPetIcon(row.Icon, pet);
                 }
             }
@@ -3504,8 +3518,14 @@ namespace VaultAdmin
 
             // Handed over as the game rolled it, and which grade of the animal is part of that.
             // Naming one and choosing its bonus is what the create tab is for.
-            PetGroup group = (PetGroup)thing;
-            if (group.Variants.Count == 0) return;
+            // The exact record the row names. Rolling a grade at random was a consequence of the
+            // list showing animals rather than records, and it meant pressing GIVE on a row that
+            // said LEGENDARY could hand over a common one.
+            PetEntry pet = thing as PetEntry;
+            if (pet != null) { GrantPet(pet, false); return; }
+
+            PetGroup group = thing as PetGroup;
+            if (group == null || group.Variants.Count == 0) return;
 
             GrantPet(group.Variants[UnityEngine.Random.Range(0, group.Variants.Count)], false);
         }
@@ -4528,6 +4548,7 @@ namespace VaultAdmin
         }
 
         private static bool _reportedItemShape;
+        private static bool _reportedMood;
 
         /// <summary>Writes down what an inventory item is made of, once, when it cannot be read.</summary>
         private static void SayWhatAnItemIs(object held)
@@ -5004,8 +5025,15 @@ namespace VaultAdmin
 
             _cursorY -= RowHeight + RowGap;
 
-            MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22, width, 44, true,
-                       CreatePetFromPanel);
+            // The same mark as the dweller bench, in the animal's shape: the game keeps a matching
+            // pair of blanks, and a blank is the right picture for a button that fills one in.
+            GameObject makePet = MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22,
+                                            width, 44, true, CreatePetFromPanel);
+
+            AddBareIcon(makePet.transform, "CreatePetMark",
+                        new[] { "Silhouette_Pet", "Icon_Pet", "PetCarrier" },
+                        "silhouette pet", width / 2 - 32, 0, 30, Skin.Ink);
+
             _cursorY -= 44 + RowGap;
 
             MakeLabel(parent, "PetNote", "Goes straight into the vault's storage.",
@@ -5105,9 +5133,12 @@ namespace VaultAdmin
                 return;
             }
 
+            // The animal and where you are in the list, and nothing about grade. This row picks a
+            // creature; the row beneath it picks how rare that creature is, and a rarity printed
+            // here was the best grade the animal happens to come in -- which is neither what is
+            // being chosen nor what will be made.
             if (_petPickLabel != null)
-                _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count +
-                                     "   " + group.Best.Rarity;
+                _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count;
 
             ShowPetIcon(_petPickIcon, group.Best);
             RefillGrades();
@@ -9165,6 +9196,32 @@ namespace VaultAdmin
                 }
 
                 _created.Add(dweller.GetInstanceID());
+
+                // The figure on the bench was kept cheerful; the person who walks away from it is
+                // a different object entirely and got whatever mood the game hands a newcomer. A
+                // dweller's face is its happiness, so they arrived at the door looking as though
+                // they regretted it. The number the game gave them goes in the log once, in case
+                // it is worth knowing what that default actually is.
+                try
+                {
+                    object mood = ReadObject(dweller, "Happiness");
+
+                    if (mood != null)
+                    {
+                        if (!_reportedMood)
+                        {
+                            _reportedMood = true;
+                            Log.LogInfo("A newcomer arrives at " +
+                                        ReadAsText(mood, "HappinessValue") + " happiness.");
+                        }
+
+                        WriteMember(mood, "HappinessValue", 100f);
+                    }
+                }
+                catch (Exception e)
+                {
+                    ReportOnce("newmood", "Could not cheer the newcomer up: " + e);
+                }
 
                 // If the spawner has handed back the very object this panel was using as its
                 // stand-in -- it came out of the same pool and was never given back -- then the
