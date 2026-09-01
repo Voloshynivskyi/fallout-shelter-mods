@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.77.0";
+        public const string PluginVersion = "0.79.0";
 
         internal static ManualLogSource Log;
 
@@ -3407,46 +3407,54 @@ namespace VaultAdmin
             AddHeader(parent, "EVERYONE", width);
 
             AddPower(parent, width, "REVIVE THE DEAD",
-                     "brings back everyone who died, at full health", ReviveEveryone);
+                     "brings back everyone who died, at full health", ReviveEveryone,
+                     new[] { "Icon_StimpackPlain", "Icon_Stimpack", "Icon_dwellerPlain" });
             AddPower(parent, width, "HEAL EVERYONE",
-                     "full health, and the radiation cleared", HealEveryone);
+                     "full health, and the radiation cleared", HealEveryone,
+                     new[] { "Icon_RadawayPlain", "Icon_Radaway", "Icon_StimpackPlain" });
             AddPower(parent, width, "MAKE EVERYONE HAPPY",
-                     "sets every dweller to full happiness", CheerEveryone);
+                     "sets every dweller to full happiness", CheerEveryone,
+                     new[] { "Icon_Happiness", "Icon_happy", "Icon_dwellerPlain" });
             AddPower(parent, width, "LEVEL EVERYONE",
-                     "takes every dweller to level 50", LevelEveryone);
+                     "takes every dweller to level 50", LevelEveryone,
+                     new[] { "Icon_LevelUp", "Icon_levelup", "Icon_dwellerPlain" });
             AddPower(parent, width, "MAX SPECIAL FOR EVERYONE",
-                     "ten in every stat, for every dweller", PerfectEveryone);
+                     "ten in every stat, for every dweller", PerfectEveryone,
+                     new[] { "Icon_Special", "Icon_special", "Icon_dwellerPlain" });
             AddPower(parent, width, "DELIVER EVERY BABY",
-                     "every expecting mother gives birth now", DeliverEveryBaby);
+                     "every expecting mother gives birth now", DeliverEveryBaby,
+                     new[] { "new_dweller", "Icon_dwellerPlain" });
             AddPower(parent, width, "GROW THE CHILDREN",
-                     "every child becomes an adult now", GrowTheChildren);
+                     "every child becomes an adult now", GrowTheChildren,
+                     new[] { "new_dweller", "Icon_dwellerPlain" });
             AddPower(parent, width, "FINISH ALL TRAINING",
-                     "every dweller in a training room is done", FinishAllTraining);
+                     "every dweller in a training room is done", FinishAllTraining,
+                     new[] { "Icon_Training", "Icon_training", "Icon_dwellerPlain" });
 
             AddHeader(parent, "THE VAULT", width);
 
-            AddPower(parent, width, "FILL THE STORES",
-                     "every resource to its cap", FillEverything);
+            AddPower(parent, width, "FILL FOOD, WATER, POWER",
+                     "the three the vault runs on, to their caps", FillTheEssentials,
+                     new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
             AddPower(parent, width, "RUSHING ALWAYS WORKS",
-                     "clears the failure chance on every room", MakeRushingSafe);
+                     "clears the failure chance on every room", MakeRushingSafe,
+                     new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
             AddPower(parent, width, "ROOM FOR 999",
-                     "raises the population limit", RaisePopulation);
-            AddPower(parent, width, "TENFOLD STORAGE",
-                     "raises what the vault can hold", RaiseStorage);
+                     "raises the population limit", RaisePopulation,
+                     new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
-                     "every weapon and outfit becomes craftable", UnlockEveryRecipe);
+                     "every weapon and outfit becomes craftable", UnlockEveryRecipe,
+                     new[] { "Icon_Craft", "Icon_crafting", "Icon_JunkPlain", "Icon_junk" });
 
-            AddHeader(parent, "THE WASTELAND", width);
-
-            AddPower(parent, width, "TEN HOURS OUT THERE",
-                     "adds ten hours to the team's time away", AddWastelandHours);
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
             _incidentSwitch = AddPower(parent, width, "INCIDENTS",
-                                       "fires, infestations and raiders", ToggleIncidents);
+                                       "fires, infestations and raiders", ToggleIncidents,
+                     new[] { "Icon_Fire", "Icon_fire", "Icon_Radawa" });
             _bottleSwitch = AddPower(parent, width, "BOTTLE AND CAPPY",
-                                     "the pair that wander the vault", ToggleBottleAndCappy);
+                                     "the pair that wander the vault", ToggleBottleAndCappy,
+                     new[] { "NukaCaps", "Icon_nukacapsPlain" });
 
             EndScroll(view, width);
             RefreshPowerSwitches();
@@ -3456,35 +3464,97 @@ namespace VaultAdmin
         private GameObject _bottleSwitch;
 
         /// <summary>One thing the vault can be told to do, with the reason it exists beside it.</summary>
-        private GameObject AddPower(Transform parent, int width, string name, string what,
-                                    EventDelegate.Callback action)
+        /// <summary>
+        /// One power, and the line it answers on.
+        ///
+        /// A press with no reply is a press you make twice. Each row keeps its own description and
+        /// puts the result in its place for a few seconds, so the answer appears where the question
+        /// was asked rather than somewhere along the bottom of the window.
+        /// </summary>
+        private sealed class Power
         {
-            const int cell = 62;
+            public UILabel Note;
+            public string Description;
+            public float Until;
+        }
+
+        private readonly List<Power> _powers = new List<Power>();
+        private Power _pressed;
+
+        private GameObject AddPower(Transform parent, int width, string name, string what,
+                                    EventDelegate.Callback action, string[] icon)
+        {
+            const int cell = 66;
+            const int box = 38;
+
             int middle = _cursorY - cell / 2;
 
             Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
 
-            int button = 104;
-            int textWidth = width - button - 34;
+            int iconCentre = -width / 2 + 10 + (box + 6) / 2;
+            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box);
+
+            int button = 100;
+            int left = -width / 2 + 18 + box;
+            int textWidth = width - button - box - 40;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
-                                          -width / 2 + 14, middle + 12, textWidth, 22,
-                                          Skin.Bright, 3);
+                                          left, middle + 13, textWidth, 22, Skin.Bright, 3);
             title.maxLineCount = 1;
 
             UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
-                                         -width / 2 + 14, middle - 12, textWidth, 20,
-                                         Skin.Bright, 3);
+                                         left, middle - 12, textWidth, 20, Skin.Bright, 3);
             note.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
             note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             note.maxLineCount = 1;
 
+            Power power = new Power();
+            power.Note = note;
+            power.Description = what;
+            _powers.Add(power);
+
+            EventDelegate.Callback wrapped = delegate
+            {
+                _pressed = power;
+                action();
+                _pressed = null;
+            };
+
             GameObject press = MakeButton(parent, "PowerDo_" + name, "DO IT",
                                           width / 2 - button / 2 - 10, middle, button, 40,
-                                          false, action);
+                                          false, wrapped);
 
             _cursorY -= cell + RowGap;
             return press;
+        }
+
+        /// <summary>Puts an answer on the row that was pressed, for as long as it takes to read.</summary>
+        private void Answer(string message, bool went)
+        {
+            if (_pressed == null || _pressed.Note == null) return;
+
+            _pressed.Note.text = message;
+            _pressed.Note.color = went
+                ? Skin.Bright
+                : new Color(1f, 0.75f, 0.2f, 1f);
+
+            _pressed.Until = Time.time + 6f;
+        }
+
+        /// <summary>Puts the descriptions back once their answers have been read.</summary>
+        private void ForgetOldAnswers()
+        {
+            for (int i = 0; i < _powers.Count; i++)
+            {
+                Power power = _powers[i];
+                if (power.Until <= 0f || Time.time < power.Until) continue;
+
+                power.Until = 0f;
+
+                if (power.Note == null) continue;
+                power.Note.text = power.Description;
+                power.Note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            }
         }
 
         private void RefreshPowerSwitches()
@@ -3678,40 +3748,6 @@ namespace VaultAdmin
             }
 
             Say("Unlocked " + opened + " recipe(s).");
-        }
-
-        /// <summary>
-        /// Adds to the time the wasteland team has been away.
-        ///
-        /// The game keeps one figure for it — how long they have been out — and everything about
-        /// what they find follows from that. The figure is written down before and after, because
-        /// its unit is not stated anywhere and the log is the only way to see it.
-        /// </summary>
-        private void AddWastelandHours()
-        {
-            try
-            {
-                QuestDataManager quests = QuestDataManager.Instance;
-                object team = quests == null ? null : ReadObject(quests, "CurrentWastelandTeam");
-
-                if (team == null) { Trouble("Nobody is out in the wasteland."); return; }
-
-                object spent = ReadObject(team, "m_questSpentTime");
-                double was = spent == null ? 0d : Convert.ToDouble(spent);
-
-                double now = was + 10d * 3600d;
-                if (!WriteMember(team, "m_questSpentTime", now))
-                {
-                    Trouble("The team's time cannot be changed from here.");
-                    return;
-                }
-
-                Say("The team has been out " + was.ToString("0") + " -> " + now.ToString("0") + ".");
-            }
-            catch (Exception e)
-            {
-                Trouble("Could not add to the team's time: " + e.Message);
-            }
         }
 
         private bool IncidentsOn()
@@ -3932,17 +3968,19 @@ namespace VaultAdmin
             Say(born == 0 ? "Nobody is expecting." : "Delivered " + born + " baby(ies).");
         }
 
-        private void FillEverything()
+        // The three a vault lives or dies by. Caps, quantum, stimpaks and radaway are stock, not
+        // upkeep, and a button that topped those up as well would be handing over the game rather
+        // than keeping the lights on.
+        private static readonly EResource[] Essentials =
         {
-            foreach (EResource resource in Enum.GetValues(typeof(EResource)))
-            {
-                if (resource == EResource.None || resource == EResource.Count) continue;
-                if (Array.IndexOf(NotRealResources, resource) >= 0) continue;
+            EResource.Food, EResource.Water, EResource.Energy
+        };
 
-                FillToCap(resource);
-            }
+        private void FillTheEssentials()
+        {
+            for (int i = 0; i < Essentials.Length; i++) FillToCap(Essentials[i]);
 
-            Say("Filled every store to its cap.");
+            Say("Food, water and power are full.");
         }
 
         private void MakeRushingSafe()
@@ -3995,45 +4033,6 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Trouble("Could not raise the population limit: " + e.Message);
-            }
-        }
-
-        private void RaiseStorage()
-        {
-            try
-            {
-                Vault vault = SafeVault();
-                if (vault == null || vault.Storage == null) return;
-
-                GameResources cap = vault.Storage.MaxResources;
-                if (cap == null) { Trouble("The vault has no caps to raise."); return; }
-
-                GameResources raised = new GameResources(cap);
-
-                foreach (EResource resource in Enum.GetValues(typeof(EResource)))
-                {
-                    if (resource == EResource.None || resource == EResource.Count) continue;
-
-                    try
-                    {
-                        float now = cap[resource];
-                        if (now > 0f) raised[resource] = now * 10f;
-                    }
-                    catch { }
-                }
-
-                MethodInfo set = typeof(Storage).GetMethod(
-                    "SetMaxResources",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (set == null) { Trouble("The storage caps cannot be set here."); return; }
-
-                set.Invoke(vault.Storage, new object[] { raised });
-                Say("The vault holds ten times what it did.");
-            }
-            catch (Exception e)
-            {
-                Trouble("Could not raise the storage: " + e.Message);
             }
         }
 
@@ -5966,11 +5965,13 @@ namespace VaultAdmin
         private void Say(string message)
         {
             Log.LogInfo(message);
+            Answer(message, true);
         }
 
         private void Trouble(string message)
         {
             Log.LogWarning(message);
+            Answer(message, false);
         }
 
         /// <summary>
@@ -6183,6 +6184,7 @@ namespace VaultAdmin
 
             EnsureHudButton();
             UpdateCameraHold();
+            if (_panelOpen) ForgetOldAnswers();
 
             // A window that builds without error and draws nothing is the failure this mod has
             // already paid for once. Rather than trust that it appeared, look: a widget that is
