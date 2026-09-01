@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.53.0";
+        public const string PluginVersion = "0.54.0";
 
         internal static ManualLogSource Log;
 
@@ -3174,7 +3174,18 @@ namespace VaultAdmin
             public void Show()
             {
                 if (Display != null)
-                    Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
+                {
+                    string text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
+
+                    // Where you are in the list, and how much of it there is. Without it every
+                    // choice is a walk in the dark: no telling whether there are three more or
+                    // forty.
+                    int total = Options.Count - 1;
+                    if (total > 0 && Index > 0) text += "   " + Index + "/" + total;
+                    else if (total > 0) text += "   " + total;
+
+                    Display.text = text;
+                }
 
                 object chosen = Selected;
 
@@ -3472,7 +3483,7 @@ namespace VaultAdmin
         private void RefillGrades()
         {
             _petGrade.Caption = "GRADE";
-            _petGrade.Begin("random");
+            _petGrade.Begin("any grade");
 
             PetGroup group = CurrentPetGroup();
             if (group == null) return;
@@ -3480,7 +3491,7 @@ namespace VaultAdmin
             for (int i = 0; i < group.Variants.Count; i++)
             {
                 PetEntry variant = group.Variants[i];
-                _petGrade.Add(variant, variant.Rarity + "  " + variant.Power);
+                _petGrade.Add(variant, variant.Rarity + ", bonus " + variant.Power);
             }
 
             _petGrade.Show();
@@ -3508,7 +3519,8 @@ namespace VaultAdmin
             }
 
             if (_petPickLabel != null)
-                _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count;
+                _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count +
+                                     "   " + group.Best.Rarity;
 
             ShowPetIcon(_petPickIcon, group.Best);
             RefillGrades();
@@ -3636,7 +3648,7 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
 
-            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 56);
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 44);
         }
 
         private string LookLabel(object entry)
@@ -3950,8 +3962,21 @@ namespace VaultAdmin
             // what is drawn until the texture is built again. This is the pair of calls the game
             // makes for itself after a change, and leaving them out is why the hair colour never
             // moved and why a face came back wrong once a helmet went on.
+            // UpdateTexture begins by returning if the object is switched off, and a dweller taken
+            // from the pool arrives switched off — which is why the picture came back as a white
+            // rectangle. It is woken for exactly as long as it takes to compose itself, and put
+            // back to sleep afterwards so that nobody is left standing in the vault.
+            bool woken = false;
+
             try
             {
+                GameObject body = _previewDweller.gameObject;
+                if (!body.activeSelf)
+                {
+                    body.SetActive(true);
+                    woken = true;
+                }
+
                 Call(_previewDweller, "SetupTexture");
                 Call(_previewDweller, "ForceUpdateTexture", true);
             }
@@ -3979,6 +4004,10 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 ReportOnce("preview", "Drawing the dweller failed: " + e.Message);
+            }
+            finally
+            {
+                if (woken && _previewDweller != null) _previewDweller.gameObject.SetActive(false);
             }
         }
 
@@ -4096,11 +4125,14 @@ namespace VaultAdmin
         {
             Choice[] rows = { _hair, _face, _hairColour, _skin, _helmet };
 
-            const int rowHeight = 36;
-            const int rowGap = 3;
+            const int rowGap = 4;
 
-            int block = Mathf.Max(PreviewHeight + 12, rows.Length * (rowHeight + rowGap) + 8);
+            int block = PreviewHeight + 12;
             int middle = _cursorY - block / 2;
+
+            // The rows share the picture's height between them rather than bunching at the top and
+            // leaving a hole underneath it.
+            int rowHeight = (block - 12 - (rows.Length - 1) * rowGap) / rows.Length;
 
             Plate(parent, "LooksPlate", 0, middle, width, block, Skin.Row(width, block), 1);
 
@@ -4148,9 +4180,10 @@ namespace VaultAdmin
 
             _cursorY -= block + RowGap;
 
-            // What the dweller carries, in two slots side by side, the way the game shows equipment.
-            const int slotHeight = 104;
-            int slotWidth = (width - 8) / 2;
+            // What the dweller carries, both on one line: arrows level with the pictures, names
+            // under them. Two tall panels for two items was a lot of room to say very little.
+            const int slotHeight = 74;
+            int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
             AddGearSlot(parent, _outfit, -width / 2 + slotWidth / 2, slotY, slotWidth, slotHeight);
@@ -4171,18 +4204,20 @@ namespace VaultAdmin
         private void AddGearSlot(Transform parent, Choice choice, int centreX, int y,
                                  int width, int height)
         {
-            const int icon = 56;
+            const int icon = 44;
 
             Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
             UILabel caption = MakeLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                        centreX, y + height / 2 - 12, width - 16, 16, Skin.Rim, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+                                        centreX, y + height / 2 - 10, width - 16, 14, Skin.Rim, 3);
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.58f));
 
+            // The arrows sit on the picture's own line, so the eye travels straight across.
             int iconY = y + 4;
-            Plate(parent, "SlotWell_" + choice.Caption, centreX, iconY, icon + 8, icon + 8,
-                  Skin.Well(icon + 8), 2);
+
+            Plate(parent, "SlotWell_" + choice.Caption, centreX, iconY, icon + 6, icon + 6,
+                  Skin.Well(icon + 6), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
@@ -4195,16 +4230,15 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(false);
 
             Choice captured = choice;
-            int arrowsY = y - height / 2 + 18;
 
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", centreX - width / 2 + 20, arrowsY,
-                       28, 24, false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", centreX + width / 2 - 20, arrowsY,
-                       28, 24, false, delegate { captured.Step(1); });
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", centreX - width / 2 + 18, iconY,
+                       26, 24, false, delegate { captured.Step(-1); });
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", centreX + width / 2 - 18, iconY,
+                       26, 24, false, delegate { captured.Step(1); });
 
             choice.Display = MakeLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                       centreX, arrowsY, width - 76, 20, Skin.Bright, 3);
-            choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.75f));
+                                       centreX, y - height / 2 + 13, width - 12, 18, Skin.Bright, 3);
+            choice.Display.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.68f));
 
             choice.Show();
         }
