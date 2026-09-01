@@ -162,7 +162,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.27.0";
+        public const string PluginVersion = "0.28.0";
 
         internal static ManualLogSource Log;
 
@@ -1028,6 +1028,7 @@ namespace VaultAdmin
         private int _scrollTop;
         private int _refreshFrames;
         private UIAtlas _menuAtlas;
+        private readonly List<UITexture> _thumbs = new List<UITexture>();
 
         // What the panel does falls into three jobs, not three kinds of thing: top the vault up,
         // hand something over, or build something that does not exist yet. A dweller belongs in two
@@ -1038,6 +1039,12 @@ namespace VaultAdmin
         // Dwellers are handed out from the same list as items even though the game does not count
         // them as one, so the picker has a family of its own for them.
         private enum Family { Weapon, Outfit, Junk, Pet, Dweller }
+
+        /// <summary>A dweller the game rolls for itself, offered by rarity beside the named ones.</summary>
+        private sealed class RandomDweller
+        {
+            public EDwellerRarity Rarity;
+        }
 
         private Tab _tab = Tab.Resources;
         private readonly Dictionary<Tab, GameObject> _tabPages = new Dictionary<Tab, GameObject>();
@@ -1109,6 +1116,11 @@ namespace VaultAdmin
                 UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
                                           0, _windowHeight / 2, _windowWidth - 60, 52, Skin.Bright, 4);
                 title.fontSize = Mathf.RoundToInt(_fontSize * 1.6f);
+
+                // Outlined, so the frame it straddles reads as behind it rather than through it.
+                title.effectStyle = UILabel.Effect.Outline;
+                title.effectColor = Skin.Ink;
+                title.effectDistance = new Vector2(2f, 2f);
 
                 BuildTabs(_nguiWindow.transform);
                 BuildPages(_nguiWindow.transform);
@@ -1215,7 +1227,7 @@ namespace VaultAdmin
             // texture has to survive being stretched: a nearly square source with a small radius
             // stays a bar, where a long rounded one turns into a smear.
             UITexture thumb = Plate(go.transform, "Thumb", 0, 0, 10, viewHeight,
-                                    Skin.Frame(10, 12, 4, 4, Skin.Bright, Skin.Bright), 3);
+                                    Skin.Frame(10, viewHeight, 5, 5, Skin.Bright, Skin.Bright), 3);
 
             BoxCollider box = go.AddComponent<BoxCollider>();
             box.size = new Vector3(22f, viewHeight, 1f);
@@ -1225,6 +1237,12 @@ namespace VaultAdmin
             bar.backgroundWidget = track;
             bar.foregroundWidget = thumb;
             bar.fillDirection = UIProgressBar.FillDirection.TopToBottom;
+
+            // The scroll view resizes the thumb to say how much of the list is in view. A texture
+            // left to stretch across that turns into a smear, so it is redrawn at the height it is
+            // actually shown at, rounded to a step so the cache does not fill with near-identical
+            // copies while a drag is under way.
+            _thumbs.Add(thumb);
             return bar;
         }
 
@@ -1324,15 +1342,68 @@ namespace VaultAdmin
                     return new[] { "Icon_LunchboxesPlain", "LunchboxPlainColor", "Lunchbox",
                                    "LunchBox", "Icon_LunchboxesPlain" };
                 case ELunchBoxType.MrHandy:
-                    return new[] { "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
+                    // Icon_MrHandy, as the atlas itself reported when the first guess missed.
+                    return new[] { "Icon_MrHandy", "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
                 case ELunchBoxType.PetCarrier:
-                    return new[] { "PetCarrier", "Pet Carrier", "Icon_PetCarrier" };
+                    return new[] { "Icon_PetCarrier", "PetCarrier", "Pet Carrier",
+                                   "Icon_Pet_Carrier", "Icon_Carrier", "Icon_Pet" };
                 case ELunchBoxType.NukaColaQuantum:
                     return new[] { "Icon_NukaColaQuantum", "Icon_NukaQuantum", "NukaQuantum",
                                    "NukaColaQuantum002" };
                 default:
                     return null;
             }
+        }
+
+        /// <summary>
+        /// The sprite an atlas actually has for a name it was given.
+        ///
+        /// The records name their art, but the atlas often names the same picture a little
+        /// differently — the same words with something else between them. Rather than fail on an
+        /// exact miss, the words are matched: 'Military_FullBody' finds 'Military_Macaw_FullBody'.
+        /// Every substitution is logged once, so a wrong match is visible rather than mysterious.
+        /// </summary>
+        private string BestSprite(UIAtlas atlas, string wanted)
+        {
+            if (atlas == null || string.IsNullOrEmpty(wanted)) return null;
+            if (atlas.GetSprite(wanted) != null) return wanted;
+
+            try
+            {
+                List<UISpriteData> list = atlas.spriteList;
+                if (list == null) return null;
+
+                string[] parts = wanted.Split('_');
+                int needed = Mathf.Max(1, parts.Length - 1);
+
+                string best = null;
+                int bestScore = 0;
+
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i] == null || string.IsNullOrEmpty(list[i].name)) continue;
+
+                    int score = 0;
+                    for (int j = 0; j < parts.Length; j++)
+                    {
+                        if (parts[j].Length < 3) continue;
+                        if (list[i].name.IndexOf(parts[j], StringComparison.OrdinalIgnoreCase) >= 0)
+                            score++;
+                    }
+
+                    if (score > bestScore) { bestScore = score; best = list[i].name; }
+                }
+
+                if (best != null && bestScore >= needed)
+                {
+                    ReportOnce("match_" + atlas.name + "_" + wanted,
+                               "'" + atlas.name + "' has no '" + wanted + "'; using '" + best + "'.");
+                    return best;
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         /// <summary>
@@ -1350,6 +1421,12 @@ namespace VaultAdmin
             {
                 if (string.IsNullOrEmpty(candidates[i])) continue;
                 if (atlas.GetSprite(candidates[i]) != null) return candidates[i];
+            }
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                string near = BestSprite(atlas, candidates[i]);
+                if (!string.IsNullOrEmpty(near)) return near;
             }
 
             ReportOnce("sprite_" + what,
@@ -1390,11 +1467,44 @@ namespace VaultAdmin
 
                 Log.LogInfo("  '" + atlas.name + "' holds these matching '" + hint + "': " +
                             (found.Length > 0 ? found : "nothing"));
+
+                // A miss says one name is wrong; the scheme says why, and what the right one
+                // would look like.
+                string sample = "";
+                for (int i = 0; i < sprites.Count && i < 15; i++)
+                {
+                    if (sprites[i] == null || sprites[i].name == null) continue;
+                    sample += (sample.Length > 0 ? ", " : "") + sprites[i].name;
+                }
+                Log.LogInfo("  '" + atlas.name + "' holds " + sprites.Count + " sprites, beginning: " +
+                            sample);
             }
             catch (Exception e)
             {
                 Log.LogWarning("Could not list the atlas's sprites: " + e.Message);
             }
+        }
+
+        private static readonly string[] DwellerSprites =
+        {
+            "Icon_Dwellers", "Icon_Dweller", "Icon_population", "Icon_Population",
+            "Icon_VaultBoy", "Dweller"
+        };
+
+        /// <summary>Puts one of the interface's own icons on a row that has no art of its own.</summary>
+        private void ShowMenuIcon(UISprite icon, string[] candidates)
+        {
+            if (icon == null) return;
+
+            icon.atlas = null;
+            icon.spriteName = "";
+
+            UIAtlas atlas = MenuAtlas();
+            string sprite = ResolveSprite(atlas, candidates, "dweller");
+            if (string.IsNullOrEmpty(sprite)) return;
+
+            icon.atlas = atlas;
+            icon.spriteName = sprite;
         }
 
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
@@ -1713,6 +1823,20 @@ namespace VaultAdmin
             {
                 // The named dwellers the game ships: each brings its own look, stats and story, so
                 // this list hands them over whole rather than offering to edit them.
+                // Ordinary newcomers first: most of the time what is wanted is a body at the door,
+                // not one of the fifty-odd people the game has written.
+                for (int i = 0; i < Rarities.Length; i++)
+                {
+                    if (Rarities[i] == EDwellerRarity.Legendary) continue;
+
+                    string label = Rarities[i] + " dweller";
+                    if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
+
+                    RandomDweller random = new RandomDweller();
+                    random.Rarity = Rarities[i];
+                    _shown.Add(random);
+                }
+
                 DwellerManager manager = SafeDwellerManager();
                 UniqueDwellerData[] legends = manager != null ? manager.LegendaryDwellers : null;
 
@@ -1792,13 +1916,21 @@ namespace VaultAdmin
                     continue;
                 }
 
+                RandomDweller random = thing as RandomDweller;
+                if (random != null)
+                {
+                    row.Name.text = random.Rarity + " dweller";
+                    row.Stats.text = "ROLLED BY THE GAME  arrives at the vault door";
+                    ShowMenuIcon(row.Icon, DwellerSprites);
+                    continue;
+                }
+
                 UniqueDwellerData legend = thing as UniqueDwellerData;
                 if (legend != null)
                 {
                     row.Name.text = LegendName(legend);
                     row.Stats.text = "LEGENDARY  brings its own look and stats";
-                    row.Icon.atlas = null;
-                    row.Icon.spriteName = "";
+                    ShowMenuIcon(row.Icon, DwellerSprites);
                     continue;
                 }
 
@@ -1910,12 +2042,12 @@ namespace VaultAdmin
             string sprite = ReadMember(pet.Template, "Sprite");
             string head = ReadMember(pet.Template, "HeadSprite");
 
-            string chosen = null;
-            if (!string.IsNullOrEmpty(sprite) && atlas.GetSprite(sprite) != null) chosen = sprite;
-            else if (!string.IsNullOrEmpty(head) && atlas.GetSprite(head) != null) chosen = head;
+            string chosen = BestSprite(atlas, head);
+            if (string.IsNullOrEmpty(chosen)) chosen = BestSprite(atlas, sprite);
 
             if (chosen == null)
             {
+                SuggestSprites(atlas, string.IsNullOrEmpty(sprite) ? pet.Name : sprite);
                 ReportOnce("petsprite_" + pet.PetId,
                            "Atlas '" + atlas.name + "' has no picture for " + pet.Name +
                            " (tried '" + sprite + "' and '" + head + "').");
@@ -1937,18 +2069,20 @@ namespace VaultAdmin
                 return;
             }
 
-            if (atlas.GetSprite(entry.Sprite) == null)
+            string chosen = BestSprite(atlas, entry.Sprite);
+            if (string.IsNullOrEmpty(chosen))
             {
                 ReportOnce("itemsprite_" + entry.Type,
                            "Atlas '" + atlas.name + "' has no picture for " + entry.Name +
                            " ('" + entry.Sprite + "'); other " + entry.Type + " rows may be blank too.");
+                SuggestSprites(atlas, entry.Sprite);
                 icon.atlas = null;
                 icon.spriteName = "";
                 return;
             }
 
             icon.atlas = atlas;
-            icon.spriteName = entry.Sprite;
+            icon.spriteName = chosen;
         }
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
@@ -1961,6 +2095,15 @@ namespace VaultAdmin
 
             CatalogueEntry item = thing as CatalogueEntry;
             if (item != null) { GrantItem(item); return; }
+
+            RandomDweller random = thing as RandomDweller;
+            if (random != null)
+            {
+                _rarityIndex = Array.IndexOf(Rarities, random.Rarity);
+                if (_rarityIndex < 0) _rarityIndex = 0;
+                CreateDweller(false);
+                return;
+            }
 
             UniqueDwellerData legend = thing as UniqueDwellerData;
             if (legend != null)
@@ -1978,7 +2121,7 @@ namespace VaultAdmin
         private UIInput _lastNameInput;
         private UILabel _rarityLabel;
         private UILabel _genderLabel;
-        private UILabel _levelLabel;
+        private UIInput _levelInput;
         private readonly UIInput[] _specialInputs = new UIInput[7];
         private int _dwellerLevelValue = 1;
 
@@ -2171,9 +2314,13 @@ namespace VaultAdmin
                                         delegate { StepGender(-1); }, delegate { StepGender(1); },
                                         Genders[_genderIndex].ToString());
 
-            _levelLabel = AddPickerRow(parent, width, "LEVEL",
-                                       delegate { StepLevel(-1); }, delegate { StepLevel(1); },
-                                       _dwellerLevelValue.ToString());
+            int levelY = _cursorY - RowHeight / 2;
+            Plate(parent, "LevelRow", 0, levelY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            MakeLeftLabel(parent, "LevelCaption", "LEVEL", -width / 2 + 14, levelY, 120,
+                          RowHeight, Skin.Bright, 3);
+            _levelInput = AddInput(parent, "Level", width / 2 - 60, levelY, 96,
+                                   _dwellerLevelValue.ToString(), true);
+            _cursorY -= RowHeight + RowGap;
 
             AddHeader(parent, "SPECIAL", width);
 
@@ -2195,7 +2342,7 @@ namespace VaultAdmin
                           x, specialY + 32, cell, 22, Skin.Bright, 3);
 
                 _specialInputs[i] = AddInput(parent, "Spec" + i, x, specialY + 10, cell - 6,
-                                             _special[i].ToString());
+                                             _special[i].ToString(), true);
 
                 MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, specialY - 22, cell / 2 - 3, 26,
                            false, delegate { StepSpecial(index, -1); });
@@ -2235,7 +2382,19 @@ namespace VaultAdmin
             return value;
         }
 
+        private static char RefuseLineBreaks(string text, int index, char typed)
+        {
+            if (typed == '\n' || typed == '\r' || typed == '\t') return (char)0;
+            return typed;
+        }
+
         private UIInput AddInput(Transform parent, string name, int x, int y, int width, string hint)
+        {
+            return AddInput(parent, name, x, y, width, hint, false);
+        }
+
+        private UIInput AddInput(Transform parent, string name, int x, int y, int width, string hint,
+                                 bool numeric)
         {
             GameObject go = new GameObject("Input_" + name);
             go.layer = parent.gameObject.layer;
@@ -2259,9 +2418,17 @@ namespace VaultAdmin
             box.size = new Vector3(width, RowHeight - 8, 1f);
             box.isTrigger = true;
 
+            label.multiLine = false;
+            label.maxLineCount = 1;
+
             UIInput input = go.AddComponent<UIInput>();
             input.label = label;
             input.characterLimit = 24;
+            input.inputType = UIInput.InputType.Standard;
+            if (numeric) input.validation = UIInput.Validation.Integer;
+
+            // A line break in a name is not a name, and NGUI will happily take one.
+            input.onValidate = RefuseLineBreaks;
 
             // This line is the whole reason the dwellers tab took the game down with it. UIInput.Start
             // runs mValue.Replace(...) with no null check; on a component built here mValue is null,
@@ -2284,11 +2451,15 @@ namespace VaultAdmin
             if (_genderLabel != null) _genderLabel.text = Genders[_genderIndex].ToString();
         }
 
-        private void StepLevel(int by)
+        private void ReadLevelInput()
         {
-            _dwellerLevelValue = Mathf.Clamp(_dwellerLevelValue + by, 1, 50);
+            if (_levelInput == null) return;
+
+            int parsed;
+            if (int.TryParse(_levelInput.value, out parsed) && parsed >= 1)
+                _dwellerLevelValue = Mathf.Min(parsed, 50);
+
             _dwellerLevel = _dwellerLevelValue.ToString();
-            if (_levelLabel != null) _levelLabel.text = _dwellerLevel;
         }
 
         // Ten is the figure the game shows, not a rule it enforces: higher values are kept and do
@@ -2320,6 +2491,7 @@ namespace VaultAdmin
         {
             if (_firstNameInput != null) _dwellerFirst = _firstNameInput.value;
             if (_lastNameInput != null) _dwellerLast = _lastNameInput.value;
+            ReadLevelInput();
             ReadSpecialInputs();
             _dwellerLevel = _dwellerLevelValue.ToString();
             CreateDweller();
@@ -2711,6 +2883,18 @@ namespace VaultAdmin
                 try
                 {
                     RefreshValues();
+
+                    for (int i = 0; i < _thumbs.Count; i++)
+                    {
+                        UITexture thumb = _thumbs[i];
+                        if (thumb == null) continue;
+
+                        int step = Mathf.Max(16, (thumb.height / 8) * 8);
+                        if (thumb.mainTexture != null &&
+                            thumb.mainTexture.height == Mathf.RoundToInt(step * Skin.Scale)) continue;
+
+                        thumb.mainTexture = Skin.Frame(10, step, 5, 5, Skin.Bright, Skin.Bright);
+                    }
 
                     if (_petArtPending)
                     {
@@ -3141,32 +3325,30 @@ namespace VaultAdmin
         /// </summary>
         private string OutfitBonus(DwellerBaseItem data)
         {
+            // The bonuses are not a list to be walked but seven named fields, one per stat, each
+            // holding a single Value. ModificationStats is a different thing and is usually empty,
+            // which is why every outfit came back with nothing to say for itself.
             try
             {
-                object stats = ReadObject(data, "ModificationStats");
-                Array rows = stats as Array;
-                if (rows == null || rows.Length == 0) return null;
+                object stats = ReadObject(data, "m_specialStats");
+                if (stats == null) stats = ReadObject(data, "SpecialStats");
+                if (stats == null) return null;
 
                 string line = "";
-                for (int i = 0; i < rows.Length; i++)
+
+                for (int i = 0; i < Specials.Length; i++)
                 {
-                    object row = rows.GetValue(i);
-                    if (row == null) continue;
+                    object entry = ReadObject(stats, Specials[i].ToString());
+                    if (entry == null) continue;
 
-                    // SpecialStatsData calls them Type and Value. Guessing at Stat cost a round of
-                    // outfits listed with nothing but their rarity.
-                    string stat = ReadAsText(row, "Type");
-                    if (string.IsNullOrEmpty(stat)) stat = ReadAsText(row, "m_type");
-
-                    string value = ReadAsText(row, "Value");
-                    if (string.IsNullOrEmpty(value)) value = ReadAsText(row, "m_iValue");
-
-                    if (string.IsNullOrEmpty(stat) || string.IsNullOrEmpty(value)) continue;
-                    if (value == "0") continue;
+                    string value = ReadAsText(entry, "Value");
+                    int amount;
+                    if (!int.TryParse(value, out amount) || amount == 0) continue;
 
                     if (line.Length > 0) line += " ";
-                    line += "+" + value + stat.Substring(0, 1);
+                    line += (amount > 0 ? "+" : "") + amount + Specials[i].ToString().Substring(0, 1);
                 }
+
                 return line.Length > 0 ? line : null;
             }
             catch
@@ -3619,7 +3801,16 @@ namespace VaultAdmin
             GUILayout.EndScrollView();
         }
 
-        private void CreateDweller()
+        private void CreateDweller() { CreateDweller(true); }
+
+        /// <summary>
+        /// A newcomer at the door.
+        ///
+        /// Handed over plain when it comes from the grant list — the point of a rolled dweller is
+        /// that the game rolled it — and dressed in the panel's fields when it comes from the
+        /// constructor.
+        /// </summary>
+        private void CreateDweller(bool customise)
         {
             try
             {
@@ -3655,14 +3846,19 @@ namespace VaultAdmin
                     return;
                 }
 
-                if (!string.IsNullOrEmpty(_dwellerFirst)) dweller.Name = _dwellerFirst;
-                if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
+                int level = 1;
 
-                int level;
-                if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
-                ApplyLevel(dweller, level);
+                if (customise)
+                {
+                    if (!string.IsNullOrEmpty(_dwellerFirst)) dweller.Name = _dwellerFirst;
+                    if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
 
-                ApplySpecial(dweller);
+                    if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
+                    ApplyLevel(dweller, level);
+
+                    ApplySpecial(dweller);
+                }
+
                 _created.Add(dweller.GetInstanceID());
 
                 Log.LogInfo("Created dweller " + dweller.Name + " " + dweller.LastName +
