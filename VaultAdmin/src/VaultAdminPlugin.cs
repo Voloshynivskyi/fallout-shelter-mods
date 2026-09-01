@@ -207,7 +207,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.49.0";
+        public const string PluginVersion = "0.51.0";
 
         internal static ManualLogSource Log;
 
@@ -3148,6 +3148,10 @@ namespace VaultAdmin
             public UITexture Swatch;
             public UISprite Picture;
             public Action OnChange;
+
+            // Some options are colours without being one: a record that stands for a shade. This
+            // asks whoever filled the list what colour an option means.
+            public Func<object, Color?> SwatchOf;
             public readonly List<object> Options = new List<object>();
             public readonly List<string> Labels = new List<string>();
             public int Index;
@@ -3174,9 +3178,11 @@ namespace VaultAdmin
 
                 if (Swatch != null)
                 {
-                    bool colour = chosen is Color;
-                    Swatch.gameObject.SetActive(colour);
-                    if (colour) Swatch.color = (Color)chosen;
+                    Color? shade = chosen is Color ? (Color)chosen : (Color?)null;
+                    if (shade == null && SwatchOf != null && chosen != null) shade = SwatchOf(chosen);
+
+                    Swatch.gameObject.SetActive(shade != null);
+                    if (shade != null) Swatch.color = shade.Value;
                 }
 
                 if (OnChange != null) OnChange();
@@ -3197,6 +3203,53 @@ namespace VaultAdmin
                 Options.Add(option);
                 Labels.Add(label);
             }
+        }
+
+        /// <summary>
+        /// A choice in one short line, for a column beside the picture.
+        ///
+        /// The full-width row spends most of itself on air; at half the width there is room for the
+        /// name, the thing itself and the two arrows, and nothing else is needed.
+        /// </summary>
+        private Choice AddCompactChoice(Transform parent, Choice choice,
+                                        int centreX, int y, int width)
+        {
+            const int height = 34;
+
+            Plate(parent, "Compact_" + choice.Caption, centreX, y, width, height,
+                  Skin.Row(width, height), 1);
+
+            int left = centreX - width / 2;
+
+            MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
+                          left + 8, y + 9, width - 16, 18, Skin.Bright, 3);
+
+            Choice captured = choice;
+
+            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 18, y - 8, 26, 22,
+                       false, delegate { captured.Step(-1); });
+            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 18, y - 8,
+                       26, 22, false, delegate { captured.Step(1); });
+
+            choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
+                                       centreX + 6, y - 8, width - 76, 20, Skin.Bright, 3);
+
+            choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 44, y - 8,
+                                  22, 18, Skin.Solid(), 3);
+            choice.Swatch.gameObject.SetActive(false);
+
+            GameObject pictureGo = new GameObject("CompactPic_" + choice.Caption);
+            pictureGo.layer = parent.gameObject.layer;
+            pictureGo.transform.SetParent(parent, false);
+            pictureGo.transform.localPosition = new Vector3(left + 44, y - 8, 0f);
+            pictureGo.transform.localScale = Vector3.one;
+
+            choice.Picture = pictureGo.AddComponent<UISprite>();
+            choice.Picture.depth = 3;
+            choice.Picture.gameObject.SetActive(false);
+
+            choice.Show();
+            return choice;
         }
 
         private Choice AddChoiceRow(Transform parent, int width, Choice choice)
@@ -3568,14 +3621,88 @@ namespace VaultAdmin
 
         private string LookLabel(object entry)
         {
-            string title = Localised(ReadMember(entry, "TitleTextId"));
+            string key = ReadMember(entry, "TitleTextId");
+
+            string title = GameText(key);
+            if (string.IsNullOrEmpty(title)) title = Localised(key);
             if (!string.IsNullOrEmpty(title)) return title;
 
+            // Whatever is left is a file name. Splitting it into words and dropping the parts that
+            // only mean something to whoever filed it is better than showing it raw.
             string piece = ReadMember(entry, "PieceName");
-            if (!string.IsNullOrEmpty(piece)) return string.Join(" ", SplitWords(piece));
+            if (string.IsNullOrEmpty(piece)) piece = ReadMember(entry, "Id");
+            if (string.IsNullOrEmpty(piece)) return "?";
 
-            string id = ReadMember(entry, "Id");
-            return string.IsNullOrEmpty(id) ? "?" : id;
+            return Tidy(piece);
+        }
+
+        /// <summary>Turns a file name into something worth reading.</summary>
+        private static string Tidy(string name)
+        {
+            string[] words = Meaningful(name);
+            if (words.Length == 0) words = SplitWords(name);
+            if (words.Length == 0) return name;
+
+            string line = "";
+            for (int i = 0; i < words.Length; i++)
+            {
+                string word = words[i];
+                if (word.Length == 0) continue;
+
+                line += (line.Length > 0 ? " " : "") +
+                        char.ToUpper(word[0]) + (word.Length > 1 ? word.Substring(1) : "");
+            }
+
+            return line.Length > 0 ? line : name;
+        }
+
+        /// <summary>
+        /// The colour an appearance entry stands for.
+        ///
+        /// A hair colour is filed either as a shade of its own or as an index into the palette for
+        /// this gender, and either way it is a colour — which is the only useful way to show it.
+        /// </summary>
+        private Color? ColourOf(object entry)
+        {
+            if (entry == null) return null;
+
+            try
+            {
+                object custom = ReadObject(entry, "IsCustomColor");
+                if (custom is bool && (bool)custom)
+                {
+                    object shade = ReadObject(entry, "CustomColor");
+                    if (shade is Color) return (Color)shade;
+                }
+
+                object indexed = ReadObject(entry, "ColorId");
+                if (indexed == null) return null;
+
+                int index = Convert.ToInt32(indexed);
+
+                Catalog catalog = Catalog.Instance;
+                DwellerPieceList pieces = catalog == null
+                    ? null
+                    : catalog.GetCatalogForGender(Genders[_genderIndex]);
+
+                object only = ReadObject(entry, "IsOnlyInCustomization");
+                bool forCustomisation = only is bool && (bool)only;
+
+                Array palette = pieces == null
+                    ? null
+                    : ReadObject(pieces, forCustomisation
+                                     ? "m_hairColorsForCustomization"
+                                     : "m_hairColors") as Array;
+
+                if (palette != null && index >= 0 && index < palette.Length)
+                {
+                    object shade = palette.GetValue(index);
+                    if (shade is Color) return (Color)shade;
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         /// <summary>The gear lists, which do not depend on the gender.</summary>
@@ -3799,6 +3926,20 @@ namespace VaultAdmin
 
             if (!have) return;
 
+            // Setting a piece writes a field and nothing more — ApplyCustomization has no effect on
+            // what is drawn until the texture is built again. This is the pair of calls the game
+            // makes for itself after a change, and leaving them out is why the hair colour never
+            // moved and why a face came back wrong once a helmet went on.
+            try
+            {
+                Call(_previewDweller, "SetupTexture");
+                Call(_previewDweller, "ForceUpdateTexture", true);
+            }
+            catch (Exception e)
+            {
+                ReportOnce("rebuild", "Rebuilding the picture failed: " + e.Message);
+            }
+
             try
             {
                 MethodInfo draw = typeof(Dweller).GetMethod(
@@ -3813,6 +3954,7 @@ namespace VaultAdmin
                 }
 
                 draw.Invoke(_previewDweller, new object[] { _previewPicture, _previewHeadgear });
+                FitPreview();
             }
             catch (Exception e)
             {
@@ -3820,11 +3962,28 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>Calls one of the game's own methods on a dweller, by name.</summary>
+        private static void Call(object target, string method, params object[] arguments)
+        {
+            if (target == null) return;
+
+            Type[] shapes = new Type[arguments.Length];
+            for (int i = 0; i < arguments.Length; i++)
+                shapes[i] = arguments[i] == null ? typeof(object) : arguments[i].GetType();
+
+            MethodInfo found = target.GetType().GetMethod(
+                method, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, shapes, null);
+
+            if (found != null) found.Invoke(target, arguments);
+        }
+
         /// <summary>
-        /// Puts one changed choice onto the dweller already standing there.
+        /// Puts every choice back onto the dweller, then redraws.
         ///
-        /// Nothing to dress means nothing to do: the choice is simply remembered for whoever is
-        /// made next.
+        /// Every choice, not the one that moved: the pieces are not independent — putting a helmet
+        /// on rewrites the face beneath it — so applying one at a time left the rest behind. The
+        /// whole set is cheap to reapply, because each is a field being written.
         /// </summary>
         private void LookChanged(Choice choice)
         {
@@ -3832,15 +3991,7 @@ namespace VaultAdmin
 
             try
             {
-                if (choice == _skin)
-                {
-                    object shade = _skin.Selected;
-                    if (shade is Color) _previewDweller.SkinColor = (Color)shade;
-                }
-                else if (choice == _outfit) Equip(_previewDweller, _outfit, EItemType.Outfit);
-                else if (choice == _weapon) Equip(_previewDweller, _weapon, EItemType.Weapon);
-                else ApplyOneLook(_previewDweller, choice);
-
+                ApplyLooks(_previewDweller);
                 RefreshPreview();
             }
             catch (Exception e)
@@ -3849,39 +4000,124 @@ namespace VaultAdmin
             }
         }
 
-        private void BuildPreview(Transform parent, int width)
+        /// <summary>
+        /// Sizes the picture to whatever shape the dweller's own texture is.
+        ///
+        /// The widget was a guess at a portrait and the picture came out cropped to a head. The
+        /// material and the UV rect between them say exactly what shape it should be, so they are
+        /// asked rather than guessed at.
+        /// </summary>
+        private void FitPreview()
         {
-            const int tall = 150;
-            int middle = _cursorY - tall / 2;
+            if (_previewPicture == null) return;
 
-            Plate(parent, "PreviewPlate", 0, middle, width, tall, Skin.Row(width, tall), 1);
+            try
+            {
+                Texture sheet = _previewPicture.material != null
+                    ? _previewPicture.material.mainTexture
+                    : null;
+
+                Rect uv = _previewPicture.uvRect;
+                float wide = PreviewWidth;
+                float high = PreviewHeight;
+
+                if (sheet != null && sheet.width > 0 && sheet.height > 0 &&
+                    uv.width > 0f && uv.height > 0f)
+                {
+                    float shownWidth = sheet.width * uv.width;
+                    float shownHeight = sheet.height * uv.height;
+                    float scale = Mathf.Min(PreviewWidth / shownWidth, PreviewHeight / shownHeight);
+
+                    wide = shownWidth * scale;
+                    high = shownHeight * scale;
+
+                    ReportOnce("previewsize",
+                               "The dweller's sheet is " + sheet.width + "x" + sheet.height +
+                               ", shown through " + uv + " as " + Mathf.RoundToInt(wide) + "x" +
+                               Mathf.RoundToInt(high) + ".");
+                }
+
+                _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(wide));
+                _previewPicture.height = Mathf.Max(8, Mathf.RoundToInt(high));
+
+                if (_previewHeadgear != null)
+                {
+                    _previewHeadgear.width = _previewPicture.width;
+                    _previewHeadgear.height = _previewPicture.height;
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("previewsize", "Could not size the picture: " + e.Message);
+            }
+        }
+
+        private const int PreviewWidth = 132;
+        private const int PreviewHeight = 262;
+
+        /// <summary>
+        /// The dweller down the left, the choices about it down the right.
+        ///
+        /// Full height, because a person adjusting a face wants to see the person, and the choices
+        /// beside them rather than under them so that changing one does not move the picture out of
+        /// sight.
+        /// </summary>
+        private void BuildLooksBlock(Transform parent, int width)
+        {
+            Choice[] rows = { _hair, _face, _hairColour, _skin, _helmet, _outfit, _weapon };
+
+            const int rowHeight = 34;
+            const int rowGap = 4;
+
+            int block = Mathf.Max(PreviewHeight + 12, rows.Length * (rowHeight + rowGap) + 8);
+            int middle = _cursorY - block / 2;
+
+            Plate(parent, "LooksPlate", 0, middle, width, block, Skin.Row(width, block), 1);
+
+            // The picture, down the left.
+            int pictureX = -width / 2 + PreviewWidth / 2 + 10;
+
+            Plate(parent, "PreviewWell", pictureX, middle, PreviewWidth + 8, PreviewHeight + 8,
+                  Skin.Well(PreviewWidth + 8), 2);
 
             GameObject picture = new GameObject("PreviewPicture");
             picture.layer = parent.gameObject.layer;
             picture.transform.SetParent(parent, false);
-            picture.transform.localPosition = new Vector3(0f, middle + 8, 0f);
+            picture.transform.localPosition = new Vector3(pictureX, middle, 0f);
             picture.transform.localScale = Vector3.one;
 
             _previewPicture = picture.AddComponent<UITexture>();
-            _previewPicture.width = 84;
-            _previewPicture.height = 108;
+            _previewPicture.width = PreviewWidth;
+            _previewPicture.height = PreviewHeight;
             _previewPicture.depth = 3;
 
             GameObject headgear = new GameObject("PreviewHeadgear");
             headgear.layer = parent.gameObject.layer;
             headgear.transform.SetParent(parent, false);
-            headgear.transform.localPosition = new Vector3(0f, middle + 8, 0f);
+            headgear.transform.localPosition = new Vector3(pictureX, middle, 0f);
             headgear.transform.localScale = Vector3.one;
 
             _previewHeadgear = headgear.AddComponent<UITexture>();
-            _previewHeadgear.width = 84;
-            _previewHeadgear.height = 108;
+            _previewHeadgear.width = PreviewWidth;
+            _previewHeadgear.height = PreviewHeight;
             _previewHeadgear.depth = 4;
 
-            _previewCaption = MakeLabel(parent, "PreviewCaption", "", 0, middle - 58, width - 24,
-                                        24, Skin.Rim, 5);
+            _previewCaption = MakeLabel(parent, "PreviewCaption", "", pictureX,
+                                        middle - PreviewHeight / 2 - 14, PreviewWidth + 8, 20,
+                                        Skin.Rim, 5);
 
-            _cursorY -= tall + RowGap;
+            // The choices, down the right.
+            int columnLeft = -width / 2 + PreviewWidth + 24;
+            int columnWidth = width - PreviewWidth - 34;
+            int columnCentre = columnLeft + columnWidth / 2;
+
+            int top = middle + block / 2 - 6 - rowHeight / 2;
+
+            for (int i = 0; i < rows.Length; i++)
+                AddCompactChoice(parent, rows[i], columnCentre,
+                                 top - i * (rowHeight + rowGap), columnWidth);
+
+            _cursorY -= block + RowGap;
 
             _previewPicture.gameObject.SetActive(false);
             _previewHeadgear.gameObject.SetActive(false);
@@ -3889,8 +4125,8 @@ namespace VaultAdmin
 
         private void BuildDwellerSection(Transform parent, int width)
         {
-            AddHeader(parent, "WHO YOU ARE MAKING", width);
-            BuildPreview(parent, width);
+            RebuildLookOptions();
+            RebuildGearOptions();
 
             AddHeader(parent, "NAME", width);
 
@@ -3900,15 +4136,37 @@ namespace VaultAdmin
             _lastNameInput = AddInput(parent, "Last", width / 4, nameY, width / 2 - 12, "LAST");
             _cursorY -= RowHeight + RowGap;
 
-            AddHeader(parent, "RARITY, GENDER, LEVEL", width);
+            // Gender before the looks, because it decides what the looks can be.
+            _genderLabel = AddPickerRow(parent, width, "GENDER",
+                                        delegate { StepGender(-1); }, delegate { StepGender(1); },
+                                        Genders[_genderIndex].ToString());
+
+            AddHeader(parent, "LOOKS", width);
+            BuildLooksBlock(parent, width);
+
+            _hair.OnChange = delegate { LookChanged(_hair); };
+            _face.OnChange = delegate { LookChanged(_face); };
+            _hairColour.OnChange = delegate { LookChanged(_hairColour); };
+            _helmet.OnChange = delegate { LookChanged(_helmet); };
+            _skin.OnChange = delegate { LookChanged(_skin); };
+            _outfit.OnChange = delegate { ShowChoicePicture(_outfit); LookChanged(_outfit); };
+            _weapon.OnChange = delegate { ShowChoicePicture(_weapon); LookChanged(_weapon); };
+
+            _hairColour.SwatchOf = ColourOf;
+
+            _hair.Show();
+            _face.Show();
+            _hairColour.Show();
+            _skin.Show();
+            _helmet.Show();
+            _outfit.Show();
+            _weapon.Show();
+
+            AddHeader(parent, "RARITY AND LEVEL", width);
 
             _rarityLabel = AddPickerRow(parent, width, "RARITY",
                                         delegate { StepRarity(-1); }, delegate { StepRarity(1); },
                                         Rarities[_rarityIndex].ToString());
-
-            _genderLabel = AddPickerRow(parent, width, "GENDER",
-                                        delegate { StepGender(-1); }, delegate { StepGender(1); },
-                                        Genders[_genderIndex].ToString());
 
             int levelY = _cursorY - RowHeight / 2;
             Plate(parent, "LevelRow", 0, levelY, width, RowHeight, Skin.Row(width, RowHeight), 1);
@@ -3946,34 +4204,6 @@ namespace VaultAdmin
                            false, delegate { StepSpecial(index, 1); });
             }
             _cursorY -= specialHeight + RowGap;
-
-            AddHeader(parent, "LOOKS", width);
-
-            RebuildLookOptions();
-            RebuildGearOptions();
-
-            AddChoiceRow(parent, width, _hair);
-            AddChoiceRow(parent, width, _face);
-            AddChoiceRow(parent, width, _hairColour);
-            AddChoiceRow(parent, width, _skin);
-            AddChoiceRow(parent, width, _helmet);
-
-            AddHeader(parent, "GEAR", width);
-
-            AddChoiceRow(parent, width, _outfit);
-            AddChoiceRow(parent, width, _weapon);
-
-            _outfit.OnChange = delegate { ShowChoicePicture(_outfit); LookChanged(_outfit); };
-            _weapon.OnChange = delegate { ShowChoicePicture(_weapon); LookChanged(_weapon); };
-
-            _hair.OnChange = delegate { LookChanged(_hair); };
-            _face.OnChange = delegate { LookChanged(_face); };
-            _hairColour.OnChange = delegate { LookChanged(_hairColour); };
-            _helmet.OnChange = delegate { LookChanged(_helmet); };
-            _skin.OnChange = delegate { LookChanged(_skin); };
-
-            _outfit.Show();
-            _weapon.Show();
 
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
@@ -4557,9 +4787,6 @@ namespace VaultAdmin
                         thumb.mainTexture = Skin.Frame(10, step, 5, 5, Skin.Bright, Skin.Bright);
                     }
 
-                    if (_making == Making.Dweller && _tab == Tab.Create && _previewDweller != null)
-                        RefreshPreview();
-
                     if (_petArtPending)
                     {
                         _petArtPending = false;
@@ -5078,6 +5305,54 @@ namespace VaultAdmin
         /// The table answers with the key itself when it holds nothing for it, so that case is
         /// treated as a miss rather than shown to the player as a name.
         /// </summary>
+        private static MethodInfo _gameText;
+        private static bool _lookedForGameText;
+
+        /// <summary>
+        /// The game's own text for a key.
+        ///
+        /// Not NGUI's table — that is a different one, and asking it is what left every appearance
+        /// option named after a file, with underscores showing. The game keeps its strings in
+        /// ScriptLocalization, which lives in another assembly, so it is found by name once.
+        /// </summary>
+        private static string GameText(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+
+            if (!_lookedForGameText)
+            {
+                _lookedForGameText = true;
+
+                try
+                {
+                    Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
+                    for (int i = 0; i < loaded.Length && _gameText == null; i++)
+                    {
+                        Type table = loaded[i].GetType("ScriptLocalization");
+                        if (table == null) continue;
+
+                        _gameText = table.GetMethod("Get", BindingFlags.Public | BindingFlags.Static,
+                                                    null, new[] { typeof(string) }, null);
+                    }
+
+                    if (_gameText == null && Log != null)
+                        Log.LogWarning("ScriptLocalization was not found; names will be file names.");
+                }
+                catch { }
+            }
+
+            if (_gameText == null) return null;
+
+            try
+            {
+                string text = _gameText.Invoke(null, new object[] { key }) as string;
+                if (!string.IsNullOrEmpty(text) && text != key) return text;
+            }
+            catch { }
+
+            return null;
+        }
+
         private static string Localised(string key)
         {
             if (string.IsNullOrEmpty(key)) return null;
