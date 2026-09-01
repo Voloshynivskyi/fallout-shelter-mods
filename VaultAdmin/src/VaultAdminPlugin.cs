@@ -140,10 +140,13 @@ namespace VaultAdmin
             return Frame(width, height, 8, 3, Bright, Bright);
         }
 
-        /// <summary>The same, edged the way the window is: filled, outlined dark, then bright.</summary>
+        /// <summary>
+        /// Filled, with a single dark edge — the colour of the line that runs outside the window's
+        /// own. That is the point of it: the button reads as belonging to the frame it sits on.
+        /// </summary>
         public static Texture2D SolidOutlined(int width, int height)
         {
-            return Frame(width, height, 10, 3, Ink, Bright, Bright, 2);
+            return Frame(width, height, 10, 3, Ink, Bright);
         }
 
         /// <summary>
@@ -198,7 +201,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.38.0";
+        public const string PluginVersion = "0.39.0";
 
         internal static ManualLogSource Log;
 
@@ -1351,7 +1354,7 @@ namespace VaultAdmin
             go.transform.SetParent(page, false);
             // Inside the content rather than on the frame: at the old offset the bar and the
             // window's own edge were drawn through each other.
-            go.transform.localPosition = new Vector3(width / 2 + 2, centre, 0f);
+            go.transform.localPosition = new Vector3(width / 2 + 7, centre, 0f);
             go.transform.localScale = Vector3.one;
 
             UITexture track = Plate(go.transform, "Track", 0, 0, 10, viewHeight,
@@ -2774,6 +2777,59 @@ namespace VaultAdmin
         /// Each carries a list of effects with a range apiece — happiness by so much, damage by so
         /// much — and the breed alone said none of it.
         /// </summary>
+        /// <summary>
+        /// What a bonus is called, in the game's own words.
+        ///
+        /// PetUniqueData carries a LocalizedBonus of its own, which is where the readable text
+        /// lives; the enum name is a programmer's label and MYSTERIOUSMAGNET told the player
+        /// nothing. A spare record is filled in and asked, and the label is split into words only
+        /// if that fails.
+        /// </summary>
+        private string BonusWords(object effect)
+        {
+            string key = effect.ToString();
+
+            string known;
+            if (_bonusWords.TryGetValue(key, out known)) return known;
+
+            string text = null;
+
+            try
+            {
+                PetUniqueData spare = new PetUniqueData();
+                spare.Bonus = (EBonusEffect)effect;
+
+                text = CallText(spare, "LocalizedBonus");
+                if (!string.IsNullOrEmpty(text) && text == key) text = null;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("bonuswords", "Could not read the bonus names: " + e.Message);
+            }
+
+            if (string.IsNullOrEmpty(text))
+                text = string.Join(" ", SplitWords(key));
+
+            _bonusWords[key] = text;
+            return text;
+        }
+
+        private readonly Dictionary<string, string> _bonusWords = new Dictionary<string, string>();
+
+        /// <summary>
+        /// A number with as many places as it takes to not be zero.
+        ///
+        /// Several of these bonuses are small fractions, and one decimal place rendered every one of
+        /// them as +0.
+        /// </summary>
+        private static string Figure(float value)
+        {
+            if (value == 0f) return "0";
+            if (Mathf.Abs(value) >= 1f) return value.ToString("0.##");
+            if (Mathf.Abs(value) >= 0.01f) return value.ToString("0.##");
+            return value.ToString("0.####");
+        }
+
         /// <summary>The best a pet's bonus reaches, as one number.</summary>
         private int PetPower(object template)
         {
@@ -2816,8 +2872,8 @@ namespace VaultAdmin
                     object bonus = bonuses.GetValue(i);
                     if (bonus == null) continue;
 
-                    string effect = ReadAsText(bonus, "Effect");
-                    if (string.IsNullOrEmpty(effect) || effect == "None") continue;
+                    object effect = ReadObject(bonus, "Effect");
+                    if (effect == null || effect.ToString() == "None") continue;
 
                     float low, high;
                     float.TryParse(ReadAsText(bonus, "MinValue"),
@@ -2828,8 +2884,8 @@ namespace VaultAdmin
                                    System.Globalization.CultureInfo.InvariantCulture, out high);
 
                     if (line.Length > 0) line += "   ";
-                    line += effect.ToUpper() + " +" + low.ToString("0.#") +
-                            (high > low ? "-" + high.ToString("0.#") : "");
+                    line += BonusWords(effect) + " +" + Figure(low) +
+                            (high > low ? "-" + Figure(high) : "");
                 }
 
                 string rarity = pet.Rarity.ToString().ToUpper();
