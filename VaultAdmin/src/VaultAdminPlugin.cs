@@ -224,7 +224,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Log;
 
@@ -1433,12 +1433,17 @@ namespace VaultAdmin
             float aspect = Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
             int virtualWidth = Mathf.RoundToInt(virtualHeight * aspect);
 
+            // Text is sized from the interface, like everything else here. It scales with the
+            // resolution and is the same on every run, which the borrowed size was not.
+            _fontSize = Mathf.Clamp(Mathf.RoundToInt(virtualHeight * 0.0375f), 18, 34);
+
             _windowWidth = Mathf.Clamp(virtualWidth / 3, 380, 900);
             _windowHeight = Mathf.Max(320, virtualHeight - VerticalInset * 2);
             _windowX = -virtualWidth / 2 + _windowWidth / 2 + EdgeMargin;
 
             Log.LogInfo("Window sized to " + _windowWidth + "x" + _windowHeight +
-                        " within a " + virtualWidth + "x" + virtualHeight + " interface.");
+                        " within a " + virtualWidth + "x" + virtualHeight +
+                        " interface; text at " + _fontSize + ".");
         }
 
         /// <summary>
@@ -3674,9 +3679,16 @@ namespace VaultAdmin
             public readonly List<string> Labels = new List<string>();
             public int Index;
 
+            // Whether the first entry stands for nothing. Gear can honestly be absent; an
+            // appearance cannot, so its lists have no such entry and count from one.
+            public bool HasNone = true;
+
             public object Selected
             {
-                get { return Index > 0 && Index < Options.Count ? Options[Index] : null; }
+                // From nought, not from one. A list that begins with a real value has a real
+                // value at nought, and the lists that still begin with "none" keep a null there,
+                // so both answer correctly to the same question.
+                get { return Index >= 0 && Index < Options.Count ? Options[Index] : null; }
             }
 
             public void Step(int by)
@@ -3709,8 +3721,13 @@ namespace VaultAdmin
                 // because the first entry is a real choice, not the absence of one.
                 if (Title != null)
                 {
-                    int total = Options.Count - 1;
-                    Title.text = total > 0 ? Caption + "   " + Index + "/" + total : Caption;
+                    // A list with an empty first place counts its real entries and calls the
+                    // empty one nought; a list without one counts from one, because its first
+                    // entry is as real as its last.
+                    int total = HasNone ? Options.Count - 1 : Options.Count;
+                    int at = HasNone ? Index : Index + 1;
+
+                    Title.text = total > 0 ? Caption + "   " + at + "/" + total : Caption;
                 }
 
                 object chosen = Selected;
@@ -3732,7 +3749,7 @@ namespace VaultAdmin
                 if (OnChange != null) OnChange();
             }
 
-            /// <summary>Starts the list again, with 'as the game rolls it' in front.</summary>
+            /// <summary>Starts the list again, with a first entry that stands for nothing.</summary>
             public void Begin(string anything)
             {
                 Options.Clear();
@@ -3740,6 +3757,23 @@ namespace VaultAdmin
                 Options.Add(null);
                 Labels.Add(anything);
                 Index = 0;
+                HasNone = true;
+            }
+
+            /// <summary>
+            /// Starts the list again with nothing in front of it.
+            ///
+            /// An appearance has no empty option. "Random" was one for a long time, and it was not
+            /// a value at all -- it meant "write nothing", so the dweller kept whatever the game
+            /// had rolled for it, which was never what the figure on the bench was showing. There
+            /// is no way to leave a hair colour unset, so the list does not offer one.
+            /// </summary>
+            public void BeginBare()
+            {
+                Options.Clear();
+                Labels.Clear();
+                Index = 0;
+                HasNone = false;
             }
 
             public void Add(object option, string label)
@@ -5360,12 +5394,12 @@ namespace VaultAdmin
             _outfit.Caption = "OUTFIT";
             _weapon.Caption = "WEAPON";
 
-            _hair.Begin("random");
-            _face.Begin("random");
-            _hairColour.Begin("random");
+            _hair.BeginBare();
+            _face.BeginBare();
+            _hairColour.BeginBare();
             _colourWordsUsed.Clear();
             _helmet.Begin("none");
-            _skin.Begin("base");
+            _skin.BeginBare();
 
             try
             {
@@ -5403,8 +5437,10 @@ namespace VaultAdmin
 
                 if (skins != null)
                 {
+                    // Every shade the game has, and nothing standing for "leave it alone" --
+                    // leaving it alone is what made the figure and the dweller disagree.
                     for (int i = 0; i < skins.Length; i++)
-                        _skin.Add(skins.GetValue(i), "shade " + (i + 1));
+                        _skin.Add(skins.GetValue(i), "SHADE " + (i + 1));
                 }
             }
             catch (Exception e)
@@ -5418,11 +5454,16 @@ namespace VaultAdmin
             _helmet.Show();
             _skin.Show();
 
-            Log.LogInfo("Appearance for " + gender + ": " + (_hair.Options.Count - 1) + " hair, " +
-                        (_face.Options.Count - 1) + " face, " +
-                        (_hairColour.Options.Count - 1) + " hair colour, " +
+            // A fresh set of lists has put every slot back to nought. Rolling here means the page
+            // is never sitting on the value that applies nothing, including the very first time it
+            // is opened and after every change of gender.
+            if (_rollWhenReady) RollTheLooksQuietly();
+
+            Log.LogInfo("Appearance for " + gender + ": " + _hair.Options.Count + " hair, " +
+                        _face.Options.Count + " face, " +
+                        _hairColour.Options.Count + " hair colour, " +
                         (_helmet.Options.Count - 1) + " headgear, " +
-                        (_skin.Options.Count - 1) + " skin.");
+                        _skin.Options.Count + " skin.");
         }
 
         /// <summary>Puts the chosen item's own picture in the row that chose it.</summary>
@@ -5648,7 +5689,16 @@ namespace VaultAdmin
             ApplyOneLook(dweller, _hair);
             ApplyOneLook(dweller, _face);
             ApplyOneLook(dweller, _hairColour);
-            ApplyOneLook(dweller, _helmet);
+
+            // Headgear is the one look that can honestly be nothing, and nothing has to be written
+            // as well as chosen: ApplyCustomization is only ever told what to put on, so a dweller
+            // asked for no helmet would otherwise keep whatever the game had given it.
+            if (_helmet.Selected == null)
+            {
+                try { WriteMember(dweller, "m_helmet", null); }
+                catch { }
+            }
+            else ApplyOneLook(dweller, _helmet);
 
             try
             {
@@ -7057,7 +7107,14 @@ namespace VaultAdmin
 
             _cursorY -= RowHeight + RowGap;
 
+            // The header, and on its right the one control that makes the whole section agree
+            // with itself again: a roll that puts a real value in every appearance slot.
+            int looksY = _cursorY - 17;
             AddHeader(parent, "LOOKS", width);
+
+            MakeButton(parent, "RollLooks", "RANDOM", width / 2 - 52, looksY, 92, 26, false,
+                       delegate { RollTheLooks(); });
+
             BuildLooksBlock(parent, width);
 
             _hair.OnChange = delegate { LookChanged(_hair); };
@@ -7570,10 +7627,14 @@ namespace VaultAdmin
                 object dynamic = ReadAny(label, "trueTypeFont");
                 if (bitmap == null && dynamic == null) continue;
 
+                // The typeface only. Taking the size as well made the whole panel a lottery:
+                // this walks every label in memory and stops at the first one with a font, and
+                // what that label happens to be depends on what the game has loaded. One session
+                // it was a caption of size 20; the next it was 'AdditionalText' at 40, and every
+                // word in the panel came out half again as large.
                 _font = bitmap != null ? bitmap : dynamic;
-                _fontSize = label.fontSize > 0 ? label.fontSize : _fontSize;
                 Log.LogInfo("Borrowed a font from '" + label.name + "': " +
-                            _font.GetType().Name + ", size " + _fontSize + ".");
+                            _font.GetType().Name + ".");
                 return;
             }
 
@@ -7956,6 +8017,7 @@ namespace VaultAdmin
                 // gender, and this used to end by setting it to Male rather than to whatever it
                 // found -- which is how choosing a woman produced a man.
                 int wasGender = _genderIndex;
+                _rollWhenReady = false;
 
                 foreach (EGender gender in Genders)
                 {
@@ -7972,6 +8034,8 @@ namespace VaultAdmin
                     AppendChoice(text, _helmet);
                     AppendChoice(text, _skin);
                 }
+
+                _rollWhenReady = true;
 
                 _genderIndex = wasGender;
                 RebuildLookOptions();
@@ -8021,7 +8085,7 @@ namespace VaultAdmin
             {
                 text.AppendLine("      " + choice.Caption + " -- raw:");
 
-                for (int i = 1; i < choice.Options.Count && i <= 40; i++)
+                for (int i = choice.HasNone ? 1 : 0; i < choice.Options.Count && i <= 40; i++)
                 {
                     object entry = choice.Options[i];
                     if (entry == null) { text.AppendLine("          " + i + ": <null entry>"); continue; }
@@ -8033,7 +8097,7 @@ namespace VaultAdmin
                                     "  shown=" + Show(i < choice.Labels.Count ? choice.Labels[i] : null));
                 }
 
-                for (int i = 1; i < choice.Options.Count; i++)
+                for (int i = choice.HasNone ? 1 : 0; i < choice.Options.Count; i++)
                 {
                     object entry = choice.Options[i];
                     if (entry == null) continue;
@@ -8083,10 +8147,10 @@ namespace VaultAdmin
 
         private static void AppendChoice(System.Text.StringBuilder text, Choice choice)
         {
-            int count = choice.Options.Count - 1;      // the first is 'leave it alone'
+            int count = choice.HasNone ? choice.Options.Count - 1 : choice.Options.Count;
             text.AppendLine("      " + choice.Caption + ": " + count);
 
-            for (int i = 1; i < choice.Labels.Count && i <= 8; i++)
+            for (int i = choice.HasNone ? 1 : 0; i < choice.Labels.Count && i <= 8; i++)
                 text.AppendLine("          " + choice.Labels[i]);
 
             if (count > 8) text.AppendLine("          ... and " + (count - 8) + " more");
@@ -9258,6 +9322,62 @@ namespace VaultAdmin
         /// not produce. So the fields and the figure are cleared together, and what is shown is
         /// again what would be made.
         /// </summary>
+        /// <summary>
+        /// Puts a real value in every appearance slot, chosen at random.
+        ///
+        /// This is the fix for the oldest complaint about this bench, and the player found the
+        /// cause before I did. A slot left on "random" applied nothing at all: the figure on the
+        /// bench had been given a random look of its own, the spawner rolled a different one for
+        /// the dweller that walked away, and the two had never been the same thing. "Random" was
+        /// never a value; it was an instruction not to write one, and the picture above it was a
+        /// picture of somebody else.
+        ///
+        /// So there is no such instruction any more. Every appearance slot holds something real
+        /// from the moment the page is opened, the figure is dressed in exactly that, and the
+        /// dweller who arrives at the door is wearing what was on the screen.
+        ///
+        /// Gear is not rolled: an outfit and a weapon are things you choose, and a dweller with a
+        /// random one of each is not what anybody opened this page for. Headgear is left alone for
+        /// the same reason -- it sits under LOOKS, but a helmet on every newcomer is a costume,
+        /// not an appearance. Say the word and it joins the roll.
+        /// </summary>
+        // Whether the appearance slots should be filled in as soon as there is something to fill
+        // them with. False only while the catalogue is being walked for the icon report, which
+        // rebuilds the lists for both genders and has no business rolling anything.
+        private bool _rollWhenReady = true;
+
+        /// <summary>The roll without remaking the figure, for when the caller is about to do that.</summary>
+        private void RollTheLooksQuietly()
+        {
+            Choice[] rolled = { _hair, _face, _hairColour, _skin };
+
+            for (int i = 0; i < rolled.Length; i++)
+            {
+                Choice choice = rolled[i];
+                if (choice.Options.Count == 0) continue;
+
+                choice.Index = UnityEngine.Random.Range(0, choice.Options.Count);
+                choice.Show();
+            }
+        }
+
+        private void RollTheLooks()
+        {
+            Choice[] rolled = { _hair, _face, _hairColour, _skin };
+
+            for (int i = 0; i < rolled.Length; i++)
+            {
+                Choice choice = rolled[i];
+
+                if (choice.Options.Count == 0) continue;
+
+                choice.Index = UnityEngine.Random.Range(0, choice.Options.Count);
+                choice.Show();
+            }
+
+            RemakePreview();
+        }
+
         private void ResetTheBench()
         {
             Choice[] all = { _hair, _face, _hairColour, _skin, _helmet, _outfit, _weapon };
@@ -9286,7 +9406,9 @@ namespace VaultAdmin
             _rarityIndex = 0;
             if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString().ToUpper();
 
-            RemakePreview();
+            // Cleared and then rolled, so the bench is never showing a person it would not make.
+            // RollTheLooks remakes the figure itself.
+            RollTheLooks();
         }
 
         private void CreateDweller() { CreateDweller(true); }
@@ -9352,6 +9474,14 @@ namespace VaultAdmin
 
                     ApplySpecial(dweller);
                     ApplyLooks(dweller);
+
+                    // Chosen on the left, what the dweller ended up with on the right -- read
+                    // here, before the bench is cleared. Printed after the clearing, the left
+                    // half was the empty bench and the line proved nothing at all.
+                    Log.LogInfo("Asked for " + Picked(_hair) + ", " + Picked(_face) + ", " +
+                                Picked(_hairColour) + ", " + Picked(_skin) + ", " +
+                                Picked(_helmet) + ", " + Picked(_outfit) + ", " + Picked(_weapon) +
+                                "  ->  got " + Describe(dweller));
                 }
 
                 _created.Add(dweller.GetInstanceID());
@@ -9435,14 +9565,6 @@ namespace VaultAdmin
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
                 // the dweller afterwards what it is actually wearing.
-                // Chosen on the left, what the dweller actually ended up with on the right. The
-                // panel and the person who walks away from it have disagreed twice before, and
-                // reading both back in one line is how that gets settled rather than argued about.
-                if (customise)
-                    Log.LogInfo("Asked for " + Picked(_hair) + ", " + Picked(_face) + ", " +
-                                Picked(_skin) + ", " + Picked(_helmet) + ", " + Picked(_outfit) +
-                                ", " + Picked(_weapon) + "  ->  got " + Describe(dweller));
-
                 Say("Created " + Describe(dweller) + " — waiting at the vault door.");
             }
             catch (Exception e)
