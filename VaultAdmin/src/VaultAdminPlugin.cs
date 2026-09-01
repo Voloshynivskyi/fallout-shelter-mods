@@ -179,7 +179,21 @@ namespace VaultAdmin
         /// </summary>
         public static Texture2D Well(int size)
         {
-            return Frame(size, size, 6, EdgeCard, Bright, Hole);
+            return Well(size, size);
+        }
+
+        /// <summary>
+        /// A recess that is not obliged to be square.
+        ///
+        /// There was only the square one, and it was being handed to plates that are not square --
+        /// so a texture drawn for one shape was stretched to another, and its rounded corners were
+        /// stretched with it. That is where the pulled, lopsided corners come from: not from the
+        /// drawing, which is even, but from drawing it at the wrong size and letting the widget
+        /// squash it.
+        /// </summary>
+        public static Texture2D Well(int width, int height)
+        {
+            return Frame(width, height, 6, EdgeCard, Bright, Hole);
         }
 
         /// <summary>A place to type: outlined bright, sunk dark, so it reads as a field.</summary>
@@ -201,8 +215,14 @@ namespace VaultAdmin
         /// <summary>Whether a point is inside a convex quad given in order around it.</summary>
         private static bool InQuad(Vector2 p, Vector2 a, Vector2 b, Vector2 c, Vector2 d)
         {
-            return Side(p, a, b) >= 0f && Side(p, b, c) >= 0f &&
-                   Side(p, c, d) >= 0f && Side(p, d, a) >= 0f;
+            // Either way round. The test used to demand one winding, and the cube's faces are
+            // given in the other -- so not one pixel of any face passed it and all that survived
+            // was the outline. A wireframe die, drawn entirely by accident.
+            float ab = Side(p, a, b), bc = Side(p, b, c);
+            float cd = Side(p, c, d), da = Side(p, d, a);
+
+            return (ab >= 0f && bc >= 0f && cd >= 0f && da >= 0f) ||
+                   (ab <= 0f && bc <= 0f && cd <= 0f && da <= 0f);
         }
 
         private static float Side(Vector2 p, Vector2 a, Vector2 b)
@@ -530,6 +550,48 @@ namespace VaultAdmin
             return made;
         }
 
+        /// <summary>
+        /// A plus or a minus, drawn rather than typed.
+        ///
+        /// A glyph sits where its font's baseline puts it, which is not the middle of a button --
+        /// the plus and the minus in the same row of buttons were at visibly different heights,
+        /// because in the typeface they are. Two bars centred on the texture are two bars centred
+        /// on the button.
+        /// </summary>
+        public static Texture2D Sign(int size, bool plus)
+        {
+            string key = (plus ? "plus" : "minus") + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(8, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            float thick = Mathf.Max(1.5f, w * 0.15f);
+            float reach = w * 0.30f;
+            float mid = w * 0.5f;
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+
+                    float d = ToSegment(p, new Vector2(mid - reach, mid), new Vector2(mid + reach, mid));
+
+                    if (plus)
+                        d = Mathf.Min(d, ToSegment(p, new Vector2(mid, mid - reach),
+                                                      new Vector2(mid, mid + reach)));
+
+                    float ink = Mathf.Clamp01(thick * 0.5f - d + 0.5f);
+                    px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
@@ -566,7 +628,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.7.0";
 
         internal static ManualLogSource Log;
 
@@ -2840,7 +2902,10 @@ namespace VaultAdmin
                 UILabel word = tab.GetComponentInChildren<UILabel>();
                 if (word != null)
                 {
-                    word.fontSize = TextHeading;
+                    // A tab is a word in a small box, so it gets the small size and nearly all of
+                    // the box: at the heading size the longer names simply left through the sides.
+                    word.fontSize = TextBody;
+                    word.width = width - 6;
                     word.maxLineCount = 1;
                 }
 
@@ -4193,7 +4258,9 @@ namespace VaultAdmin
 
             Choice captured = choice;
 
-            int arrow = Mathf.Min(28, height - 24);
+            // Small enough to be a control rather than the row's main event. They step a list;
+            // the list is what the row is for.
+            int arrow = Mathf.Min(22, height - 26);
             int lower = y - height / 2 + arrow / 2 + 8;
 
             // Well inside the card. At the old offset the button's own outline sat on the card's.
@@ -4341,6 +4408,9 @@ namespace VaultAdmin
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
                      "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
+
+            AddPower(parent, width, "UNLOCK EVERY THEME",
+                     "every room decoration", UnlockEveryTheme, Skin.Padlock(38));
 
 
             AddHeader(parent, "PEACE AND QUIET", width);
@@ -5133,6 +5203,108 @@ namespace VaultAdmin
                     said.Append(" .").Append(fields[i].Name);
 
                 PropertyInfo[] props = held.GetType().GetProperties(Flags);
+                for (int i = 0; i < props.Length; i++)
+                    said.Append(" .").Append(props[i].Name);
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Opens every room theme, the way the recipe power opens every weapon.
+        ///
+        /// A theme is unlocked through the same survival guide as a recipe, so the hard part is not
+        /// the unlocking but finding the list: the item tables name their collections differently
+        /// from family to family, and this game's build is the only authority on which name. Rather
+        /// than guess once and fail silently, it asks for each name it might be and, if none of
+        /// them answer, writes down what the table actually holds -- so the next attempt is
+        /// informed rather than another guess.
+        /// </summary>
+        private void UnlockEveryTheme()
+        {
+            int opened = 0;
+
+            try
+            {
+                VaultGUIManager gui = VaultGUIManager.Instance;
+                object window = gui == null ? null : ReadObject(gui, "m_survivalWindow");
+
+                if (window == null) { Trouble("The survival guide is not open to be written to."); return; }
+
+                MethodInfo unlock = window.GetType().GetMethod(
+                    "UnlockRecipe",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (unlock == null) { Trouble("Themes cannot be unlocked from here."); return; }
+
+                object themeKind;
+                try { themeKind = Enum.Parse(typeof(EItemType), "Theme"); }
+                catch { Trouble("This build of the game has no theme item type."); return; }
+
+                GameParameters parameters = GameParameters.Instance;
+                ItemParameters items = parameters == null ? null : parameters.Items;
+
+                if (items == null) { Trouble("The game's item tables are not available yet."); return; }
+
+                string[] names = { "ThemesList", "ThemeList", "m_themesList", "m_themeList",
+                                   "Themes", "m_themes" };
+
+                Array themes = null;
+                for (int i = 0; i < names.Length && themes == null; i++)
+                    themes = ReadObject(items, names[i]) as Array;
+
+                if (themes == null)
+                {
+                    SayWhatTheTablesHold(items);
+                    Trouble("Could not find the theme list; what the tables do hold is in the log.");
+                    return;
+                }
+
+                for (int i = 0; i < themes.Length; i++)
+                {
+                    object theme = themes.GetValue(i);
+                    if (theme == null) continue;
+
+                    string id = ReadMember(theme, "ThemeId");
+                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "Id");
+                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "m_themeId");
+                    if (string.IsNullOrEmpty(id)) continue;
+
+                    try
+                    {
+                        unlock.Invoke(window, new object[] { new DwellerItem((EItemType)themeKind, id) });
+                        opened++;
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not unlock the themes: " + e.Message);
+                return;
+            }
+
+            if (opened == 0) Trouble("No themes could be unlocked; the log says what was found.");
+            else Say("Unlocked " + opened + " theme(s).");
+        }
+
+        /// <summary>Writes down every collection the item tables carry, once.</summary>
+        private static void SayWhatTheTablesHold(ItemParameters items)
+        {
+            try
+            {
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("The item tables hold:");
+
+                FieldInfo[] fields = items.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                    said.Append(" .").Append(fields[i].Name);
+
+                PropertyInfo[] props = items.GetType().GetProperties(Flags);
                 for (int i = 0; i < props.Length; i++)
                     said.Append(" .").Append(props[i].Name);
 
@@ -7143,11 +7315,18 @@ namespace VaultAdmin
 
                 // Set once and left alone. The film is always the same shape, so working the size
                 // out again on every refresh only made the figure jump about as the bench opened.
-                if (_previewPicture.height != PreviewHeight)
+                // The width follows the film's shape, and it has to be set even when the height
+                // already matches -- which it did from the moment the widget was built, so the
+                // guard meant the width was never corrected and the figure was drawn into whatever
+                // box the layout had reserved. That is the squashing.
+                int tall = PreviewHeight;
+                int wide = Mathf.Max(8, Mathf.RoundToInt(
+                    tall * (float)_previewFilm.width / _previewFilm.height));
+
+                if (_previewPicture.height != tall || _previewPicture.width != wide)
                 {
-                    _previewPicture.height = PreviewHeight;
-                    _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(
-                        PreviewHeight * (float)_previewFilm.width / _previewFilm.height));
+                    _previewPicture.height = tall;
+                    _previewPicture.width = wide;
                 }
 
                 if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
@@ -7367,7 +7546,7 @@ namespace VaultAdmin
             // Everything inside is measured from a single padding, so the gap above the figure,
             // below the die and either side of both is the same number.
             const int pad = 8;
-            const int dieRoom = 52;
+            const int dieRoom = 44;
             const int rollHeight = dieRoom - 12;
 
             int wellWidth = PreviewWidth + pad * 2;
@@ -7386,7 +7565,7 @@ namespace VaultAdmin
             int pictureX = -width / 2 + pad + wellWidth / 2;
 
             Plate(parent, "PreviewWell", pictureX, middle, wellWidth, wellHeight,
-                  Skin.Well(wellWidth), 2);
+                  Skin.Well(wellWidth, wellHeight), 2);
 
             int wellTop = middle + wellHeight / 2;
             int pictureY = wellTop - pad - PreviewHeight / 2;
@@ -7464,7 +7643,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 112;
+            const int slotHeight = 92;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -7631,16 +7810,20 @@ namespace VaultAdmin
                 int index = i;
                 int x = -width / 2 + cell / 2 + 8 + i * cell;
 
-                MakeLabel(parent, "SpecLetter" + i, Specials[i].ToString().Substring(0, 1),
-                          x, specialY + 32, cell, 22, Skin.Bright, 3);
+                // The letter is the name of the stat and the loudest thing in the cell; the box
+                // beneath holds one or two digits and had been sized as though it held a word.
+                UILabel letter = MakeLabel(parent, "SpecLetter" + i,
+                                           Specials[i].ToString().Substring(0, 1),
+                                           x, specialY + 32, cell, 24, Skin.Bright, 3);
+                letter.fontSize = TextHeading;
 
-                _specialInputs[i] = AddInput(parent, "Spec" + i, x, specialY + 10, cell - 6,
+                _specialInputs[i] = AddInput(parent, "Spec" + i, x, specialY + 10, cell - 18,
                                              _special[i].ToString(), true);
 
-                MakeButton(parent, "SpecDown" + i, "-", x - cell / 4, specialY - 22, cell / 2 - 3, 26,
-                           false, delegate { StepSpecial(index, -1); });
-                MakeButton(parent, "SpecUp" + i, "+", x + cell / 4, specialY - 22, cell / 2 - 3, 26,
-                           false, delegate { StepSpecial(index, 1); });
+                MakeSignButton(parent, "SpecDown" + i, false, x - cell / 4, specialY - 22,
+                               cell / 2 - 3, 26, delegate { StepSpecial(index, -1); });
+                MakeSignButton(parent, "SpecUp" + i, true, x + cell / 4, specialY - 22,
+                               cell / 2 - 3, 26, delegate { StepSpecial(index, 1); });
             }
             _cursorY -= specialHeight + RowGap;
 
@@ -7672,6 +7855,8 @@ namespace VaultAdmin
             MakeButton(parent, "PickBack_" + caption, "<", width / 2 - 178, y, 40, 32, false, back);
             UILabel value = MakeLabel(parent, "PickValue_" + caption, initial,
                                       width / 2 - 108, y, 116, RowHeight, Skin.Bright, 3);
+            value.fontSize = TextBody;
+            value.maxLineCount = 1;
             MakeButton(parent, "PickFwd_" + caption, ">", width / 2 - 38, y, 40, 32, false, forward);
 
             _cursorY -= RowHeight + RowGap;
@@ -7845,6 +8030,14 @@ namespace VaultAdmin
         /// </summary>
         private static string ResourceName(EResource resource)
         {
+            // By what the name contains rather than by a member I have to spell right. Two
+            // guesses at this enum have already been wrong, and the compiler catching them is
+            // luckier than it sounds -- the third would have been a row labelled with a field name
+            // in front of a player.
+            string raw = resource.ToString();
+            if (raw.IndexOf("cap", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                raw.IndexOf("carrier", StringComparison.OrdinalIgnoreCase) < 0) return "CAPS";
+
             switch (resource)
             {
                 case EResource.Energy:           return "POWER";
@@ -7853,7 +8046,10 @@ namespace VaultAdmin
                 case EResource.StimPack:         return "STIMPAK";
                 case EResource.RadAway:          return "RADAWAY";
                 case EResource.NukaColaQuantum:  return "NUKA-COLA QUANTUM";
-                default:                         return Tidy(resource.ToString()).ToUpper();
+                case EResource.Lunchbox:         return "LUNCHBOX";
+                case EResource.MrHandy:          return "MR HANDY";
+                case EResource.PetCarrier:       return "PET CARRIER";
+                default:                         return Tidy(raw).ToUpper();
             }
         }
 
@@ -7932,7 +8128,7 @@ namespace VaultAdmin
             int right = width / 2 - 8;
             int span = right - left;
 
-            MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
+            MakeLeftLabel(parent, "BoxName_" + type, Tidy(type.ToString()).ToUpper(),
                           left, top, span, 26, Skin.Bright, 3);
 
             ELunchBoxType captured = type;
@@ -8126,6 +8322,33 @@ namespace VaultAdmin
         }
 
         /// <summary>A drawn texture, positioned in the window's own space.</summary>
+        /// <summary>A button whose word is a drawn sign, so it sits where the button's middle is.</summary>
+        private GameObject MakeSignButton(Transform parent, string name, bool plus,
+                                          int x, int y, int width, int height,
+                                          EventDelegate.Callback onClick)
+        {
+            GameObject button = MakeButton(parent, name, "", x, y, width, height, false, onClick);
+
+            int mark = Mathf.Min(width, height) - 8;
+
+            GameObject drawn = new GameObject("Sign");
+            drawn.layer = button.layer;
+            drawn.transform.SetParent(button.transform, false);
+            drawn.transform.localPosition = Vector3.zero;
+            drawn.transform.localScale = Vector3.one;
+
+            UITexture face = drawn.AddComponent<UITexture>();
+            face.mainTexture = Skin.Sign(mark, plus);
+            face.width = mark;
+            face.height = mark;
+            face.depth = button.GetComponent<UITexture>().depth + 2;
+
+            Shader flat = Shader.Find("Unlit/Transparent Colored");
+            if (flat != null) face.shader = flat;
+
+            return button;
+        }
+
         private UITexture Plate(Transform parent, string name, int x, int y, int width, int height,
                                 Texture2D texture, int depthOffset)
         {
@@ -8141,10 +8364,32 @@ namespace VaultAdmin
             drawn.height = height;
             drawn.depth = depthOffset;
 
+            // A drawn plate is only even if it is drawn at the size it is shown at. Stretching one
+            // pulls its corners out of round, which is the artefact this is here to catch -- and
+            // eyeballing nine thousand lines for the next one is not a method. Solid fills have no
+            // corners to pull, so they are allowed to stretch.
+            WarnIfStretched(name, texture, width, height);
+
             Shader shader = Shader.Find("Unlit/Transparent Colored");
             if (shader != null) drawn.shader = shader;
 
             return drawn;
+        }
+
+        private static void WarnIfStretched(string name, Texture2D texture, int width, int height)
+        {
+            if (texture == null || texture.width <= 2 || texture.height <= 2) return;
+
+            int wantWide = Mathf.RoundToInt(width * Skin.Scale);
+            int wantTall = Mathf.RoundToInt(height * Skin.Scale);
+
+            if (Mathf.Abs(texture.width - wantWide) <= 1 && Mathf.Abs(texture.height - wantTall) <= 1)
+                return;
+
+            ReportOnce("stretch_" + name,
+                       "'" + name + "' is drawn " + texture.width + "x" + texture.height +
+                       " and shown at " + wantWide + "x" + wantTall +
+                       "; its corners will be pulled out of round.");
         }
 
         private UILabel MakeLabel(Transform parent, string name, string text,
@@ -8302,11 +8547,18 @@ namespace VaultAdmin
                         UITexture thumb = _thumbs[i];
                         if (thumb == null) continue;
 
+                        // The thumb takes the height its texture was drawn at, rather than the
+                        // texture being drawn at a rounded-off height and then stretched to the
+                        // thumb's real one. Eight units of stretch on a bar ten wide is what
+                        // squared off its ends.
                         int step = Mathf.Max(16, (thumb.height / 8) * 8);
-                        if (thumb.mainTexture != null &&
+
+                        if (thumb.mainTexture != null && thumb.height == step &&
                             thumb.mainTexture.height == Mathf.RoundToInt(step * Skin.Scale)) continue;
 
-                        thumb.mainTexture = Skin.Frame(10, step, 5, Skin.EdgeButton, Skin.Bright, Skin.Bright);
+                        thumb.height = step;
+                        thumb.mainTexture = Skin.Frame(10, step, 5, Skin.EdgeButton,
+                                                       Skin.Bright, Skin.Bright);
                     }
 
                     if (_petArtPending)
