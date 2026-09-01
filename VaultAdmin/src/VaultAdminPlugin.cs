@@ -192,7 +192,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.36.0";
+        public const string PluginVersion = "0.37.0";
 
         internal static ManualLogSource Log;
 
@@ -1449,7 +1449,46 @@ namespace VaultAdmin
             }
         }
 
-        private static string[] BoxSprites(ELunchBoxType type)
+        /// <summary>
+        /// The picture the game itself uses for a box.
+        ///
+        /// GUIParameters carries the three sprite names outright, which settles what had been two
+        /// rounds of picking between a robot, a robot with a boy beside it, and a crate.
+        /// </summary>
+        private string[] BoxSprites(ELunchBoxType type)
+        {
+            string named = null;
+
+            try
+            {
+                GameParameters parameters = GameParameters.Instance;
+                GUIParameters gui = parameters != null ? parameters.GUIParameters : null;
+
+                if (gui != null)
+                {
+                    switch (type)
+                    {
+                        case ELunchBoxType.Regular:    named = gui.Lunchbox; break;
+                        case ELunchBoxType.MrHandy:    named = gui.MrHandyBox; break;
+                        case ELunchBoxType.PetCarrier: named = gui.PetCarrier; break;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("boxsprite", "Could not read the box pictures from the game: " + e.Message);
+            }
+
+            string[] fallback = BoxSpriteGuesses(type);
+            if (string.IsNullOrEmpty(named)) return fallback;
+
+            string[] all = new string[fallback.Length + 1];
+            all[0] = named;
+            Array.Copy(fallback, 0, all, 1, fallback.Length);
+            return all;
+        }
+
+        private static string[] BoxSpriteGuesses(ELunchBoxType type)
         {
             switch (type)
             {
@@ -2168,25 +2207,24 @@ namespace VaultAdmin
             MakeLeftLabel(parent, "FilterName", "FIND",
                           -width / 2 + 12, filterY, 62, RowHeight, Skin.Bright, 3);
 
-            int sortWidth = 38;
-            int sortSpan = sortWidth * 4 + 12;
-            int fieldWidth = width - 74 - sortSpan - 16;
+            // One switch apiece, off then up then down, rather than four buttons of which two are
+            // always the wrong ones to press.
+            int sortWidth = 84;
+            int sortSpan = sortWidth * 2 + 6;
+            int fieldWidth = width - 74 - sortSpan - 14;
 
             _filterInput = AddInput(parent, "Filter", -width / 2 + 74 + fieldWidth / 2, filterY,
                                     fieldWidth, "SEARCH");
 
             int sortX = width / 2 - sortSpan + sortWidth / 2 - 2;
-            MakeButton(parent, "SortRarityUp", "R+", sortX, filterY, sortWidth, 32, false,
-                       delegate { SortBy(Ordering.Rarity, true); });
-            sortX += sortWidth + 4;
-            MakeButton(parent, "SortRarityDown", "R-", sortX, filterY, sortWidth, 32, false,
-                       delegate { SortBy(Ordering.Rarity, false); });
-            sortX += sortWidth + 4;
-            MakeButton(parent, "SortPowerUp", "S+", sortX, filterY, sortWidth, 32, false,
-                       delegate { SortBy(Ordering.Power, true); });
-            sortX += sortWidth + 4;
-            MakeButton(parent, "SortPowerDown", "S-", sortX, filterY, sortWidth, 32, false,
-                       delegate { SortBy(Ordering.Power, false); });
+            _rarityToggle = MakeButton(parent, "SortRarity", "RARITY", sortX, filterY,
+                                       sortWidth, 32, false,
+                                       delegate { CycleOrdering(Ordering.Rarity); });
+
+            sortX += sortWidth + 6;
+            _powerToggle = MakeButton(parent, "SortPower", "STATS", sortX, filterY,
+                                      sortWidth, 32, false,
+                                      delegate { CycleOrdering(Ordering.Power); });
 
             _cursorY -= RowHeight + RowGap;
 
@@ -2210,11 +2248,51 @@ namespace VaultAdmin
 
         private const int MaxGrantRows = 260;
 
-        private void SortBy(Ordering ordering, bool ascending)
+        private GameObject _rarityToggle;
+        private GameObject _powerToggle;
+
+        /// <summary>Off, then up, then down, then off again.</summary>
+        private void CycleOrdering(Ordering which)
         {
-            _ordering = ordering;
-            _orderingUp = ascending;
+            if (_ordering != which) { _ordering = which; _orderingUp = true; }
+            else if (_orderingUp) { _orderingUp = false; }
+            else { _ordering = Ordering.None; }
+
             RefreshThings();
+        }
+
+        /// <summary>
+        /// Shows each switch only where it means something.
+        ///
+        /// Junk has no stats to sort by — its rating is what it sells for, which says nothing about
+        /// one lump of scrap against another — and neither pets nor dwellers are graded at all.
+        /// </summary>
+        private void UpdateOrderingSwitches()
+        {
+            bool hasRarity = _grantFamily == Family.Weapon || _grantFamily == Family.Outfit ||
+                             _grantFamily == Family.Junk;
+            bool hasPower = _grantFamily == Family.Weapon || _grantFamily == Family.Outfit;
+
+            if (_rarityToggle != null) _rarityToggle.SetActive(hasRarity);
+            if (_powerToggle != null) _powerToggle.SetActive(hasPower);
+
+            if ((_ordering == Ordering.Rarity && !hasRarity) ||
+                (_ordering == Ordering.Power && !hasPower))
+                _ordering = Ordering.None;
+
+            Label(_rarityToggle, "RARITY", Ordering.Rarity);
+            Label(_powerToggle, "STATS", Ordering.Power);
+        }
+
+        private void Label(GameObject button, string caption, Ordering which)
+        {
+            if (button == null) return;
+
+            UILabel text = button.GetComponentInChildren<UILabel>();
+            if (text == null) return;
+
+            if (_ordering != which) text.text = caption;
+            else text.text = caption + (_orderingUp ? " ^" : " v");
         }
 
         /// <summary>
@@ -2419,6 +2497,7 @@ namespace VaultAdmin
                 }
             }
 
+            UpdateOrderingSwitches();
             if (_ordering != Ordering.None) _shown.Sort(CompareShown);
 
             EnsureRows(_shown.Count);
@@ -2492,7 +2571,7 @@ namespace VaultAdmin
                 {
                     PetEntry pet = (PetEntry)thing;
                     row.Name.text = pet.Name;
-                    row.Stats.text = pet.Detail;
+                    row.Stats.text = PetStats(pet);
 
                     ShowPetIcon(row.Icon, pet);
                 }
@@ -2609,6 +2688,50 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 ReportOnce("petload", "Could not ask for pet art: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// What a pet actually does, which is the reason to pick one.
+        ///
+        /// Each carries a list of effects with a range apiece — happiness by so much, damage by so
+        /// much — and the breed alone said none of it.
+        /// </summary>
+        private string PetStats(PetEntry pet)
+        {
+            try
+            {
+                Array bonuses = ReadObject(pet.Template, "BonusEffectList") as Array;
+                if (bonuses == null || bonuses.Length == 0) return pet.Detail;
+
+                string line = "";
+
+                for (int i = 0; i < bonuses.Length; i++)
+                {
+                    object bonus = bonuses.GetValue(i);
+                    if (bonus == null) continue;
+
+                    string effect = ReadAsText(bonus, "Effect");
+                    if (string.IsNullOrEmpty(effect) || effect == "None") continue;
+
+                    float low, high;
+                    float.TryParse(ReadAsText(bonus, "MinValue"),
+                                   System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out low);
+                    float.TryParse(ReadAsText(bonus, "MaxValue"),
+                                   System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out high);
+
+                    if (line.Length > 0) line += "   ";
+                    line += effect.ToUpper() + " +" + low.ToString("0.#") +
+                            (high > low ? "-" + high.ToString("0.#") : "");
+                }
+
+                return line.Length > 0 ? line : pet.Detail;
+            }
+            catch
+            {
+                return pet.Detail;
             }
         }
 
@@ -4479,7 +4602,11 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault == null || !vault.Loaded) return;
 
-                vault.AddLunchBox(type, quantity);
+                // AddLunchBox(type, n) does not add n boxes. All three of its overloads insert a
+                // single one; the number is handed to the LunchBox constructor, not counted. So the
+                // count is kept here, where it means what it says.
+                for (int i = 0; i < quantity; i++) vault.AddLunchBox(type);
+
                 Log.LogInfo("Granted " + quantity + " " + type + " box(es).");
             }
             catch (Exception e)
