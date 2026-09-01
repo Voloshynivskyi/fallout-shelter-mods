@@ -188,72 +188,182 @@ namespace VaultAdmin
             return Frame(width, height, 6, EdgeCard, Bright, Hole);
         }
 
-        /// <summary>
-        /// A die, drawn: a rounded square with the pips of the face asked for.
-        ///
-        /// The game has no dice in any of its atlases, and a word saying RANDOM is a poor picture
-        /// of chance. Six faces, cached like every other texture here, so spinning through them
-        /// costs nothing after the first turn.
-        /// </summary>
-        public static Texture2D Die(int size, int pips)
+        /// <summary>How far a point lies from a line segment. The workhorse of every drawn shape here.</summary>
+        private static float ToSegment(Vector2 p, Vector2 a, Vector2 b)
         {
-            pips = Mathf.Clamp(pips, 1, 6);
+            Vector2 ab = b - a;
+            float len = ab.sqrMagnitude;
 
-            string key = "die" + size + "p" + pips + "s" + Scale.ToString("0.00");
+            float t = len <= 0.0001f ? 0f : Mathf.Clamp01(Vector2.Dot(p - a, ab) / len);
+            return Vector2.Distance(p, a + ab * t);
+        }
+
+        /// <summary>Whether a point is inside a convex quad given in order around it.</summary>
+        private static bool InQuad(Vector2 p, Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            return Side(p, a, b) >= 0f && Side(p, b, c) >= 0f &&
+                   Side(p, c, d) >= 0f && Side(p, d, a) >= 0f;
+        }
+
+        private static float Side(Vector2 p, Vector2 a, Vector2 b)
+        {
+            return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        }
+
+        /// <summary>
+        /// A die, drawn as a cube seen from a corner.
+        ///
+        /// Flat on, it was a square with spots and read as a button rather than as a die. Seen from
+        /// above and to one side, three faces show at once, and the three greens of this panel are
+        /// exactly what a lit face, a shaded face and a shadowed one want to be -- so the cube is
+        /// solid without a fourth colour entering the interface to make it so.
+        ///
+        /// The game has no dice in any of its atlases. Six orientations, cached like every other
+        /// texture here, so turning through them costs nothing after the first turn.
+        /// </summary>
+        public static Texture2D Die(int size, int face)
+        {
+            face = Mathf.Clamp(face, 1, 6);
+
+            string key = "cube" + size + "f" + face + "s" + Scale.ToString("0.00");
 
             Texture2D cached;
             if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
 
-            Texture2D body = Frame(size, size, Mathf.Max(3, size / 5), EdgeButton, Bright, Card);
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
 
-            int w = body.width;
-            int h = body.height;
+            float cx = w * 0.5f;
+            float cy = w * 0.5f;
 
-            Color[] pixels = body.GetPixels();
+            float half = w * 0.38f;    // half the width of the top rhombus
+            float rise = w * 0.40f;    // the length of a vertical edge
 
-            // Three columns and three rows, the way pips have always been laid out. Which of the
-            // nine are inked is the whole of what tells one face from another.
-            float[] at = { 0.27f, 0.5f, 0.73f };
-            int[] faces = PipMask(pips);
-            float radius = w * 0.082f;
+            // The six corners of the silhouette, and the one in the middle where all three faces
+            // meet -- the near vertical edge, pointing at the viewer.
+            Vector2 back  = new Vector2(cx, cy + half * 0.5f + rise * 0.5f);
+            Vector2 right = new Vector2(cx + half, cy + rise * 0.5f);
+            Vector2 left  = new Vector2(cx - half, cy + rise * 0.5f);
+            Vector2 near  = new Vector2(cx, cy - half * 0.5f + rise * 0.5f);
 
-            for (int cell = 0; cell < 9; cell++)
+            Vector2 rightLow = new Vector2(cx + half, cy - rise * 0.5f);
+            Vector2 leftLow  = new Vector2(cx - half, cy - rise * 0.5f);
+            Vector2 nearLow  = new Vector2(cx, cy - half * 0.5f - rise * 0.5f);
+
+            Color lit = Bright;
+            Color shaded = Color.Lerp(Bright, Ink, 0.42f);
+            Color shadow = Color.Lerp(Bright, Ink, 0.70f);
+
+            float stroke = Mathf.Max(1.2f, 1.4f * Scale);
+
+            // Every edge that shows: the six around the outside, and the three that radiate from
+            // the near corner and tell the three faces apart.
+            Vector2[][] edges =
             {
-                if (faces[cell] == 0) continue;
+                new[] { back, right }, new[] { right, rightLow }, new[] { rightLow, nearLow },
+                new[] { nearLow, leftLow }, new[] { leftLow, left }, new[] { left, back },
+                new[] { near, right }, new[] { near, left }, new[] { near, nearLow }
+            };
 
-                float cx = at[cell % 3] * w;
-                float cy = at[2 - cell / 3] * h;
+            int[] pips = CubeFaces(face);
 
-                int lo = Mathf.Max(0, Mathf.FloorToInt(cy - radius - 1f));
-                int hi = Mathf.Min(h - 1, Mathf.CeilToInt(cy + radius + 1f));
-
-                for (int y = lo; y <= hi; y++)
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
                 {
-                    for (int x = Mathf.Max(0, Mathf.FloorToInt(cx - radius - 1f));
-                         x <= Mathf.Min(w - 1, Mathf.CeilToInt(cx + radius + 1f)); x++)
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+                    Color paint;
+
+                    if (InQuad(p, back, right, near, left)) paint = lit;
+                    else if (InQuad(p, right, rightLow, nearLow, near)) paint = shaded;
+                    else if (InQuad(p, near, nearLow, leftLow, left)) paint = shadow;
+                    else paint = Clear;
+
+                    if (paint.a > 0f)
                     {
-                        float dx = x + 0.5f - cx;
-                        float dy = y + 0.5f - cy;
+                        // The pips, sunk into whichever face the pixel belongs to.
+                        float ink = 0f;
 
-                        // Feathered by a pixel, like the corners: a hard edge on a small circle
-                        // reads as a square with the corners bitten off.
-                        float cover = Mathf.Clamp01(radius - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
-                        if (cover <= 0f) continue;
+                        if (paint == lit) ink = PipCover(p, back, right, near, left, pips[0], w);
+                        else if (paint == shaded) ink = PipCover(p, right, rightLow, nearLow, near, pips[1], w);
+                        else ink = PipCover(p, near, nearLow, leftLow, left, pips[2], w);
 
-                        int i = y * w + x;
-                        pixels[i] = Color.Lerp(pixels[i], Bright, cover);
+                        if (ink > 0f) paint = Color.Lerp(paint, Ink, ink);
                     }
+
+                    // Drawn last and over everything, so the cube keeps its shape against whatever
+                    // it is standing on.
+                    float nearest = float.MaxValue;
+                    for (int e = 0; e < edges.Length; e++)
+                    {
+                        float d = ToSegment(p, edges[e][0], edges[e][1]);
+                        if (d < nearest) nearest = d;
+                    }
+
+                    float onEdge = Mathf.Clamp01(stroke - nearest + 0.5f);
+                    if (onEdge > 0f)
+                        paint = Color.Lerp(paint, Ink, onEdge * (paint.a > 0f ? 1f : 0.9f));
+
+                    px[y * w + x] = paint;
                 }
             }
 
-            Texture2D die = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            Texture2D die = new Texture2D(w, w, TextureFormat.RGBA32, false);
             die.filterMode = FilterMode.Bilinear;
             die.wrapMode = TextureWrapMode.Clamp;
-            die.SetPixels(pixels);
+            die.SetPixels(px);
             die.Apply();
 
             _cache[key] = die;
             return die;
+        }
+
+        /// <summary>How much of a pip covers this pixel, in the face's own square.</summary>
+        private static float PipCover(Vector2 p, Vector2 a, Vector2 b, Vector2 c, Vector2 d,
+                                      int pips, int w)
+        {
+            // Where the pixel falls within the face, as a fraction along each of its two edges.
+            Vector2 u = b - a;
+            Vector2 v = d - a;
+
+            float denom = u.x * v.y - u.y * v.x;
+            if (Mathf.Abs(denom) < 0.0001f) return 0f;
+
+            Vector2 q = p - a;
+            float s = (q.x * v.y - q.y * v.x) / denom;
+            float t = (u.x * q.y - u.y * q.x) / denom;
+
+            int[] mask = PipMask(pips);
+            float radius = 0.10f;
+            float best = 0f;
+
+            for (int cell = 0; cell < 9; cell++)
+            {
+                if (mask[cell] == 0) continue;
+
+                float ds = s - (0.26f + 0.24f * (cell % 3));
+                float dt = t - (0.26f + 0.24f * (cell / 3));
+
+                // Softened in face space, then scaled back to pixels so the feather is even.
+                float cover = Mathf.Clamp01((radius - Mathf.Sqrt(ds * ds + dt * dt)) * w * 0.35f);
+                if (cover > best) best = cover;
+            }
+
+            return best;
+        }
+
+        /// <summary>Which numbers show on the top, right and left faces of each orientation.</summary>
+        private static int[] CubeFaces(int face)
+        {
+            switch (face)
+            {
+                case 1:  return new[] { 1, 3, 2 };
+                case 2:  return new[] { 2, 1, 3 };
+                case 3:  return new[] { 3, 2, 1 };
+                case 4:  return new[] { 4, 6, 5 };
+                case 5:  return new[] { 5, 4, 6 };
+                default: return new[] { 6, 5, 4 };
+            }
         }
 
         /// <summary>Which of the nine places carry a pip, for each face of a die.</summary>
@@ -268,6 +378,145 @@ namespace VaultAdmin
                 case 5:  return new[] { 1, 0, 1,  0, 1, 0,  1, 0, 1 };
                 default: return new[] { 1, 0, 1,  1, 0, 1,  1, 0, 1 };
             }
+        }
+
+        /// <summary>How far a point lies from an arc, or from its ends if it is past them.</summary>
+        private static float ToArc(Vector2 p, Vector2 centre, float radius, float from, float to)
+        {
+            Vector2 away = p - centre;
+            float angle = Mathf.Atan2(away.y, away.x) * Mathf.Rad2Deg;
+            if (angle < 0f) angle += 360f;
+
+            if (angle >= from && angle <= to) return Mathf.Abs(away.magnitude - radius);
+
+            Vector2 a = centre + new Vector2(Mathf.Cos(from * Mathf.Deg2Rad),
+                                             Mathf.Sin(from * Mathf.Deg2Rad)) * radius;
+            Vector2 b = centre + new Vector2(Mathf.Cos(to * Mathf.Deg2Rad),
+                                             Mathf.Sin(to * Mathf.Deg2Rad)) * radius;
+
+            return Mathf.Min(Vector2.Distance(p, a), Vector2.Distance(p, b));
+        }
+
+        /// <summary>
+        /// A padlock standing open, for the power that opens every recipe.
+        ///
+        /// The atlas offered a scroll and a lump of junk, neither of which is the idea. A lock with
+        /// its shackle swung clear is the idea, and it is four shapes: a body, an arc, a keyhole
+        /// and the hole's stem.
+        /// </summary>
+        public static Texture2D Padlock(int size)
+        {
+            string key = "padlock" + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            float bodyLeft = w * 0.22f, bodyRight = w * 0.78f;
+            float bodyLow = w * 0.08f, bodyHigh = w * 0.54f;
+            float round = w * 0.09f;
+
+            Vector2 shackleAt = new Vector2(w * 0.50f, w * 0.56f);
+            float shackleR = w * 0.20f;
+            float shackleT = w * 0.075f;
+
+            Vector2 keyAt = new Vector2(w * 0.50f, w * 0.36f);
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+                    float ink = 0f;
+
+                    // The body: a rectangle with its corners taken off.
+                    float dx = Mathf.Max(0f, Mathf.Max(bodyLeft + round - p.x, p.x - (bodyRight - round)));
+                    float dy = Mathf.Max(0f, Mathf.Max(bodyLow + round - p.y, p.y - (bodyHigh - round)));
+
+                    if (p.x >= bodyLeft - 1f && p.x <= bodyRight + 1f &&
+                        p.y >= bodyLow - 1f && p.y <= bodyHigh + 1f)
+                        ink = Mathf.Max(ink, Mathf.Clamp01(round - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f));
+
+                    // The shackle, swung open: the arc stops short of coming back down.
+                    float arc = ToArc(p, shackleAt, shackleR, 25f, 180f);
+                    ink = Mathf.Max(ink, Mathf.Clamp01(shackleT * 0.5f - arc + 0.5f));
+
+                    Color paint = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+
+                    // The keyhole, cut back out of the body.
+                    float hole = Vector2.Distance(p, keyAt) - w * 0.075f;
+                    float stem = ToSegment(p, keyAt, new Vector2(keyAt.x, w * 0.19f)) - w * 0.032f;
+                    float cut = Mathf.Clamp01(-Mathf.Min(hole, stem) + 0.5f);
+
+                    if (cut > 0f) paint = Color.Lerp(paint, Clear, cut);
+
+                    px[y * w + x] = paint;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
+        /// <summary>
+        /// Two chevrons, for the power that makes rushing safe.
+        ///
+        /// Rushing is the game's word for going faster, and going faster has looked like this on
+        /// every machine anyone has ever pressed a button on. The atlas alternative was an alarm
+        /// clock, which is very nearly the opposite idea.
+        /// </summary>
+        public static Texture2D Chevrons(int size)
+        {
+            string key = "chevrons" + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            float thick = w * 0.09f;
+
+            Vector2[] one =
+            {
+                new Vector2(w * 0.26f, w * 0.26f), new Vector2(w * 0.47f, w * 0.50f),
+                new Vector2(w * 0.26f, w * 0.74f)
+            };
+            Vector2[] two =
+            {
+                new Vector2(w * 0.51f, w * 0.26f), new Vector2(w * 0.72f, w * 0.50f),
+                new Vector2(w * 0.51f, w * 0.74f)
+            };
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+
+                    float d = Mathf.Min(
+                        Mathf.Min(ToSegment(p, one[0], one[1]), ToSegment(p, one[1], one[2])),
+                        Mathf.Min(ToSegment(p, two[0], two[1]), ToSegment(p, two[1], two[2])));
+
+                    float ink = Mathf.Clamp01(thick * 0.5f - d + 0.5f);
+                    px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
+        private static Texture2D Keep(string key, int w, Color[] px)
+        {
+            Texture2D made = new Texture2D(w, w, TextureFormat.RGBA32, false);
+            made.filterMode = FilterMode.Bilinear;
+            made.wrapMode = TextureWrapMode.Clamp;
+            made.SetPixels(px);
+            made.Apply();
+
+            _cache[key] = made;
+            return made;
         }
 
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
@@ -306,7 +555,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
 
@@ -1456,6 +1705,11 @@ namespace VaultAdmin
         private int TextHeading { get { return _fontSize; } }
         private int TextBody { get { return Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.82f)); } }
         private int TextSmall { get { return Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f)); } }
+
+        // Under a power's name, where the line explains rather than names. It had been the same
+        // size as the small text everywhere else and, being twice the length of most of it, read
+        // as the louder half of its own row.
+        private int TextNote { get { return Mathf.Max(9, Mathf.RoundToInt(_fontSize * 0.56f)); } }
 
         private const int WindowDepth = 5000;   // above everything the game draws
 
@@ -4040,16 +4294,14 @@ namespace VaultAdmin
                                RaisePopulation,
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
-                     "every weapon and outfit", UnlockEveryRecipe,
-                     new[] { "Icon_Recipe", "Icon_Junk" });
+                     "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
 
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
                                    "no accident from rushing",
-                                   ToggleRushing,
-                                   new[] { "AlarmClock", "TimeRemainingIcon" });
+                                   ToggleRushing, Skin.Chevrons(38));
 
             _incidentSwitch = AddPower(parent, width, "NO INCIDENTS",
                                        "no fires, pests or raiders", ToggleIncidents,
@@ -4085,6 +4337,16 @@ namespace VaultAdmin
         private Power _pressed;
 
         private GameObject AddPower(Transform parent, int width, string name, string what,
+                                    EventDelegate.Callback action, Texture2D drawn)
+        {
+            _drawnPowerIcon = drawn;
+            try { return AddPower(parent, width, name, what, action, (string[])null); }
+            finally { _drawnPowerIcon = null; }
+        }
+
+        private Texture2D _drawnPowerIcon;
+
+        private GameObject AddPower(Transform parent, int width, string name, string what,
                                     EventDelegate.Callback action, string[] icon)
         {
             const int cell = 66;
@@ -4095,8 +4357,32 @@ namespace VaultAdmin
             Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
 
             int iconCentre = -width / 2 + 10 + (box + 6) / 2;
-            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box,
-                    true, null, true);
+
+            if (_drawnPowerIcon != null)
+            {
+                Plate(parent, "PowerIcon_" + name + "_Well", iconCentre, middle, box + 6, box + 6,
+                      Skin.Well(box + 6), 2);
+
+                GameObject mark = new GameObject("PowerIcon_" + name);
+                mark.layer = parent.gameObject.layer;
+                mark.transform.SetParent(parent, false);
+                mark.transform.localPosition = new Vector3(iconCentre, middle, 0f);
+                mark.transform.localScale = Vector3.one;
+
+                UITexture face = mark.AddComponent<UITexture>();
+                face.mainTexture = _drawnPowerIcon;
+                face.width = box;
+                face.height = box;
+                face.depth = 4;
+
+                Shader flat = Shader.Find("Unlit/Transparent Colored");
+                if (flat != null) face.shader = flat;
+            }
+            else
+            {
+                AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box,
+                        true, null, true);
+            }
 
             int button = 100;
             int left = -width / 2 + 18 + box;
@@ -4108,7 +4394,7 @@ namespace VaultAdmin
 
             UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
                                          left, middle - 12, textWidth, 20, Skin.Bright, 3);
-            note.fontSize = TextSmall;
+            note.fontSize = TextNote;
             note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             note.maxLineCount = 1;
 
@@ -4425,7 +4711,7 @@ namespace VaultAdmin
 
             UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
                                          left, middle - 12, textWidth, 20, Skin.Bright, 3);
-            note.fontSize = TextSmall;
+            note.fontSize = TextNote;
             note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             note.maxLineCount = 1;
 
