@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.56.0";
+        public const string PluginVersion = "0.57.0";
 
         internal static ManualLogSource Log;
 
@@ -3833,7 +3833,6 @@ namespace VaultAdmin
         private Dweller _previewDweller;
         private UITexture _previewPicture;
         private UITexture _previewHeadgear;
-        private UILabel _previewCaption;
 
         /// <summary>
         /// Makes the person in the picture — who is nobody, and never joins the vault.
@@ -5514,18 +5513,32 @@ namespace VaultAdmin
 
                 try
                 {
+                    // I2.Loc.ScriptLocalization, with its namespace. Asking for the short name found
+                    // nothing at all, which is why every option was still called after its file —
+                    // and why saying that had been fixed was wrong.
                     Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
+
                     for (int i = 0; i < loaded.Length && _gameText == null; i++)
                     {
-                        Type table = loaded[i].GetType("ScriptLocalization");
+                        Type table = loaded[i].GetType("I2.Loc.ScriptLocalization");
+                        if (table == null) table = loaded[i].GetType("ScriptLocalization");
                         if (table == null) continue;
 
+                        // Get(key) or Get(key, fallback) — take whichever this build carries.
                         _gameText = table.GetMethod("Get", BindingFlags.Public | BindingFlags.Static,
-                                                    null, new[] { typeof(string) }, null);
+                                                    null, new[] { typeof(string), typeof(bool) }, null);
+
+                        if (_gameText == null)
+                            _gameText = table.GetMethod("Get",
+                                                        BindingFlags.Public | BindingFlags.Static,
+                                                        null, new[] { typeof(string) }, null);
+
+                        if (_gameText != null && Log != null)
+                            Log.LogInfo("Names will come from " + table.FullName + ".");
                     }
 
                     if (_gameText == null && Log != null)
-                        Log.LogWarning("ScriptLocalization was not found; names will be file names.");
+                        Log.LogWarning("No localisation table was found; names will be file names.");
                 }
                 catch { }
             }
@@ -5534,7 +5547,11 @@ namespace VaultAdmin
 
             try
             {
-                string text = _gameText.Invoke(null, new object[] { key }) as string;
+                object[] arguments = _gameText.GetParameters().Length == 2
+                    ? new object[] { key, true }
+                    : new object[] { key };
+
+                string text = _gameText.Invoke(null, arguments) as string;
                 if (!string.IsNullOrEmpty(text) && text != key) return text;
             }
             catch { }
