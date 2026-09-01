@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
 
@@ -2416,7 +2416,10 @@ namespace VaultAdmin
             // wherever the last search happened to end.
             if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
 
-            if (tab == Tab.Create && _making == Making.Dweller && _panelOpen) EnsurePreview();
+            // Made afresh rather than reused. A stand-in kept from last time is wearing what was
+            // last applied to it, so coming back to this page showed the dweller already created
+            // -- or, when the old one had gone, nothing at all until the gender was changed.
+            if (tab == Tab.Create && _making == Making.Dweller && _panelOpen) RemakePreview();
             else DisposePreview();
 
             RefreshPreview();
@@ -2503,6 +2506,14 @@ namespace VaultAdmin
         // wrong while it ran, which beats asking four different granting paths to agree on a
         // return value they do not currently have.
         private int _troubles;
+
+        // What the armoury held last time it was counted, and how many weapons this panel had
+        // handed over by then. Weapons are appearing in the vault that nobody granted, and neither
+        // guessing nor reading the code has found where from -- so the mod counts them, says when
+        // they arrive, and says whether it was the one that brought them.
+        private int _grantsMade;
+        private int _lastWeaponCount = -1;
+        private int _grantsAtLastCount;
 
         private static EItemType ItemTypeOf(Family family)
         {
@@ -3898,6 +3909,8 @@ namespace VaultAdmin
                     ClearRushChances();
                 }
 
+                WatchTheArmoury();
+
                 if (MaxDwellersWanted != null && MaxDwellersWanted.Value > 0)
                 {
                     Vault vault = SafeVault();
@@ -4444,6 +4457,97 @@ namespace VaultAdmin
             Say("Unlocked " + opened + " recipe(s).");
         }
 
+        /// <summary>
+        /// Counts the weapons in the vault and says so when more arrive than were asked for.
+        ///
+        /// This does not fix anything and is not meant to. Weapons are turning up in stacks that
+        /// nobody granted; the mod's own two ways of adding one each add exactly one and write a
+        /// line about it, so reading the code has got as far as it can. The next time it happens
+        /// this will be in the log with a number and a time, which is worth more than another
+        /// theory.
+        /// </summary>
+        private void WatchTheArmoury()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                VaultInventory inventory = vault == null ? null : vault.Inventory;
+                if (inventory == null || inventory.Items == null) return;
+
+                int weapons = 0;
+                for (int i = 0; i < inventory.Items.Count; i++)
+                {
+                    DwellerItem held = inventory.Items[i];
+                    if (held == null) continue;
+
+                    // The field that says what kind of item this is has no name I could find from
+                    // the outside, so it is asked for by each of the names it might have -- and if
+                    // none of them answer, the type writes down what it does have, once, rather
+                    // than leaving the count silently wrong.
+                    object kind = ReadObject(held, "ItemType");
+                    if (kind == null) kind = ReadObject(held, "Type");
+                    if (kind == null) kind = ReadObject(held, "m_type");
+                    if (kind == null) kind = ReadObject(held, "m_itemType");
+
+                    if (kind == null)
+                    {
+                        if (!_reportedItemShape)
+                        {
+                            _reportedItemShape = true;
+                            SayWhatAnItemIs(held);
+                        }
+                        continue;
+                    }
+
+                    if (kind.ToString() == EItemType.Weapon.ToString()) weapons++;
+                }
+
+                if (_lastWeaponCount >= 0)
+                {
+                    int grew = weapons - _lastWeaponCount;
+                    int granted = _grantsMade - _grantsAtLastCount;
+
+                    if (grew > granted)
+                        Log.LogWarning("The armoury grew by " + grew + " weapon(s) in the last " +
+                                       "second and a half; this panel granted " + granted +
+                                       " of them. It now holds " + weapons + ".");
+                }
+
+                _lastWeaponCount = weapons;
+                _grantsAtLastCount = _grantsMade;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("armoury", "Could not count the weapons: " + e);
+            }
+        }
+
+        private static bool _reportedItemShape;
+
+        /// <summary>Writes down what an inventory item is made of, once, when it cannot be read.</summary>
+        private static void SayWhatAnItemIs(object held)
+        {
+            try
+            {
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("An inventory item is a ").Append(held.GetType().Name).Append(" with:");
+
+                FieldInfo[] fields = held.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                    said.Append(" .").Append(fields[i].Name);
+
+                PropertyInfo[] props = held.GetType().GetProperties(Flags);
+                for (int i = 0; i < props.Length; i++)
+                    said.Append(" .").Append(props[i].Name);
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
         private bool IncidentsOn()
         {
             try
@@ -4825,7 +4929,7 @@ namespace VaultAdmin
 
             // Only when the bench is the thing being looked at. Building the window used to make
             // one and throw it away in the same breath.
-            if (making == Making.Dweller && _tab == Tab.Create && _panelOpen) EnsurePreview();
+            if (making == Making.Dweller && _tab == Tab.Create && _panelOpen) RemakePreview();
             else DisposePreview();
 
             RefreshPreview();
@@ -5436,6 +5540,184 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>
+        /// Counts what the vault is holding, or -1 if it cannot be counted.
+        /// </summary>
+        private int CountStorage()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                VaultInventory inventory = vault == null ? null : vault.Inventory;
+
+                return inventory == null || inventory.Items == null ? -1 : inventory.Items.Count;
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>
+        /// Takes back anything that appeared in the vault's storage since it was counted.
+        ///
+        /// This is the whole of the weapon bug. Dressing the stand-in calls the game's own
+        /// EquipWeapon, and the game does what it always does when a dweller's weapon is swapped:
+        /// it puts the old one back in storage. The old one was fabricated by this panel and never
+        /// came from storage, so every re-dress left a real weapon behind -- and the bench
+        /// re-dresses on every gender change, every visit to the page, and every creation. Thirty
+        /// or fifty of them is an afternoon's work.
+        ///
+        /// The fix is not to stop dressing the figure but to leave the storage as it was found.
+        /// </summary>
+        private void PutStorageBack(int was)
+        {
+            if (was < 0) return;
+
+            try
+            {
+                Vault vault = SafeVault();
+                VaultInventory inventory = vault == null ? null : vault.Inventory;
+                if (inventory == null || inventory.Items == null) return;
+
+                int extra = inventory.Items.Count - was;
+                if (extra <= 0) return;
+
+                for (int i = 0; i < extra; i++)
+                {
+                    int last = inventory.Items.Count - 1;
+                    if (last < was) break;
+
+                    DwellerItem leftover = inventory.Items[last];
+
+                    // The game's own removal if it has one that takes an item; the list itself if
+                    // not. Asked for by name because the type is not documented anywhere, and it
+                    // writes down what it does have the one time nothing answers.
+                    if (!TookItBack(inventory, leftover)) inventory.Items.RemoveAt(last);
+                }
+
+                Log.LogInfo("Took back " + extra + " item(s) the dressing table left in storage.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("putback", "Could not take back what the bench left in storage: " + e);
+            }
+        }
+
+        private bool TookItBack(VaultInventory inventory, DwellerItem leftover)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            string[] names = { "RemoveItem", "Remove", "DestroyItem", "DeleteItem" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                try
+                {
+                    MethodInfo go = inventory.GetType().GetMethod(
+                        names[i], Flags, null, new[] { typeof(DwellerItem) }, null);
+
+                    if (go == null) continue;
+
+                    go.Invoke(inventory, new object[] { leftover });
+                    return true;
+                }
+                catch { }
+            }
+
+            if (!_reportedInventoryShape)
+            {
+                _reportedInventoryShape = true;
+
+                try
+                {
+                    System.Text.StringBuilder said = new System.Text.StringBuilder();
+                    said.Append("VaultInventory offers no removal taking a DwellerItem; it has:");
+
+                    MethodInfo[] all = inventory.GetType().GetMethods(Flags);
+                    for (int i = 0; i < all.Length; i++)
+                        said.Append(" ").Append(all[i].Name);
+
+                    Log.LogWarning(said.ToString());
+                }
+                catch { }
+            }
+
+            return false;
+        }
+
+        private static bool _reportedInventoryShape;
+
+        /// <summary>
+        /// Puts a stand-in back to a plain random person before the bench's choices go on it.
+        ///
+        /// A stand-in is kept per gender and dressed again each time the page is shown, and what
+        /// it was wearing last time survived every slot the bench had since set back to random --
+        /// ApplyCustomization is told what to put on, never what to take off. So the figure went
+        /// on showing the dweller that had already been created and walked away, while the fields
+        /// beneath it described somebody else entirely.
+        ///
+        /// Randomising first makes random mean random. Anything actually chosen is applied over
+        /// the top a moment later and wins, as it should.
+        /// </summary>
+        private void StartFromScratch(Dweller who)
+        {
+            if (who == null) return;
+
+            try
+            {
+                MethodInfo dress = typeof(Dweller).GetMethod(
+                    "GenerateRandomCustomization",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (dress != null)
+                    dress.Invoke(who, new object[] { true, null, null, null });
+                else
+                    ReportOnce("dressup", "The game has no GenerateRandomCustomization.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("dressup", "Could not give the stand-in a body: " + e.Message);
+            }
+
+            // Nothing chosen means nothing held. Taking it off hands it to storage, which is why
+            // this is counted like every other dressing the bench does.
+            try
+            {
+                if (_weapon.Selected == null && who.EquippedWeapon != null)
+                {
+                    int was = CountStorage();
+                    who.EquipWeapon(null);
+                    PutStorageBack(was);
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("disarm", "Could not take the stand-in's weapon off: " + e.Message);
+            }
+
+            // UpdateTexture draws the body out of the outfit being worn: with m_outfit null it
+            // composes the head and stops, which is exactly what the picture showed. The vault's
+            // own default is what a dweller wears when it wears nothing.
+            try
+            {
+                if (who.EquippedOutfit == null)
+                {
+                    if (string.IsNullOrEmpty(_defaultOutfitId)) BuildCatalogue();
+
+                    string plain = string.IsNullOrEmpty(_defaultOutfitId)
+                        ? "jumpsuit"
+                        : _defaultOutfitId;
+
+                    int was = CountStorage();
+                    who.EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
+                    PutStorageBack(was);
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("dressplain", "Could not dress the stand-in: " + e.Message);
+            }
+        }
+
         private void Equip(Dweller dweller, Choice choice, EItemType type)
         {
             CatalogueEntry entry = choice.Selected as CatalogueEntry;
@@ -5443,12 +5725,25 @@ namespace VaultAdmin
 
             try
             {
-                // Straight onto the dweller, as the game does when it dresses a raider: an item
-                // being worn does not have to have passed through the vault's storage.
+                // Already wearing it. Re-equipping the same thing is not free: the game hands the
+                // old copy back to storage, so the cheapest fix for most of the churn is not to do
+                // the work at all.
+                DwellerItem worn = type == EItemType.Outfit
+                    ? dweller.EquippedOutfit
+                    : dweller.EquippedWeapon;
+
+                if (worn != null && ReadAsText(worn, "Id") == entry.Id) return;
+
                 DwellerItem item = new DwellerItem(type, entry.Id);
+
+                // Counted before and put back after, because the game returns whatever was being
+                // worn to the vault -- and on the bench, what was being worn never came from there.
+                int was = dweller == _previewDweller ? CountStorage() : -1;
 
                 if (type == EItemType.Outfit) dweller.EquipOutfit(item, false);
                 else dweller.EquipWeapon(item);
+
+                PutStorageBack(was);
             }
             catch (Exception e)
             {
@@ -5511,6 +5806,8 @@ namespace VaultAdmin
                     // Dressed again from the panel: it was put away wearing whatever was chosen
                     // last time, and the choices on screen are what it should be wearing now.
                     Silence(kept.gameObject, "DwellerVisibilityDetector");
+
+                    StartFromScratch(_previewDweller);
                     ApplyLooks(_previewDweller);
 
                     Log.LogInfo("Reusing the stand-in for " + kind + ".");
@@ -5531,46 +5828,7 @@ namespace VaultAdmin
                 // it hands the shader a texture per piece, hair here, face there — so with nothing
                 // assigned the shader has nothing to assemble and draws white. This is the call the
                 // spawner makes to fill them in.
-                if (_previewDweller != null)
-                {
-                    try
-                    {
-                        MethodInfo dress = typeof(Dweller).GetMethod(
-                            "GenerateRandomCustomization",
-                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                        if (dress != null)
-                            dress.Invoke(_previewDweller, new object[] { true, null, null, null });
-                        else
-                            ReportOnce("dressup", "The game has no GenerateRandomCustomization.");
-                    }
-                    catch (Exception e)
-                    {
-                        ReportOnce("dressup", "Could not give the stand-in a body: " + e.Message);
-                    }
-
-                    // UpdateTexture draws the body out of the outfit being worn: with m_outfit null
-                    // it composes the head and stops, which is exactly what the picture showed. The
-                    // vault's own default is what a dweller wears when it wears nothing.
-                    try
-                    {
-                        if (_previewDweller.EquippedOutfit == null)
-                        {
-                            if (string.IsNullOrEmpty(_defaultOutfitId)) BuildCatalogue();
-
-                            string plain = string.IsNullOrEmpty(_defaultOutfitId)
-                                ? "jumpsuit"
-                                : _defaultOutfitId;
-
-                            _previewDweller.EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
-                            Log.LogInfo("The stand-in is wearing '" + plain + "' so it has a body.");
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        ReportOnce("dressplain", "Could not dress the stand-in: " + e.Message);
-                    }
-                }
+                if (_previewDweller != null) StartFromScratch(_previewDweller);
 
                 if (_previewDweller == null)
                 {
@@ -8426,6 +8684,7 @@ namespace VaultAdmin
 
                 DwellerItem item = new DwellerItem(entry.Type, entry.Id);
                 vault.Inventory.AddItem(item, false, false);
+                if (entry.Type == EItemType.Weapon) _grantsMade++;
 
                 Say("Granted " + entry.Name + ".");
             }
@@ -8764,6 +9023,46 @@ namespace VaultAdmin
                    (choice.Selected == null ? "(nothing)" : "");
         }
 
+        /// <summary>
+        /// Puts the bench back to empty, and the figure on it with them.
+        ///
+        /// After a dweller has been made, everything on this page describes somebody who has
+        /// already gone to the vault door. Leaving the figure standing there while the fields go
+        /// back to random is the worst of both: the picture promises a person the next press will
+        /// not produce. So the fields and the figure are cleared together, and what is shown is
+        /// again what would be made.
+        /// </summary>
+        private void ResetTheBench()
+        {
+            Choice[] all = { _hair, _face, _hairColour, _skin, _helmet, _outfit, _weapon };
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                all[i].Index = 0;
+                all[i].Show();
+            }
+
+            _dwellerFirst = "";
+            _dwellerLast = "";
+            if (_firstNameInput != null) _firstNameInput.value = "";
+            if (_lastNameInput != null) _lastNameInput.value = "";
+
+            _dwellerLevelValue = 1;
+            _dwellerLevel = "1";
+            if (_levelInput != null) _levelInput.value = "1";
+
+            for (int i = 0; i < _special.Length; i++)
+            {
+                _special[i] = 1;
+                if (_specialInputs[i] != null) _specialInputs[i].value = "1";
+            }
+
+            _rarityIndex = 0;
+            if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString().ToUpper();
+
+            RemakePreview();
+        }
+
         private void CreateDweller() { CreateDweller(true); }
 
         /// <summary>
@@ -8852,9 +9151,10 @@ namespace VaultAdmin
                     Log.LogInfo("Created a " + ReadAsText(dweller, "Gender") +
                                 " named " + dweller.Name + " " + dweller.LastName + ".");
 
-                // The bench keeps its figure. Whatever became of the stand-in, the next thing the
-                // player sees on this page should be someone standing there.
-                if (_tab == Tab.Create && _making == Making.Dweller && _panelOpen)
+                // Cleared, figure and fields together, so the page goes on describing what the
+                // next press would make rather than what the last one did.
+                if (customise) ResetTheBench();
+                else if (_tab == Tab.Create && _making == Making.Dweller && _panelOpen)
                 {
                     EnsurePreview();
                     RefreshPreview();
