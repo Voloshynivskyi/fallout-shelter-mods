@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.61.0";
+        public const string PluginVersion = "0.62.0";
 
         internal static ManualLogSource Log;
 
@@ -3986,6 +3986,27 @@ namespace VaultAdmin
 
             try
             {
+                GameObject body = _previewDweller.gameObject;
+
+                // The pool switches the object off as it takes it back, and switching it off makes
+                // its visibility detector fire. Off a layer nothing renders, on a spot nothing sees,
+                // that detector has nothing to work with and throws — which took the game with it.
+                if (_standInLayer >= 0)
+                {
+                    SetLayer(body.transform, _standInLayer);
+                    body.transform.position = _standInHome;
+                    _standInLayer = -1;
+                }
+
+                Silence(body, "DwellerVisibilityDetector");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not put the stand-in back as it was: " + e.Message);
+            }
+
+            try
+            {
                 DwellerPool pool = DwellerPool.Instance;
                 MethodInfo release = pool == null ? null : typeof(DwellerPool).GetMethod(
                     "ReleaseInstance",
@@ -3997,7 +4018,11 @@ namespace VaultAdmin
             }
             catch (Exception e)
             {
-                Log.LogWarning("Could not remove the stand-in: " + e.Message);
+                // Better a dweller left checked out of the pool than a game that stops.
+                Log.LogWarning("The pool would not take the stand-in back: " + e.Message);
+
+                try { _previewDweller.gameObject.SetActive(false); }
+                catch { }
             }
 
             _previewDweller = null;
@@ -4021,6 +4046,11 @@ namespace VaultAdmin
         /// </summary>
         private Camera _previewCamera;
         private RenderTexture _previewFilm;
+
+        // What the stand-in was before it was borrowed. Handing it back in the state we found it
+        // is the difference between a returned dweller and a crash.
+        private int _standInLayer = -1;
+        private Vector3 _standInHome;
 
         // A layer of its own, so the camera that films the stand-in sees nothing else and nothing
         // else sees the stand-in.
@@ -4080,6 +4110,12 @@ namespace VaultAdmin
 
             try
             {
+                if (_standInLayer < 0)
+                {
+                    _standInLayer = body.layer;
+                    _standInHome = body.transform.position;
+                }
+
                 // Far from the vault, on a layer only this camera looks at.
                 body.transform.position = new Vector3(0f, -8000f, 0f);
                 body.transform.rotation = Quaternion.identity;
@@ -4113,6 +4149,29 @@ namespace VaultAdmin
             {
                 if (woken) body.SetActive(false);
             }
+        }
+
+        /// <summary>
+        /// Switches off a component by name, wherever it is on the object.
+        ///
+        /// Reached by name because it belongs to the game and not to this: the point is only that
+        /// it should not run while the thing it watches is being handed back.
+        /// </summary>
+        private static void Silence(GameObject body, string component)
+        {
+            try
+            {
+                MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i] == null) continue;
+                    if (parts[i].GetType().Name != component) continue;
+
+                    parts[i].enabled = false;
+                }
+            }
+            catch { }
         }
 
         private static void SetLayer(Transform branch, int layer)
