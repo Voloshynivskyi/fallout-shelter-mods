@@ -207,7 +207,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.48.0";
+        public const string PluginVersion = "0.49.0";
 
         internal static ManualLogSource Log;
 
@@ -1115,8 +1115,10 @@ namespace VaultAdmin
 
         private void OnDisable()
         {
-            // Leaving the camera switched off because the mod went away would be unforgivable.
+            // Leaving the camera switched off because the mod went away would be unforgivable, and
+            // so would leaving a person standing in the vault who was only ever a picture.
             HoldCamera(false);
+            DisposePreview();
         }
 
         private Camera _uiCamera;
@@ -1175,6 +1177,7 @@ namespace VaultAdmin
         {
             _panelOpen = !_panelOpen;
             if (!_panelOpen) HoldCamera(false);
+            if (!_panelOpen) DisposePreview();
 
             if (_nguiWindow == null) BuildWindow();
 
@@ -2190,6 +2193,11 @@ namespace VaultAdmin
             // A page that has been hidden comes back where it was left, which for a list is
             // wherever the last search happened to end.
             if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
+
+            if (tab == Tab.Create && _making == Making.Dweller) EnsurePreview();
+            else DisposePreview();
+
+            RefreshPreview();
 
             // The chosen tab is solid, the rest outlined — the game's own distinction between an
             // emphasised control and an ordinary one.
@@ -3307,6 +3315,11 @@ namespace VaultAdmin
             if (_dwellerSection != null) _dwellerSection.SetActive(making == Making.Dweller);
             if (_petSection != null) _petSection.SetActive(making == Making.Pet);
 
+            if (making == Making.Dweller) EnsurePreview();
+            else DisposePreview();
+
+            RefreshPreview();
+
             if (_createView != null) _createView.ResetPosition();
         }
 
@@ -3663,13 +3676,112 @@ namespace VaultAdmin
         private UILabel _previewCaption;
 
         /// <summary>
+        /// Makes the person in the picture — who is nobody, and never joins the vault.
+        ///
+        /// A dweller's picture is composed at runtime from the pieces being worn, so something has
+        /// to exist to be drawn. Committing a real one to the queue first was the wrong way round;
+        /// the game keeps a second kind for exactly this, an NPC dweller that belongs to no vault
+        /// and is thrown away by name when it is done with. The one in the picture is that. Pressing
+        /// create makes the real one, and this one is torn down when the bench is left.
+        /// </summary>
+        private void EnsurePreview()
+        {
+            if (_previewDweller != null) return;
+
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                if (manager == null) return;
+
+                MethodInfo make = typeof(DwellerManager).GetMethod(
+                    "CreateNPCDweller",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(EDwellerRarity), typeof(EGender), typeof(Vector3), typeof(Quaternion) },
+                    null);
+
+                if (make == null)
+                {
+                    ReportOnce("previewmake", "The game has no CreateNPCDweller; nothing to draw.");
+                    return;
+                }
+
+                _previewDweller = make.Invoke(manager, new object[]
+                {
+                    Rarities[_rarityIndex], Genders[_genderIndex],
+                    Vector3.zero, Quaternion.identity
+                }) as Dweller;
+
+                if (_previewDweller == null)
+                {
+                    ReportOnce("previewmake", "The game did not make anyone to draw.");
+                    return;
+                }
+
+                // It exists to be looked at in a panel, not to be seen standing in the vault.
+                try
+                {
+                    MethodInfo hide = typeof(Dweller).GetMethod(
+                        "SetInVisible",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, Type.EmptyTypes, null);
+
+                    if (hide != null) hide.Invoke(_previewDweller, null);
+                }
+                catch (Exception e)
+                {
+                    ReportOnce("previewhide", "Could not hide the stand-in: " + e.Message);
+                }
+
+                ApplyLooks(_previewDweller);
+                Log.LogInfo("Made a stand-in to draw: " + Genders[_genderIndex] + ", " +
+                            Rarities[_rarityIndex] + ".");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("previewmake", "Could not make anyone to draw: " + e.Message);
+            }
+        }
+
+        /// <summary>Throws the stand-in away. Leaving one behind would be leaving a person behind.</summary>
+        private void DisposePreview()
+        {
+            if (_previewDweller == null) return;
+
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                MethodInfo remove = manager == null ? null : typeof(DwellerManager).GetMethod(
+                    "RemoveNPCDweller",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { typeof(Dweller) }, null);
+
+                if (remove != null) remove.Invoke(manager, new object[] { _previewDweller });
+                else ReportOnce("previewdrop", "The game has no RemoveNPCDweller; the stand-in stays.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not remove the stand-in: " + e.Message);
+            }
+
+            _previewDweller = null;
+            RefreshPreview();
+        }
+
+        /// <summary>The gender and rarity are settled when someone is made, so a change starts again.</summary>
+        private void RemakePreview()
+        {
+            DisposePreview();
+
+            if (_tab == Tab.Create && _making == Making.Dweller && _panelOpen) EnsurePreview();
+            RefreshPreview();
+        }
+
+        /// <summary>
         /// Draws the dweller being built, the way the game draws one.
         ///
-        /// A dweller's picture is composed at runtime from the pieces it is wearing, and only a live
-        /// dweller has one — there is no way to render a person who does not exist yet. So the
-        /// constructor works the way the barbershop does: make the dweller, then dress it, with the
-        /// picture following every change. SetUITex is the game's own call for this; it is what the
-        /// character window, the dweller list and the room panels all use.
+        /// SetUITex is the game's own call for this: it is what the character window, the dweller
+        /// list and the room panels all use to turn a dweller into a picture.
         /// </summary>
         private void RefreshPreview()
         {
@@ -3682,8 +3794,8 @@ namespace VaultAdmin
 
             if (_previewCaption != null)
                 _previewCaption.text = have
-                    ? _previewDweller.Name + " " + _previewDweller.LastName
-                    : "press CREATE to make someone, then dress them";
+                    ? "nobody yet — press CREATE when this is who you want"
+                    : "no one to draw";
 
             if (!have) return;
 
@@ -3955,6 +4067,8 @@ namespace VaultAdmin
         {
             _rarityIndex = (_rarityIndex + by + Rarities.Length) % Rarities.Length;
             if (_rarityLabel != null) _rarityLabel.text = Rarities[_rarityIndex].ToString();
+
+            RemakePreview();
         }
 
         private void StepGender(int by)
@@ -3963,6 +4077,7 @@ namespace VaultAdmin
             if (_genderLabel != null) _genderLabel.text = Genders[_genderIndex].ToString();
 
             RebuildLookOptions();
+            RemakePreview();
         }
 
         private void ReadLevelInput()
@@ -5704,10 +5819,7 @@ namespace VaultAdmin
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
                 // the dweller afterwards what it is actually wearing.
-                _previewDweller = dweller;
-                RefreshPreview();
-
-                Say("Created " + Describe(dweller) + ".");
+                Say("Created " + Describe(dweller) + " — waiting at the vault door.");
             }
             catch (Exception e)
             {
