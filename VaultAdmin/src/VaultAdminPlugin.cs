@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.84.0";
+        public const string PluginVersion = "0.86.0";
 
         internal static ManualLogSource Log;
 
@@ -1978,6 +1978,40 @@ namespace VaultAdmin
         }
 
         /// <summary>
+        /// Sizes a sprite by the picture in it, ignoring the blank margins around it.
+        ///
+        /// A trimmed sprite keeps its margins separately and they are rarely even — ten pixels of
+        /// nothing on the left and none on the right is ordinary. Sizing by the padded box is right
+        /// for a row of items, where every picture should sit on the same grid; for a single icon in
+        /// a recess of its own it puts the picture off to one side, which is what an upward arrow
+        /// leaning right turned out to be.
+        /// </summary>
+        private static void FitInk(UISprite sprite, int box)
+        {
+            if (sprite == null || sprite.atlas == null) return;
+
+            try
+            {
+                UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
+                if (data == null || data.width <= 0 || data.height <= 0)
+                {
+                    sprite.width = box;
+                    sprite.height = box;
+                    return;
+                }
+
+                float scale = Mathf.Min((float)box / data.width, (float)box / data.height);
+                sprite.width = Mathf.Max(1, Mathf.RoundToInt(data.width * scale));
+                sprite.height = Mathf.Max(1, Mathf.RoundToInt(data.height * scale));
+            }
+            catch
+            {
+                sprite.width = box;
+                sprite.height = box;
+            }
+        }
+
+        /// <summary>
         /// Sizes a sprite to fit a square without squashing it.
         ///
         /// A portrait is half as wide as it is tall, and forcing one into a square makes every face
@@ -2190,7 +2224,13 @@ namespace VaultAdmin
             drawn.atlas = atlas;
             drawn.spriteName = sprite;
             drawn.depth = 4;
-            FitSprite(drawn, size);
+
+            // In the panel's own green. These are the interface's pictograms, drawn white or grey
+            // for whatever screen they came from; a row of them in three colours reads as three
+            // different programs.
+            drawn.color = Skin.Bright;
+
+            FitInk(drawn, size);
         }
 
         private void BuildTabs(Transform parent)
@@ -4513,7 +4553,7 @@ namespace VaultAdmin
                 }
 
                 if (match == null) continue;
-                _petGrade.Add(match, PetRarities[i] + "   " + PetStats(match));
+                _petGrade.Add(match, RarityWord(PetRarities[i]) + "   " + PetStats(match));
             }
 
             _petGrade.Show();
@@ -4523,6 +4563,23 @@ namespace VaultAdmin
         {
             EItemRarity.Common, EItemRarity.Normal, EItemRarity.Rare, EItemRarity.Legendary
         };
+
+        /// <summary>
+        /// The three words a player knows a pet by.
+        ///
+        /// The table has four names and two of them mean the same thing to anyone looking at a cat:
+        /// Common and Normal are both the plain one. Three words is what the game shows and three is
+        /// what this shows.
+        /// </summary>
+        private static string RarityWord(EItemRarity rarity)
+        {
+            switch (rarity)
+            {
+                case EItemRarity.Rare:      return "RARE";
+                case EItemRarity.Legendary: return "LEGENDARY";
+                default:                    return "COMMON";
+            }
+        }
 
         private PetGroup CurrentPetGroup()
         {
@@ -5361,11 +5418,14 @@ namespace VaultAdmin
                 _previewPicture.mainTexture = _previewFilm;
                 _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
 
-                // The film's own proportions, so nothing is stretched to fit a frame that was
-                // chosen before there was anything in it.
-                _previewPicture.height = PreviewHeight;
-                _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(
-                    PreviewHeight * (float)_previewFilm.width / _previewFilm.height));
+                // Set once and left alone. The film is always the same shape, so working the size
+                // out again on every refresh only made the figure jump about as the bench opened.
+                if (_previewPicture.height != PreviewHeight)
+                {
+                    _previewPicture.height = PreviewHeight;
+                    _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(
+                        PreviewHeight * (float)_previewFilm.width / _previewFilm.height));
+                }
 
                 if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
                 return;
@@ -5712,7 +5772,7 @@ namespace VaultAdmin
 
             // What the dweller carries, both on one line: arrows level with the pictures, names
             // under them. Two tall panels for two items was a lot of room to say very little.
-            const int slotHeight = 84;
+            const int slotHeight = 92;
             int slotWidth = (width - 6) / 2;
             int slotY = _cursorY - slotHeight / 2;
 
@@ -5739,60 +5799,60 @@ namespace VaultAdmin
             Plate(parent, "Slot_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
-            // The picture on the left, and beside it the name over the arrows: what it is, then
-            // what to press to change it.
+            // Read down: what this slot is and how to change it along the top, the picture and
+            // the name in the middle, and what the thing does along the bottom in the full width of
+            // the card. Squeezed in beside the arrows, that last line had to shrink to fit and
+            // became the smallest thing on a card it half explains.
             int left = centreX - width / 2;
             int iconX = left + icon / 2 + 10;
 
             int textLeft = iconX + icon / 2 + 12;
-            int textWidth = Mathf.Max(48, centreX + width / 2 - 10 - textLeft);
+            int top = y + height / 2 - 13;
 
-            Plate(parent, "SlotWell_" + choice.Caption, iconX, y, icon + 6, icon + 6,
+            Choice captured = choice;
+            int arrowsRight = centreX + width / 2 - 16;
+
+            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsRight - 26, top, 22, 20,
+                       false, delegate { captured.Step(-1); });
+            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsRight, top, 22, 20,
+                       false, delegate { captured.Step(1); });
+
+            UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
+                                            left + 10, top, width - 74, 14, Skin.Bright, 3);
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
+            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+            caption.maxLineCount = 1;
+            choice.Title = caption;
+
+            int middle = y - 2;
+
+            Plate(parent, "SlotWell_" + choice.Caption, iconX, middle, icon + 6, icon + 6,
                   Skin.Well(icon + 6), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(iconX, y, 0f);
+            pictureGo.transform.localPosition = new Vector3(iconX, middle, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
             choice.Picture.depth = 4;
             choice.Picture.gameObject.SetActive(false);
 
-            UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
-                                            textLeft, y + height / 2 - 12, textWidth, 14,
-                                            Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
-            caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
-            caption.maxLineCount = 1;
-            choice.Title = caption;
-
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
-                                           textLeft, y + 8, textWidth, 20, Skin.Bright, 3);
+                                           textLeft, middle,
+                                           Mathf.Max(48, centreX + width / 2 - 10 - textLeft),
+                                           22, Skin.Bright, 3);
             choice.Display.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.82f));
             choice.Display.maxLineCount = 1;
 
-            // What it does, under what it is called. A coat chosen by its name alone is a coat
-            // chosen for nothing.
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
-                                           textLeft, y - 12, textWidth - 58, 18, Skin.Bright, 3);
-            effect.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.8f));
+                                           left + 10, y - height / 2 + 14, width - 20, 20,
+                                           Skin.Bright, 3);
+            effect.fontSize = Mathf.Max(14, Mathf.RoundToInt(_fontSize * 0.86f));
             effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
-
-            Choice captured = choice;
-
-            // Into the bottom corner and out of the way. Across the middle of the card they sat on
-            // top of the very line that says what the thing does.
-            int arrowsY = y - height / 2 + 15;
-            int arrowsRight = centreX + width / 2 - 18;
-
-            MakeButton(parent, "SlotBack_" + choice.Caption, "<", arrowsRight - 28, arrowsY, 24, 20,
-                       false, delegate { captured.Step(-1); });
-            MakeButton(parent, "SlotFwd_" + choice.Caption, ">", arrowsRight, arrowsY, 24, 20,
-                       false, delegate { captured.Step(1); });
 
             choice.Show();
         }
