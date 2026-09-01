@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.62.0";
+        public const string PluginVersion = "0.64.0";
 
         internal static ManualLogSource Log;
 
@@ -1127,12 +1127,38 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>Takes down the camera and its film. Left behind, they outlive the mod.</summary>
+        private void DropPreviewCamera()
+        {
+            try
+            {
+                if (_previewCamera != null)
+                {
+                    _previewCamera.targetTexture = null;
+                    UnityEngine.Object.Destroy(_previewCamera.gameObject);
+                    _previewCamera = null;
+                }
+
+                if (_previewFilm != null)
+                {
+                    _previewFilm.Release();
+                    UnityEngine.Object.Destroy(_previewFilm);
+                    _previewFilm = null;
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not take the camera down: " + e.Message);
+            }
+        }
+
         private void OnDisable()
         {
             // Leaving the camera switched off because the mod went away would be unforgivable, and
             // so would leaving a person standing in the vault who was only ever a picture.
             HoldCamera(false);
             DisposePreview();
+            DropPreviewCamera();
         }
 
         private Camera _uiCamera;
@@ -2208,7 +2234,7 @@ namespace VaultAdmin
             // wherever the last search happened to end.
             if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
 
-            if (tab == Tab.Create && _making == Making.Dweller) EnsurePreview();
+            if (tab == Tab.Create && _making == Making.Dweller && _panelOpen) EnsurePreview();
             else DisposePreview();
 
             RefreshPreview();
@@ -3420,7 +3446,9 @@ namespace VaultAdmin
             if (_dwellerSection != null) _dwellerSection.SetActive(making == Making.Dweller);
             if (_petSection != null) _petSection.SetActive(making == Making.Pet);
 
-            if (making == Making.Dweller) EnsurePreview();
+            // Only when the bench is the thing being looked at. Building the window used to make
+            // one and throw it away in the same breath.
+            if (making == Making.Dweller && _tab == Tab.Create && _panelOpen) EnsurePreview();
             else DisposePreview();
 
             RefreshPreview();
@@ -3870,14 +3898,14 @@ namespace VaultAdmin
         /// and is thrown away by name when it is done with. The one in the picture is that. Pressing
         /// create makes the real one, and this one is torn down when the bench is left.
         /// </summary>
-        private void EnsurePreview()
+        private Dweller EnsurePreview()
         {
-            if (_previewDweller != null) return;
+            if (_previewDweller != null) return _previewDweller;
 
             try
             {
                 DwellerManager manager = SafeDwellerManager();
-                if (manager == null) return;
+                if (manager == null) return null;
 
                 // Where the game gets the figures for its own display windows:
                 // CreateDwellerToDisplay is nothing but DwellerPool.GetInstance and a customisation
@@ -3887,7 +3915,7 @@ namespace VaultAdmin
                 if (pool == null)
                 {
                     ReportOnce("previewmake", "The dweller pool is not up yet; nothing to draw.");
-                    return;
+                    return null;
                 }
 
                 MethodInfo make = typeof(DwellerPool).GetMethod(
@@ -3898,10 +3926,26 @@ namespace VaultAdmin
                 if (make == null)
                 {
                     ReportOnce("previewmake", "The pool has no GetInstance; nothing to draw.");
-                    return;
+                    return null;
+                }
+
+                // The one made for this gender last time, if it is still around.
+                string kind = Genders[_genderIndex].ToString();
+
+                Dweller kept;
+                if (_standIns.TryGetValue(kind, out kept) && kept != null)
+                {
+                    _previewDweller = kept;
+                    // Dressed again from the panel: it was put away wearing whatever was chosen
+                    // last time, and the choices on screen are what it should be wearing now.
+                    ApplyLooks(_previewDweller);
+
+                    Log.LogInfo("Reusing the stand-in for " + kind + ".");
+                    return _previewDweller;
                 }
 
                 _previewDweller = make.Invoke(pool, new object[] { Genders[_genderIndex] }) as Dweller;
+                if (_previewDweller != null) _standIns[kind] = _previewDweller;
 
                 // A pooled dweller has no pieces on it. UpdateTexture does not compose one picture —
                 // it hands the shader a texture per piece, hair here, face there — so with nothing
@@ -3951,7 +3995,7 @@ namespace VaultAdmin
                 if (_previewDweller == null)
                 {
                     ReportOnce("previewmake", "The game did not make anyone to draw.");
-                    return;
+                    return null;
                 }
 
                 // It exists to be looked at in a panel, not to be seen standing in the vault.
@@ -3977,9 +4021,20 @@ namespace VaultAdmin
             {
                 ReportOnce("previewmake", "Could not make anyone to draw: " + e.Message);
             }
+
+            return _previewDweller;
         }
 
-        /// <summary>Throws the stand-in away. Leaving one behind would be leaving a person behind.</summary>
+        /// <summary>
+        /// Puts the stand-in away without giving it back.
+        ///
+        /// Handing it to the pool crashed the game twice. The pool switches the object off as it
+        /// takes it, that makes DwellerVisibilityDetector fire, and on a borrowed dweller that
+        /// detector has nothing to work with — restoring the layer and silencing the component did
+        /// not stop it. So it is not handed back at all: it is put to sleep and kept, one per
+        /// gender, to be woken again the next time the bench is opened. Two objects held for a
+        /// session is a small price for a game that does not stop.
+        /// </summary>
         private void DisposePreview()
         {
             if (_previewDweller == null) return;
@@ -3988,9 +4043,6 @@ namespace VaultAdmin
             {
                 GameObject body = _previewDweller.gameObject;
 
-                // The pool switches the object off as it takes it back, and switching it off makes
-                // its visibility detector fire. Off a layer nothing renders, on a spot nothing sees,
-                // that detector has nothing to work with and throws — which took the game with it.
                 if (_standInLayer >= 0)
                 {
                     SetLayer(body.transform, _standInLayer);
@@ -3998,31 +4050,11 @@ namespace VaultAdmin
                     _standInLayer = -1;
                 }
 
-                Silence(body, "DwellerVisibilityDetector");
+                body.SetActive(false);
             }
             catch (Exception e)
             {
-                Log.LogWarning("Could not put the stand-in back as it was: " + e.Message);
-            }
-
-            try
-            {
-                DwellerPool pool = DwellerPool.Instance;
-                MethodInfo release = pool == null ? null : typeof(DwellerPool).GetMethod(
-                    "ReleaseInstance",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { typeof(Dweller) }, null);
-
-                if (release != null) release.Invoke(pool, new object[] { _previewDweller });
-                else ReportOnce("previewdrop", "The pool has no ReleaseInstance; the stand-in stays.");
-            }
-            catch (Exception e)
-            {
-                // Better a dweller left checked out of the pool than a game that stops.
-                Log.LogWarning("The pool would not take the stand-in back: " + e.Message);
-
-                try { _previewDweller.gameObject.SetActive(false); }
-                catch { }
+                Log.LogWarning("Could not put the stand-in away: " + e.Message);
             }
 
             _previewDweller = null;
@@ -4049,12 +4081,33 @@ namespace VaultAdmin
 
         // What the stand-in was before it was borrowed. Handing it back in the state we found it
         // is the difference between a returned dweller and a crash.
+        private readonly Dictionary<string, Dweller> _standIns = new Dictionary<string, Dweller>();
         private int _standInLayer = -1;
         private Vector3 _standInHome;
 
         // A layer of its own, so the camera that films the stand-in sees nothing else and nothing
         // else sees the stand-in.
-        private const int PreviewLayer = 30;
+        // Chosen by asking, not by picking a number that looked unused: an occupied layer would
+        // put whatever else lives on it into the picture.
+        private int _previewLayer = -1;
+
+        private int PreviewLayer()
+        {
+            if (_previewLayer >= 0) return _previewLayer;
+
+            for (int layer = 31; layer >= 8; layer--)
+            {
+                if (!string.IsNullOrEmpty(LayerMask.LayerToName(layer))) continue;
+
+                _previewLayer = layer;
+                Log.LogInfo("The stand-in will be filmed on layer " + layer + ", which is unnamed.");
+                return _previewLayer;
+            }
+
+            _previewLayer = 31;
+            Log.LogWarning("Every layer is named; filming on 31 and hoping it is quiet.");
+            return _previewLayer;
+        }
 
         /// <summary>
         /// Sets up a camera pointed at nothing in particular, to film the stand-in.
@@ -4083,7 +4136,7 @@ namespace VaultAdmin
                 _previewCamera.farClipPlane = 100f;
                 _previewCamera.clearFlags = CameraClearFlags.SolidColor;
                 _previewCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
-                _previewCamera.cullingMask = 1 << PreviewLayer;
+                _previewCamera.cullingMask = 1 << PreviewLayer();
                 _previewCamera.targetTexture = _previewFilm;
 
                 // Filmed on demand, not sixty times a second for a picture that rarely changes.
@@ -4105,6 +4158,9 @@ namespace VaultAdmin
             EnsurePreviewCamera();
             if (_previewCamera == null || _previewFilm == null) return false;
 
+            // A render texture can be dropped from under you when the graphics device resets.
+            if (!_previewFilm.IsCreated() && !_previewFilm.Create()) return false;
+
             GameObject body = _previewDweller.gameObject;
             bool woken = !body.activeSelf;
 
@@ -4119,7 +4175,7 @@ namespace VaultAdmin
                 // Far from the vault, on a layer only this camera looks at.
                 body.transform.position = new Vector3(0f, -8000f, 0f);
                 body.transform.rotation = Quaternion.identity;
-                SetLayer(body.transform, PreviewLayer);
+                SetLayer(body.transform, PreviewLayer());
 
                 if (woken) body.SetActive(true);
 
@@ -4224,8 +4280,12 @@ namespace VaultAdmin
 
                 _previewPicture.mainTexture = _previewFilm;
                 _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
-                _previewPicture.width = PreviewWidth;
+
+                // The film's own proportions, so nothing is stretched to fit a frame that was
+                // chosen before there was anything in it.
                 _previewPicture.height = PreviewHeight;
+                _previewPicture.width = Mathf.Max(8, Mathf.RoundToInt(
+                    PreviewHeight * (float)_previewFilm.width / _previewFilm.height));
 
                 if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
                 return;
