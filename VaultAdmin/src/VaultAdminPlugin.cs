@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.3.2";
 
         internal static ManualLogSource Log;
 
@@ -1265,6 +1265,11 @@ namespace VaultAdmin
             {
                 _drawChecked = false;
                 _drawCheckFrames = 0;
+
+                // Closing the panel puts the figure away and nothing was bringing it back: the tab
+                // has not changed, so ShowTab never runs, and the bench sat empty until the gender
+                // was stepped. Reopening is a good enough reason to stand someone there.
+                if (_tab == Tab.Create && _making == Making.Dweller) RemakePreview();
             }
             if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
         }
@@ -5662,6 +5667,20 @@ namespace VaultAdmin
         {
             if (who == null) return;
 
+            // Emptied first. GenerateRandomCustomization fills a dweller in, and a slot that is
+            // already filled is not a slot it has to fill -- which is how the created dweller's
+            // hair and face survived being randomised and went on standing there after the bench
+            // had been cleared. These are the field names the mod's own piece report prints, not
+            // guesses.
+            string[] slots = { "m_hair", "m_face", "m_faceMask", "m_body",
+                               "m_helmet", "m_overrideFace", "m_helmetCoverCustomization" };
+
+            for (int i = 0; i < slots.Length; i++)
+            {
+                try { WriteMember(who, slots[i], null); }
+                catch { }
+            }
+
             try
             {
                 MethodInfo dress = typeof(Dweller).GetMethod(
@@ -5699,14 +5718,22 @@ namespace VaultAdmin
             // own default is what a dweller wears when it wears nothing.
             try
             {
-                if (who.EquippedOutfit == null)
+                // Nothing chosen means the vault's own plain outfit, not whatever the figure
+                // happened to be wearing. A dweller has to wear something or the shader composes a
+                // head and stops -- but "something" after a reset is a jumpsuit, not the coat the
+                // last creation went out in.
+                if (string.IsNullOrEmpty(_defaultOutfitId)) BuildCatalogue();
+
+                string plain = string.IsNullOrEmpty(_defaultOutfitId)
+                    ? "jumpsuit"
+                    : _defaultOutfitId;
+
+                DwellerItem worn = who.EquippedOutfit;
+                bool wrong = worn == null || (_outfit.Selected == null &&
+                                              ReadAsText(worn, "Id") != plain);
+
+                if (wrong)
                 {
-                    if (string.IsNullOrEmpty(_defaultOutfitId)) BuildCatalogue();
-
-                    string plain = string.IsNullOrEmpty(_defaultOutfitId)
-                        ? "jumpsuit"
-                        : _defaultOutfitId;
-
                     int was = CountStorage();
                     who.EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
                     PutStorageBack(was);
