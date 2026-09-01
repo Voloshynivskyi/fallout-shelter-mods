@@ -24,9 +24,11 @@ namespace VaultAdmin
     internal static class Skin
     {
         // Measured from the game, not matched by eye.
-        public static readonly Color Bright = new Color32(0x14, 0xFF, 0x17, 0xFF);
-        public static readonly Color Rim = new Color32(0x08, 0x60, 0x0A, 0xFF);
-        public static readonly Color Ink = new Color32(0x04, 0x28, 0x04, 0xFF);
+        // The interface has three greens and no others. A fourth invented here read as a
+        // different program's idea of the same style.
+        public static readonly Color Bright = new Color32(0x14, 0xFF, 0x17, 0xFF);   // 14FF17
+        public static readonly Color Ink = new Color32(0x08, 0x51, 0x08, 0xFF);      // 085108
+        public static readonly Color Rim = new Color32(0x08, 0x60, 0x0A, 0xFF);      // 08600A
 
         // A window is a dimmed plate, not an opaque one: the vault shows through the game's own.
         public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xC8);
@@ -207,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.51.0";
+        public const string PluginVersion = "0.52.0";
 
         internal static ManualLogSource Log;
 
@@ -1310,7 +1312,7 @@ namespace VaultAdmin
                 UILabel title = MakeLabel(_nguiWindow.transform, "Title", "VAULT ADMIN",
                                           0, _windowHeight / 2 - 6, _windowWidth - 60, 52,
                                           Skin.Bright, 4);
-                title.fontSize = Mathf.RoundToInt(_fontSize * 1.6f);
+                title.fontSize = Mathf.RoundToInt(_fontSize * 1.2f);
 
                 // Outlined, so the frame it straddles reads as behind it rather than through it.
                 title.effectStyle = UILabel.Effect.Outline;
@@ -1340,7 +1342,7 @@ namespace VaultAdmin
                     closeFace.mainTexture = Skin.SolidOutlined(closeFace.width, closeFace.height);
 
                 UILabel closeText = close.GetComponentInChildren<UILabel>();
-                if (closeText != null) closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
+                if (closeText != null) closeText.fontSize = _fontSize;
 
                 _nguiWindow.SetActive(false);
                 Log.LogInfo("Built the panel window under " + root.name + ".");
@@ -3212,41 +3214,57 @@ namespace VaultAdmin
         /// name, the thing itself and the two arrows, and nothing else is needed.
         /// </summary>
         private Choice AddCompactChoice(Transform parent, Choice choice,
-                                        int centreX, int y, int width)
+                                        int centreX, int y, int width, bool swatchOnly)
         {
-            const int height = 34;
+            const int height = 36;
 
             Plate(parent, "Compact_" + choice.Caption, centreX, y, width, height,
                   Skin.Row(width, height), 1);
 
             int left = centreX - width / 2;
 
-            MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
-                          left + 8, y + 9, width - 16, 18, Skin.Bright, 3);
+            // The name quietly above, the choice itself plainly below: read the row once to know
+            // what it is, then only ever look at the second line.
+            UILabel caption = MakeLeftLabel(parent, "CompactName_" + choice.Caption, choice.Caption,
+                                            left + 10, y + 11, width - 20, 14, Skin.Rim, 3);
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
 
             Choice captured = choice;
 
-            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 18, y - 8, 26, 22,
+            MakeButton(parent, "CompactBack_" + choice.Caption, "<", left + 16, y - 8, 24, 22,
                        false, delegate { captured.Step(-1); });
-            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 18, y - 8,
-                       26, 22, false, delegate { captured.Step(1); });
+            MakeButton(parent, "CompactFwd_" + choice.Caption, ">", centreX + width / 2 - 16, y - 8,
+                       24, 22, false, delegate { captured.Step(1); });
 
-            choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
-                                       centreX + 6, y - 8, width - 76, 20, Skin.Bright, 3);
+            int span = width - 64;
 
-            choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 44, y - 8,
-                                  22, 18, Skin.Solid(), 3);
-            choice.Swatch.gameObject.SetActive(false);
+            if (swatchOnly)
+            {
+                // A shade has no name worth reading. The colour is the answer.
+                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, centreX, y - 8,
+                                      Mathf.Min(span, 84), 20, Skin.Solid(), 3);
+                choice.Swatch.gameObject.SetActive(false);
+            }
+            else
+            {
+                choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
+                                           centreX + 10, y - 8, span - 24, 20, Skin.Bright, 3);
+                choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.8f));
 
-            GameObject pictureGo = new GameObject("CompactPic_" + choice.Caption);
-            pictureGo.layer = parent.gameObject.layer;
-            pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(left + 44, y - 8, 0f);
-            pictureGo.transform.localScale = Vector3.one;
+                choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, left + 42, y - 8,
+                                      20, 18, Skin.Solid(), 3);
+                choice.Swatch.gameObject.SetActive(false);
 
-            choice.Picture = pictureGo.AddComponent<UISprite>();
-            choice.Picture.depth = 3;
-            choice.Picture.gameObject.SetActive(false);
+                GameObject pictureGo = new GameObject("CompactPic_" + choice.Caption);
+                pictureGo.layer = parent.gameObject.layer;
+                pictureGo.transform.SetParent(parent, false);
+                pictureGo.transform.localPosition = new Vector3(left + 42, y - 8, 0f);
+                pictureGo.transform.localScale = Vector3.one;
+
+                choice.Picture = pictureGo.AddComponent<UISprite>();
+                choice.Picture.depth = 3;
+                choice.Picture.gameObject.SetActive(false);
+            }
 
             choice.Show();
             return choice;
@@ -3919,11 +3937,6 @@ namespace VaultAdmin
             _previewPicture.gameObject.SetActive(have);
             _previewHeadgear.gameObject.SetActive(have);
 
-            if (_previewCaption != null)
-                _previewCaption.text = have
-                    ? "nobody yet — press CREATE when this is who you want"
-                    : "no one to draw";
-
             if (!have) return;
 
             // Setting a piece writes a field and nothing more — ApplyCustomization has no effect on
@@ -4013,11 +4026,21 @@ namespace VaultAdmin
 
             try
             {
-                Texture sheet = _previewPicture.material != null
-                    ? _previewPicture.material.mainTexture
-                    : null;
-
+                Material paint = _previewPicture.material;
+                Texture sheet = paint != null ? paint.mainTexture : null;
                 Rect uv = _previewPicture.uvRect;
+
+                // Said out loud whatever happens. The last run left no line at all, which told me
+                // only that something was missing and not which thing.
+                ReportOnce("previewwhat",
+                           "The picture has material=" +
+                           (paint == null ? "none" : paint.name + " shader " +
+                                                     (paint.shader == null ? "none" : paint.shader.name)) +
+                           ", texture=" +
+                           (sheet == null ? "none" : sheet.name + " " + sheet.width + "x" + sheet.height) +
+                           ", uv=" + uv +
+                           ", widget=" + _previewPicture.mainTexture);
+
                 float wide = PreviewWidth;
                 float high = PreviewHeight;
 
@@ -4066,8 +4089,8 @@ namespace VaultAdmin
         {
             Choice[] rows = { _hair, _face, _hairColour, _skin, _helmet, _outfit, _weapon };
 
-            const int rowHeight = 34;
-            const int rowGap = 4;
+            const int rowHeight = 36;
+            const int rowGap = 3;
 
             int block = Mathf.Max(PreviewHeight + 12, rows.Length * (rowHeight + rowGap) + 8);
             int middle = _cursorY - block / 2;
@@ -4102,10 +4125,6 @@ namespace VaultAdmin
             _previewHeadgear.height = PreviewHeight;
             _previewHeadgear.depth = 4;
 
-            _previewCaption = MakeLabel(parent, "PreviewCaption", "", pictureX,
-                                        middle - PreviewHeight / 2 - 14, PreviewWidth + 8, 20,
-                                        Skin.Rim, 5);
-
             // The choices, down the right.
             int columnLeft = -width / 2 + PreviewWidth + 24;
             int columnWidth = width - PreviewWidth - 34;
@@ -4115,7 +4134,7 @@ namespace VaultAdmin
 
             for (int i = 0; i < rows.Length; i++)
                 AddCompactChoice(parent, rows[i], columnCentre,
-                                 top - i * (rowHeight + rowGap), columnWidth);
+                                 top - i * (rowHeight + rowGap), columnWidth, rows[i] == _skin);
 
             _cursorY -= block + RowGap;
 
@@ -4132,14 +4151,18 @@ namespace VaultAdmin
 
             int nameY = _cursorY - RowHeight / 2;
             Plate(parent, "NameRow", 0, nameY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            _firstNameInput = AddInput(parent, "First", -width / 4, nameY, width / 2 - 12, "FIRST");
-            _lastNameInput = AddInput(parent, "Last", width / 4, nameY, width / 2 - 12, "LAST");
-            _cursorY -= RowHeight + RowGap;
+            int nameWidth = (width - 116) / 2;
+            _firstNameInput = AddInput(parent, "First", -width / 2 + 8 + nameWidth / 2, nameY,
+                                       nameWidth, "FIRST");
+            _lastNameInput = AddInput(parent, "Last", -width / 2 + 14 + nameWidth + nameWidth / 2,
+                                      nameY, nameWidth, "LAST");
+            // Gender belongs on the name row: it is one of two things, so a switch says it in the
+            // space a whole row was taking. It decides what the looks can be, so it comes first.
+            _genderSwitch = MakeButton(parent, "Gender", Genders[_genderIndex].ToString().ToUpper(),
+                                       width / 2 - 52, nameY, 96, RowHeight - 10, false,
+                                       delegate { StepGender(1); });
 
-            // Gender before the looks, because it decides what the looks can be.
-            _genderLabel = AddPickerRow(parent, width, "GENDER",
-                                        delegate { StepGender(-1); }, delegate { StepGender(1); },
-                                        Genders[_genderIndex].ToString());
+            _cursorY -= RowHeight + RowGap;
 
             AddHeader(parent, "LOOKS", width);
             BuildLooksBlock(parent, width);
@@ -4301,9 +4324,18 @@ namespace VaultAdmin
             RemakePreview();
         }
 
+        private GameObject _genderSwitch;
+
         private void StepGender(int by)
         {
             _genderIndex = (_genderIndex + by + Genders.Length) % Genders.Length;
+
+            if (_genderSwitch != null)
+            {
+                UILabel text = _genderSwitch.GetComponentInChildren<UILabel>();
+                if (text != null) text.text = Genders[_genderIndex].ToString().ToUpper();
+            }
+
             if (_genderLabel != null) _genderLabel.text = Genders[_genderIndex].ToString();
 
             RebuildLookOptions();
