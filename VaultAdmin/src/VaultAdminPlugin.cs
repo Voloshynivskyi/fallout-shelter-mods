@@ -140,6 +140,17 @@ namespace VaultAdmin
             return Frame(width, height, 8, 3, Bright, Bright);
         }
 
+        /// <summary>
+        /// The recess an icon sits in.
+        ///
+        /// A picture laid straight onto a row runs into the words beside it. A dark square behind it
+        /// says where the picture ends and the row begins.
+        /// </summary>
+        public static Texture2D Well(int size)
+        {
+            return Frame(size, size, 6, 2, Rim, Ink);
+        }
+
         /// <summary>A place to type: outlined bright, sunk dark, so it reads as a field.</summary>
         public static Texture2D Field(int width, int height)
         {
@@ -181,7 +192,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.34.0";
+        public const string PluginVersion = "0.36.0";
 
         internal static ManualLogSource Log;
 
@@ -253,6 +264,7 @@ namespace VaultAdmin
             public EItemRarity Rarity;
             public string Sprite;    // name of this item's sprite inside its family's atlas
             public string Stats;     // rarity, what it does, what it sells for
+            public int Power;        // the same in one number, for ordering
         }
 
         // One atlas per family, resolved once. An atlas is a texture plus a table of rectangles.
@@ -1229,7 +1241,7 @@ namespace VaultAdmin
                 // On the bottom edge, as the title is on the top one: outlined rather than solid,
                 // smaller than it was, and lettered large enough to read as the way out.
                 GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
-                                              0, -_windowHeight / 2, 148, 48, true, TogglePanel);
+                                              0, -_windowHeight / 2 + 6, 148, 48, true, TogglePanel);
 
                 UILabel closeText = close.GetComponentInChildren<UILabel>();
                 if (closeText != null) closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
@@ -1975,10 +1987,12 @@ namespace VaultAdmin
             go.transform.localPosition = new Vector3(x, y, 0f);
             go.transform.localScale = Vector3.one;
 
+            Plate(parent, name + "_Well", x, y, size + 8, size + 8, Skin.Well(size + 8), 2);
+
             UISprite drawn = go.AddComponent<UISprite>();
             drawn.atlas = atlas;
             drawn.spriteName = sprite;
-            drawn.depth = 3;
+            drawn.depth = 4;
             FitSprite(drawn, size);
         }
 
@@ -2127,18 +2141,14 @@ namespace VaultAdmin
         private UIInput _petValueInput;
         private UILabel _familyLabel;
         private UILabel _bonusLabel;
-        private UILabel _pageLabel;
 
         private int _familyIndex;
-        private int _itemPage;
-        private int _rowsPerPage;
         private string _appliedFilter = "";
 
         // Large enough that a portrait reads as a person rather than a smudge.
         private const int IconBox = 52;
 
         private const int ItemRowHeight = 62;
-        private const int MaxItemRows = 9;
 
         private void BuildGrantPage(Transform parent)
         {
@@ -2149,30 +2159,112 @@ namespace VaultAdmin
                                         delegate { StepFamily(-1); }, delegate { StepFamily(1); },
                                         Families[_familyIndex].ToString().ToUpper());
 
+            // Search on the left beside its label, the two orderings on the right. Sorting a list
+            // of two hundred by what the items are worth is the difference between browsing and
+            // hunting.
             int filterY = _cursorY - RowHeight / 2;
             Plate(parent, "FilterRow", 0, filterY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+
             MakeLeftLabel(parent, "FilterName", "FIND",
-                          -width / 2 + 14, filterY, 80, RowHeight, Skin.Bright, 3);
-            _filterInput = AddInput(parent, "Filter", 30, filterY, width - 140, "SEARCH");
+                          -width / 2 + 12, filterY, 62, RowHeight, Skin.Bright, 3);
+
+            int sortWidth = 38;
+            int sortSpan = sortWidth * 4 + 12;
+            int fieldWidth = width - 74 - sortSpan - 16;
+
+            _filterInput = AddInput(parent, "Filter", -width / 2 + 74 + fieldWidth / 2, filterY,
+                                    fieldWidth, "SEARCH");
+
+            int sortX = width / 2 - sortSpan + sortWidth / 2 - 2;
+            MakeButton(parent, "SortRarityUp", "R+", sortX, filterY, sortWidth, 32, false,
+                       delegate { SortBy(Ordering.Rarity, true); });
+            sortX += sortWidth + 4;
+            MakeButton(parent, "SortRarityDown", "R-", sortX, filterY, sortWidth, 32, false,
+                       delegate { SortBy(Ordering.Rarity, false); });
+            sortX += sortWidth + 4;
+            MakeButton(parent, "SortPowerUp", "S+", sortX, filterY, sortWidth, 32, false,
+                       delegate { SortBy(Ordering.Power, true); });
+            sortX += sortWidth + 4;
+            MakeButton(parent, "SortPowerDown", "S-", sortX, filterY, sortWidth, 32, false,
+                       delegate { SortBy(Ordering.Power, false); });
+
             _cursorY -= RowHeight + RowGap;
 
-            // The list occupies whatever is left between here and the pager above the close button.
-            int listTop = _cursorY;
-            int listBottom = -_windowHeight / 2 + 96;
+            // The whole list in one scrolling column. Paging through two hundred items four at a
+            // time was a way of saying the panel could not hold them.
+            _grantWidth = width;
+            _grantScroll = BeginScroll(parent, width, _cursorY, ContentBottom(), out _grantContent);
+            _grantTop = _scrollTop;
+        }
 
-            _rowsPerPage = Mathf.Clamp((listTop - listBottom) / (ItemRowHeight + RowGap), 1, MaxItemRows);
+        private enum Ordering { None, Rarity, Power }
 
-            for (int i = 0; i < _rowsPerPage; i++)
-                _itemRows.Add(BuildItemRow(parent, i, width,
-                                           listTop - ItemRowHeight / 2 - i * (ItemRowHeight + RowGap)));
+        private UIScrollView _grantScroll;
+        private Transform _grantContent;
+        private GameObject _grantDragArea;
+        private int _grantWidth;
+        private int _grantTop;
 
-            // The pager sits at the foot of the page, clear of the window's close button.
-            int pagerY = listBottom - 8;
-            MakeButton(parent, "PagePrev", "<", -width / 2 + 40, pagerY, 70, 34, false,
-                       delegate { StepPage(-1); });
-            _pageLabel = MakeLabel(parent, "PageLabel", "-", 0, pagerY, width - 200, 34, Skin.Bright, 3);
-            MakeButton(parent, "PageNext", ">", width / 2 - 40, pagerY, 70, 34, false,
-                       delegate { StepPage(1); });
+        private Ordering _ordering = Ordering.None;
+        private bool _orderingUp = true;
+
+        private const int MaxGrantRows = 260;
+
+        private void SortBy(Ordering ordering, bool ascending)
+        {
+            _ordering = ordering;
+            _orderingUp = ascending;
+            RefreshThings();
+        }
+
+        /// <summary>
+        /// Builds as many rows as the list needs, once.
+        ///
+        /// Rows are kept and reused rather than destroyed with each search: a family change would
+        /// otherwise throw away two hundred sets of widgets and build two hundred more.
+        /// </summary>
+        private void EnsureRows(int wanted)
+        {
+            wanted = Mathf.Min(wanted, MaxGrantRows);
+
+            while (_itemRows.Count < wanted)
+            {
+                int i = _itemRows.Count;
+                _itemRows.Add(BuildItemRow(_grantContent, i, _grantWidth,
+                                           _grantTop - ItemRowHeight / 2 -
+                                           i * (ItemRowHeight + RowGap)));
+            }
+        }
+
+        /// <summary>Sizes the area the list is dragged by, and lets the new rows be dragged too.</summary>
+        private void UpdateGrantArea(int rows)
+        {
+            if (_grantScroll == null || _grantContent == null) return;
+
+            int used = Mathf.Max(40, rows * (ItemRowHeight + RowGap));
+
+            if (_grantDragArea == null)
+            {
+                _grantDragArea = new GameObject("DragArea");
+                _grantDragArea.layer = _grantContent.gameObject.layer;
+                _grantDragArea.transform.SetParent(_grantContent, false);
+                _grantDragArea.transform.localScale = Vector3.one;
+                _grantDragArea.AddComponent<BoxCollider>().isTrigger = true;
+            }
+
+            // Behind the rows, so it catches the empty space without taking their presses.
+            _grantDragArea.transform.localPosition = new Vector3(0f, _grantTop - used / 2, 20f);
+            _grantDragArea.GetComponent<BoxCollider>().size = new Vector3(_grantWidth, used, 1f);
+
+            BoxCollider[] colliders = _grantScroll.GetComponentsInChildren<BoxCollider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i].GetComponent<UIDragScrollView>() != null) continue;
+                UIDragScrollView drag = colliders[i].gameObject.AddComponent<UIDragScrollView>();
+                drag.scrollView = _grantScroll;
+            }
+
+            _grantScroll.ResetPosition();
         }
 
         private ItemRow BuildItemRow(Transform parent, int index, int width, int y)
@@ -2196,10 +2288,13 @@ namespace VaultAdmin
             iconGo.transform.localPosition = new Vector3(-width / 2 + 32, 0f, 0f);
             iconGo.transform.localScale = Vector3.one;
 
+            Plate(row.Root.transform, "Well", -width / 2 + 32, 0, IconBox + 6, IconBox + 6,
+                  Skin.Well(IconBox + 6), 2);
+
             row.Icon = iconGo.AddComponent<UISprite>();
             row.Icon.width = IconBox;
             row.Icon.height = IconBox;
-            row.Icon.depth = 3;
+            row.Icon.depth = 4;
 
             int textLeft = -width / 2 + 62;
             int textWidth = width - 160;
@@ -2245,7 +2340,6 @@ namespace VaultAdmin
             _familyIndex = (_familyIndex + by + Families.Length) % Families.Length;
             _grantFamily = Families[_familyIndex];
             _family = ItemTypeOf(_grantFamily);
-            _itemPage = 0;
             if (_familyLabel != null) _familyLabel.text = _grantFamily.ToString().ToUpper();
             RefreshThings();
         }
@@ -2254,19 +2348,6 @@ namespace VaultAdmin
         {
             _petBonusIndex = (_petBonusIndex + by + BonusEffects.Length) % BonusEffects.Length;
             if (_bonusLabel != null) _bonusLabel.text = BonusEffects[_petBonusIndex].ToString();
-        }
-
-        private void StepPage(int by)
-        {
-            int rows = VisibleRowCount();
-            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
-            _itemPage = Mathf.Clamp(_itemPage + by, 0, pages - 1);
-            FillRows();
-        }
-
-        private int VisibleRowCount()
-        {
-            return Mathf.Max(1, _rowsPerPage);
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -2338,30 +2419,47 @@ namespace VaultAdmin
                 }
             }
 
-            int rows = VisibleRowCount();
-            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
-            _itemPage = Mathf.Clamp(_itemPage, 0, pages - 1);
+            if (_ordering != Ordering.None) _shown.Sort(CompareShown);
 
+            EnsureRows(_shown.Count);
             FillRows();
+            UpdateGrantArea(Mathf.Min(_shown.Count, MaxGrantRows));
         }
 
         /// <summary>Writes this page of the list into rows that already exist.</summary>
+        /// <summary>
+        /// Orders the list by rarity or by what an item does.
+        ///
+        /// Everything that is not an item — a rolled dweller, one of the named ones — has neither,
+        /// and sorts to one end rather than being scattered through the middle.
+        /// </summary>
+        private int CompareShown(object left, object right)
+        {
+            int a = SortKey(left);
+            int b = SortKey(right);
+            return _orderingUp ? a.CompareTo(b) : b.CompareTo(a);
+        }
+
+        private int SortKey(object thing)
+        {
+            CatalogueEntry item = thing as CatalogueEntry;
+            if (item == null) return -1;
+
+            return _ordering == Ordering.Rarity ? (int)item.Rarity : item.Power;
+        }
+
         private void FillRows()
         {
-            int rows = VisibleRowCount();
-            int first = _itemPage * rows;
-
             for (int i = 0; i < _itemRows.Count; i++)
             {
                 ItemRow row = _itemRows[i];
                 if (row == null || row.Root == null) continue;
 
-                int index = first + i;
-                bool used = i < rows && index < _shown.Count;
+                bool used = i < _shown.Count;
                 row.Root.SetActive(used);
                 if (!used) continue;
 
-                object thing = _shown[index];
+                object thing = _shown[i];
 
                 CatalogueEntry item = thing as CatalogueEntry;
                 if (item != null)
@@ -2400,11 +2498,10 @@ namespace VaultAdmin
                 }
             }
 
-            int pages = Mathf.Max(1, (_shown.Count + rows - 1) / rows);
-            if (_pageLabel != null)
-                _pageLabel.text = _shown.Count == 0
-                    ? "NOTHING MATCHES"
-                    : (_itemPage + 1) + " / " + pages + "   (" + _shown.Count + ")";
+            // The count belongs beside the family it counts, not on a pager that no longer exists.
+            if (_familyLabel != null)
+                _familyLabel.text = _grantFamily.ToString().ToUpper() +
+                                    (_shown.Count > 0 ? "  " + _shown.Count : "  NONE");
         }
 
         // Pet art is not simply present the way item atlases are: it is loaded per type, on
@@ -2588,10 +2685,9 @@ namespace VaultAdmin
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
         {
-            int index = _itemPage * VisibleRowCount() + rowIndex;
-            if (index < 0 || index >= _shown.Count) return;
+            if (rowIndex < 0 || rowIndex >= _shown.Count) return;
 
-            object thing = _shown[index];
+            object thing = _shown[rowIndex];
 
             CatalogueEntry item = thing as CatalogueEntry;
             if (item != null) { GrantItem(item); return; }
@@ -3017,23 +3113,34 @@ namespace VaultAdmin
         /// name, the figure and four buttons do not fit across, and squeezing them makes a row that
         /// belongs to no interface at all.
         /// </summary>
+        // Room for a picture that is worth looking at, with everything else to the right of it.
+        private const int ResourceCell = 80;
+        private const int ResourceIcon = 62;
+
         private void AddResourceRow(Transform parent, EResource resource, int width)
         {
-            const int cell = 76;
-            int top = _cursorY - 16;
-            int bottom = _cursorY - 52;
+            int middle = _cursorY - ResourceCell / 2;
+            int top = middle + 17;
+            int bottom = middle - 19;
 
-            Plate(parent, "Row_" + resource, 0, _cursorY - cell / 2, width, cell,
-                  Skin.Row(width, cell), 1);
+            Plate(parent, "Row_" + resource, 0, middle, width, ResourceCell,
+                  Skin.Row(width, ResourceCell), 1);
 
+            // The picture takes the full height of the row: at a third of the screen these are the
+            // only things in the panel large enough to be recognised at a glance.
+            int iconCentre = -width / 2 + 8 + (ResourceIcon + 8) / 2;
             AddIcon(parent, "Icon_" + resource, ResourceSprites(resource), resource.ToString(),
-                    -width / 2 + 26, top, 28);
+                    iconCentre, middle, ResourceIcon);
+
+            int left = -width / 2 + 16 + ResourceIcon + 8;
+            int right = width / 2 - 8;
+            int span = right - left;
 
             MakeLeftLabel(parent, "Name_" + resource, resource.ToString(),
-                          -width / 2 + 48, top, width - 210, 26, Skin.Bright, 3);
+                          left, top, span - 150, 26, Skin.Bright, 3);
 
             _resourceLabels[resource] = MakeRightLabel(parent, "Value_" + resource, "-",
-                                                       width / 2 - 10, top, 160, 26, Skin.Bright, 3);
+                                                       right, top, 160, 26, Skin.Bright, 3);
 
             // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
             EResource captured = resource;
@@ -3041,22 +3148,22 @@ namespace VaultAdmin
             float[] amounts = AmountsFor(resource);
 
             int count = amounts.Length + 1;
-            int buttonWidth = (width - 16 - (count - 1) * 5) / count;
-            int x = -width / 2 + 8 + buttonWidth / 2;
+            int buttonWidth = (span - (count - 1) * 4) / count;
+            int x = left + buttonWidth / 2;
 
             for (int i = 0; i < amounts.Length; i++)
             {
                 float amount = amounts[i];
                 MakeButton(parent, "Grant_" + resource + "_" + amount,
-                           "+" + Short(amount), x, bottom, buttonWidth, 30, false,
+                           "+" + Short(amount), x, bottom, buttonWidth, 28, false,
                            delegate { Grant(captured, amount); });
-                x += buttonWidth + 5;
+                x += buttonWidth + 4;
             }
 
-            MakeButton(parent, "Fill_" + resource, "MAX", x, bottom, buttonWidth, 30, false,
+            MakeButton(parent, "Fill_" + resource, "MAX", x, bottom, buttonWidth, 28, false,
                        delegate { FillToCap(captured); });
 
-            _cursorY -= cell + RowGap;
+            _cursorY -= ResourceCell + RowGap;
         }
 
         /// <summary>1000 is wider than the button. 1K is not.</summary>
@@ -3068,34 +3175,39 @@ namespace VaultAdmin
 
         private void AddBoxRow(Transform parent, ELunchBoxType type, int width)
         {
-            const int cell = 76;
-            int top = _cursorY - 16;
-            int bottom = _cursorY - 52;
+            int middle = _cursorY - ResourceCell / 2;
+            int top = middle + 17;
+            int bottom = middle - 19;
 
-            Plate(parent, "BoxRow_" + type, 0, _cursorY - cell / 2, width, cell,
-                  Skin.Row(width, cell), 1);
+            Plate(parent, "BoxRow_" + type, 0, middle, width, ResourceCell,
+                  Skin.Row(width, ResourceCell), 1);
 
+            int iconCentre = -width / 2 + 8 + (ResourceIcon + 8) / 2;
             AddIcon(parent, "BoxIcon_" + type, BoxSprites(type), "box " + type,
-                    -width / 2 + 26, top, 32, false, "VaultTec");
+                    iconCentre, middle, ResourceIcon, false, "VaultTec");
+
+            int left = -width / 2 + 16 + ResourceIcon + 8;
+            int right = width / 2 - 8;
+            int span = right - left;
 
             MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
-                          -width / 2 + 48, top, width - 60, 26, Skin.Bright, 3);
+                          left, top, span, 26, Skin.Bright, 3);
 
             ELunchBoxType captured = type;
 
-            int buttonWidth = (width - 16 - (BoxAmounts.Length - 1) * 5) / BoxAmounts.Length;
-            int x = -width / 2 + 8 + buttonWidth / 2;
+            int buttonWidth = (span - (BoxAmounts.Length - 1) * 4) / BoxAmounts.Length;
+            int x = left + buttonWidth / 2;
 
             for (int i = 0; i < BoxAmounts.Length; i++)
             {
                 int quantity = BoxAmounts[i];
                 MakeButton(parent, "Box_" + type + "_" + quantity, "+" + quantity,
-                           x, bottom, buttonWidth, 30, false,
+                           x, bottom, buttonWidth, 28, false,
                            delegate { GrantBoxes(captured, quantity); });
-                x += buttonWidth + 5;
+                x += buttonWidth + 4;
             }
 
-            _cursorY -= cell + RowGap;
+            _cursorY -= ResourceCell + RowGap;
         }
 
         /// <summary>Rewrites the figures while the window is open, without rebuilding anything.</summary>
@@ -3414,8 +3526,7 @@ namespace VaultAdmin
                         {
                             _appliedFilter = typed;
                             _filter = typed;
-                            _itemPage = 0;
-                            RefreshThings();
+                                            RefreshThings();
                         }
                     }
                 }
@@ -3736,6 +3847,7 @@ namespace VaultAdmin
                     entry.Rarity = data.ItemRarity;
                     entry.Sprite = ReadMember(data, spriteMember);
                     entry.Stats = Describe(data, type);
+                    entry.Power = Rate(data, type);
                     _catalogue.Add(entry);
                     added++;
                 }
@@ -3919,6 +4031,47 @@ namespace VaultAdmin
             catch
             {
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// One number for how much an item does, so a list of them can be put in order.
+        ///
+        /// A weapon's is its damage and an outfit's is the sum of what it adds; junk has neither and
+        /// falls back on what it sells for, which is the only thing that separates one lump of scrap
+        /// from another.
+        /// </summary>
+        private int Rate(DwellerBaseItem data, EItemType type)
+        {
+            try
+            {
+                if (type == EItemType.Weapon)
+                {
+                    int most;
+                    if (int.TryParse(ReadAsText(data, "DamageMax"), out most)) return most;
+                }
+                else if (type == EItemType.Outfit)
+                {
+                    object stats = ReadObject(data, "m_specialStats");
+                    if (stats != null)
+                    {
+                        int total = 0;
+                        for (int i = 0; i < Specials.Length; i++)
+                        {
+                            object entry = ReadObject(stats, Specials[i].ToString());
+                            int value;
+                            if (entry != null && int.TryParse(ReadAsText(entry, "Value"), out value))
+                                total += value;
+                        }
+                        return total;
+                    }
+                }
+
+                return data.SellPrice;
+            }
+            catch
+            {
+                return 0;
             }
         }
 
