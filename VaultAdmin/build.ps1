@@ -61,8 +61,21 @@ $refs = @(
 foreach ($r in $refs) { if (-not (Test-Path $r)) { throw "Missing reference: $r" } }
 $refArgs = $refs | ForEach-Object { "/reference:$_" }
 
-& $csc /target:library /optimize+ /nostdlib+ /noconfig /out:$outDll @refArgs $src
-if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
+# Captured rather than streamed, so warnings can be counted and shown rather than scrolling
+# past a green success line. The compiler had been reporting an unused field and an unassigned
+# one for some time and nobody was reading it.
+$cscOut = & $csc /target:library /optimize+ /nostdlib+ /noconfig /out:$outDll @refArgs $src
+if ($LASTEXITCODE -ne 0) {
+    $cscOut | Write-Host
+    throw "Compilation failed with exit code $LASTEXITCODE"
+}
+
+$warnings = @($cscOut | Where-Object { $_ -match ": warning CS" })
+if ($warnings.Count -gt 0) {
+    Write-Host "$($warnings.Count) compiler warning(s):" -ForegroundColor Yellow
+    $warnings | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+}
+
 Write-Host "Built $outDll ($version)" -ForegroundColor Green
 
 # Stage the archive with the same folder layout a player extracts into the game root.
@@ -98,8 +111,12 @@ if ($Install) {
 
     # Verify the artefact rather than trusting the copy: a success line has been wrong here before.
     $landed = Get-Item (Join-Path $plugins "$modName.dll")
-    if ($landed.Length -ne (Get-Item $outDll).Length) {
-        throw "Install did not take: $($landed.FullName) is $($landed.Length) bytes, expected $((Get-Item $outDll).Length)."
+    # By content, not by size. A whitespace-only change can produce a DLL of identical length,
+    # so a copy that silently did not take would have passed the old check.
+    $landedHash = (Get-FileHash $landed.FullName -Algorithm SHA256).Hash
+    $builtHash = (Get-FileHash $outDll -Algorithm SHA256).Hash
+    if ($landedHash -ne $builtHash) {
+        throw "Install did not take: $($landed.FullName) is $landedHash, expected $builtHash."
     }
     Write-Host "Installed to $plugins ($($landed.Length) bytes)" -ForegroundColor Green
 }

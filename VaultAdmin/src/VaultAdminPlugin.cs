@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.94.1";
+        public const string PluginVersion = "0.95.0";
 
         internal static ManualLogSource Log;
 
@@ -231,7 +231,6 @@ namespace VaultAdmin
         private static ConfigEntry<string> ToggleKey;
         private static ConfigEntry<bool> WriteIconReport;
         private static ConfigEntry<bool> PreviewWholeSheet;
-        private static ConfigEntry<bool> PreviewCopyGame;
 
         private static ConfigEntry<bool> IncidentsOff;
         private static ConfigEntry<bool> BottleAndCappyOff;
@@ -249,7 +248,7 @@ namespace VaultAdmin
 
         // Failures are logged once each. A panel that writes sixty lines a second destroys the very
         // evidence needed to work out what it is failing at.
-        private readonly HashSet<string> _reported = new HashSet<string>();
+        private static readonly HashSet<string> _reported = new HashSet<string>();
 
         private Rect _window = new Rect(40f, 40f, 470f, 700f);
         private Vector2 _scroll;
@@ -462,10 +461,6 @@ namespace VaultAdmin
             MaxDwellersWanted = Config.Bind("Powers", "MaxDwellers", 0,
                 "How many dwellers the vault will take. Zero leaves the game's own limit alone.");
 
-            PreviewCopyGame = Config.Bind("Diagnostics", "PreviewCopyGame", true,
-                "Takes the shape of the game's own dweller picture — its crop and proportions — for " +
-                "the constructor's figure, rather than choosing one here. Off, the settings below " +
-                "and above are used instead.");
 
             PreviewWholeSheet = Config.Bind("Diagnostics", "PreviewWholeSheet", false,
                 "Draws the whole of the dweller's composed picture in the constructor rather than " +
@@ -718,8 +713,13 @@ namespace VaultAdmin
                 string file = HudButtonImage.Value;
                 if (string.IsNullOrEmpty(file)) return false;
 
+                // The file name only. Path.Combine quietly drops the base directory when the
+                // second argument is rooted, so a config line naming an absolute path reached
+                // straight out of the plugin folder. Bounded rather than dangerous, but a mod has
+                // no business reading a file from wherever a config happens to point.
                 string path = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(Info.Location), file);
+                    System.IO.Path.GetDirectoryName(Info.Location),
+                    System.IO.Path.GetFileName(file));
 
                 if (!System.IO.File.Exists(path))
                 {
@@ -1114,7 +1114,10 @@ namespace VaultAdmin
 
                 if (removed.Length > 0) removed.Append(", ");
                 removed.Append(part.GetType().Name);
-                UnityEngine.Object.Destroy(part);
+
+                // Immediately. The clone is switched on three lines after this returns, and a
+                // deferred removal means every stripped behaviour still wakes up on an orphan.
+                UnityEngine.Object.DestroyImmediate(part);
             }
 
             if (removed.Length > 0) Log.LogInfo("Stripped from the cloned button: " + removed);
@@ -1195,7 +1198,7 @@ namespace VaultAdmin
             HoldCamera(false);
             DisposePreview();
             DropPreviewCamera();
-            SetRushDanger(true);
+            PutTheVaultBack();
         }
 
         private Camera _uiCamera;
@@ -1273,7 +1276,6 @@ namespace VaultAdmin
         private int _drawCheckFrames;
         private bool _drawChecked;
         private bool _nguiDrawing;     // false until the frame is seen with a draw call
-        private UIPanel _windowPanel;
         private object _font;            // UIFont or Font, whichever the game's labels use
         private int _fontSize = 28;
 
@@ -1304,7 +1306,6 @@ namespace VaultAdmin
         private int _cursorY;
         private int _scrollTop;
         private int _refreshFrames;
-        private int _filmFrames;
         private int _upkeepFrames;
         private Room[] _rushingRooms;
         private bool _texturedOnce;
@@ -1371,6 +1372,12 @@ namespace VaultAdmin
                     return false;
                 }
 
+                // Everything held from the last window belongs to widgets that no longer exist.
+                // Kept, they were worse than useless: the grant list counts its rows to decide how
+                // many to build, so 260 dead ones meant it built none and showed an empty tab with
+                // a confident number above it, for the rest of the session.
+                ForgetTheOldWindow();
+
                 BorrowFont();
 
                 // Everything drawn from here on is sized in interface units but rendered at the
@@ -1388,8 +1395,8 @@ namespace VaultAdmin
                 _nguiWindow.transform.localPosition = new Vector3(_windowX, 0f, 0f);
                 _nguiWindow.transform.localScale = Vector3.one;
 
-                _windowPanel = _nguiWindow.AddComponent<UIPanel>();
-                _windowPanel.depth = WindowDepth;
+                UIPanel windowPanel = _nguiWindow.AddComponent<UIPanel>();
+                windowPanel.depth = WindowDepth;
 
                 _frame = Plate(_nguiWindow.transform, "Frame", 0, 0, _windowWidth, _windowHeight,
                                Skin.Window(_windowWidth, _windowHeight), 0);
@@ -1431,10 +1438,27 @@ namespace VaultAdmin
             }
             catch (Exception e)
             {
-                Log.LogWarning("Could not build the window: " + e.Message);
+                Log.LogWarning("Could not build the window: " + e);
+
+                // Half a window is not something to keep. Left behind, it takes its rows and powers
+                // with it and every later attempt appends to them.
+                if (_nguiWindow != null) UnityEngine.Object.Destroy(_nguiWindow);
                 _nguiWindow = null;
+                ForgetTheOldWindow();
                 return false;
             }
+
+        }
+
+        /// <summary>Lets go of every widget the previous window owned.</summary>
+        private void ForgetTheOldWindow()
+        {
+            _itemRows.Clear();
+            _thumbs.Clear();
+            _powers.Clear();
+            _tabPages.Clear();
+            _tabButtons.Clear();
+            _resourceLabels.Clear();
         }
 
         // ---- scrolling ----
@@ -1818,7 +1842,7 @@ namespace VaultAdmin
                 for (int j = 0; j < words.Length; j++)
                 {
                     if (words[j].Length < 3) continue;
-                    if (Array.IndexOf(EmptyWords, words[j].ToLower()) >= 0) continue;
+                    if (Array.IndexOf(EmptyWords, words[j].ToLowerInvariant()) >= 0) continue;
                     kept.Add(words[j]);
                 }
             }
@@ -1891,7 +1915,7 @@ namespace VaultAdmin
                 List<UISpriteData> sprites = atlas.spriteList;
                 if (sprites == null) return;
 
-                string hint = what.ToLower();
+                string hint = what.ToLowerInvariant();
                 if (hint.StartsWith("box ")) hint = hint.Substring(4);
                 if (hint.Length > 5) hint = hint.Substring(0, 5);
 
@@ -1901,7 +1925,7 @@ namespace VaultAdmin
                 for (int i = 0; i < sprites.Count && shown < 12; i++)
                 {
                     if (sprites[i] == null || sprites[i].name == null) continue;
-                    if (sprites[i].name.ToLower().IndexOf(hint) < 0) continue;
+                    if (Missing(sprites[i].name, hint)) continue;
 
                     found += (found.Length > 0 ? ", " : "") + sprites[i].name;
                     shown++;
@@ -2005,15 +2029,6 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Sizes a sprite by the picture in it, ignoring the blank margins around it.
-        ///
-        /// A trimmed sprite keeps its margins separately and they are rarely even — ten pixels of
-        /// nothing on the left and none on the right is ordinary. Sizing by the padded box is right
-        /// for a row of items, where every picture should sit on the same grid; for a single icon in
-        /// a recess of its own it puts the picture off to one side, which is what an upward arrow
-        /// leaning right turned out to be.
-        /// </summary>
-        /// <summary>
         /// Sizes an icon by the whole of what is drawn, then slides it so the picture sits centred.
         ///
         /// Two things were fighting here. In Simple mode NGUI draws the padded rectangle, margins
@@ -2065,6 +2080,21 @@ namespace VaultAdmin
         }
 
         /// <summary>
+        /// Whether a name fails to contain what was typed, judged the same way in every locale.
+        ///
+        /// ToLower and IndexOf both follow the current culture. On a Turkish system a capital I
+        /// lowercases to a dotless i, so typing "i" in the FIND box matched nothing whose name
+        /// contained one — which is most of them.
+        /// </summary>
+        private static bool Missing(string name, string wanted)
+        {
+            if (string.IsNullOrEmpty(wanted)) return false;
+            if (string.IsNullOrEmpty(name)) return true;
+
+            return name.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        /// <summary>
         /// Sizes a sprite to fit a square without squashing it.
         ///
         /// A portrait is half as wide as it is tall, and forcing one into a square makes every face
@@ -2076,6 +2106,10 @@ namespace VaultAdmin
 
             try
             {
+                // Drawn whole, exactly as FitInk does. A sprite with a border is nine-sliced by
+                // default and its middle stretched to fill — the squashing that FitInk was written
+                // to stop, still happening to every caller that came through here instead.
+                sprite.type = UIBasicSprite.Type.Simple;
                 UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
                 if (data == null || data.width <= 0 || data.height <= 0)
                 {
@@ -2111,7 +2145,10 @@ namespace VaultAdmin
             icon.atlas = null;
             icon.spriteName = "";
 
-            Found found = FindIcon(candidates, "dweller");
+            // Keyed on what was actually asked for. Hardcoding "dweller" meant a second caller
+            // with different candidates would be handed the first caller's answer.
+            Found found = FindIcon(candidates,
+                                   candidates != null && candidates.Length > 0 ? candidates[0] : "icon");
             if (found == null) return;
 
             icon.atlas = found.Atlas;
@@ -2739,7 +2776,7 @@ namespace VaultAdmin
         {
             _shown.Clear();
 
-            string filter = _filter == null ? "" : _filter.Trim().ToLower();
+            string filter = _filter == null ? "" : _filter.Trim().ToLowerInvariant();
 
             if (_grantFamily == Family.Dweller)
             {
@@ -2750,7 +2787,7 @@ namespace VaultAdmin
                 for (int i = 0; i < Rarities.Length; i++)
                 {
                     string label = "Random " + Rarities[i] + " dweller";
-                    if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
+                    if (filter.Length > 0 && Missing(label, filter)) continue;
 
                     RandomDweller random = new RandomDweller();
                     random.Rarity = Rarities[i];
@@ -2768,7 +2805,7 @@ namespace VaultAdmin
 
                         string label = LegendName(legends[i]);
                         if (string.IsNullOrEmpty(label)) continue;
-                        if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
+                        if (filter.Length > 0 && Missing(label, filter)) continue;
 
                         _shown.Add(legends[i]);
                     }
@@ -2785,7 +2822,7 @@ namespace VaultAdmin
                     for (int i = 0; i < _petGroups.Count; i++)
                     {
                         if (filter.Length > 0 &&
-                            _petGroups[i].Name.ToLower().IndexOf(filter) < 0) continue;
+                            Missing(_petGroups[i].Name, filter)) continue;
                         _shown.Add(_petGroups[i]);
                     }
                 }
@@ -2799,7 +2836,7 @@ namespace VaultAdmin
                     {
                         CatalogueEntry entry = _catalogue[i];
                         if (entry.Type != _family) continue;
-                        if (filter.Length > 0 && entry.Name.ToLower().IndexOf(filter) < 0) continue;
+                        if (filter.Length > 0 && Missing(entry.Name, filter)) continue;
                         _shown.Add(entry);
                     }
                 }
@@ -2911,9 +2948,19 @@ namespace VaultAdmin
             }
 
             // The count belongs beside the family it counts, not on a pager that no longer exists.
+            // Says how many are actually on screen when the list is longer than the panel will
+            // build. It used to print the full count above a list cut to 260 and let the player
+            // work out the difference.
             if (_familyLabel != null)
-                _familyLabel.text = _grantFamily.ToString().ToUpper() +
-                                    (_shown.Count > 0 ? "  " + _shown.Count : "  NONE");
+            {
+                string tally;
+
+                if (_shown.Count <= 0) tally = "  NONE";
+                else if (_shown.Count > MaxGrantRows) tally = "  " + MaxGrantRows + " OF " + _shown.Count;
+                else tally = "  " + _shown.Count;
+
+                _familyLabel.text = _grantFamily.ToString().ToUpper() + tally;
+            }
         }
 
         // Pet art is not simply present the way item atlases are: it is loaded per type, on
@@ -3024,12 +3071,6 @@ namespace VaultAdmin
             }
         }
 
-        /// <summary>
-        /// What a pet actually does, which is the reason to pick one.
-        ///
-        /// Each carries a list of effects with a range apiece — happiness by so much, damage by so
-        /// much — and the breed alone said none of it.
-        /// </summary>
         /// <summary>
         /// A bonus written the way the game writes it, value and all.
         ///
@@ -3262,9 +3303,17 @@ namespace VaultAdmin
             RandomDweller random = thing as RandomDweller;
             if (random != null)
             {
+                // Borrowed for one dweller and handed straight back. Kept, granting a legendary
+                // from this list quietly re-set the bench's own rarity, and the bench went on
+                // showing whatever it showed before.
+                int was = _rarityIndex;
+
                 _rarityIndex = Array.IndexOf(Rarities, random.Rarity);
                 if (_rarityIndex < 0) _rarityIndex = 0;
+
                 CreateDweller(false);
+
+                _rarityIndex = was;
                 return;
             }
 
@@ -3286,7 +3335,6 @@ namespace VaultAdmin
         private UIInput _firstNameInput;
         private UIInput _lastNameInput;
         private UILabel _rarityLabel;
-        private UILabel _genderLabel;
         private UIInput _levelInput;
         private readonly UIInput[] _specialInputs = new UIInput[7];
         private int _dwellerLevelValue = 1;
@@ -3519,12 +3567,6 @@ namespace VaultAdmin
         private UISprite _petPickIcon;
 
         /// <summary>
-        /// The constructor: everything that is built to order rather than handed over as it stands.
-        ///
-        /// Both halves start at the same height and only one is ever shown, so neither leaves a gap
-        /// where the other would have been.
-        /// </summary>
-        /// <summary>
         /// The things that act on the whole vault at once.
         ///
         /// Everything here goes through the game's own methods — reviving, healing, levelling,
@@ -3678,6 +3720,7 @@ namespace VaultAdmin
         /// </summary>
         private void KeepThePowersOn()
         {
+            CheckWhichVault();
             if (SafeVault() == null) return;
 
             try
@@ -3699,7 +3742,10 @@ namespace VaultAdmin
                     object now = vault == null ? null : ReadObject(vault, "MaxDwellers");
 
                     if (now != null && Convert.ToInt32(now) != MaxDwellersWanted.Value)
+                    {
+                        if (_wasMaxDwellers < 0) _wasMaxDwellers = Convert.ToInt32(now);
                         WriteMember(vault, "MaxDwellers", MaxDwellersWanted.Value);
+                    }
                 }
             }
             catch (Exception e)
@@ -3712,6 +3758,73 @@ namespace VaultAdmin
         // game back rather than leaving it altered.
         private float _wasMinimumChance = -1f;
         private float _wasChancePerTier = -1f;
+
+        // The rest of what this panel changes about the vault, as it was before the change. Three
+        // of these switches used to be one-way: the mod could turn incidents off and then be
+        // uninstalled, leaving a vault that never has an incident again and nothing to say why.
+        private bool _wasIncidents, _knowIncidents;
+        private bool _wasPairLocked, _knowPairLocked;
+        private int _wasMaxDwellers = -1;
+
+        // Which vault those originals came from. A figure captured in one save is not the original
+        // of another, and writing it back into the wrong one is its own kind of damage.
+        private object _knownVault;
+
+        // Said once, and the sentence not even built the rest of the time. This runs every frame
+        // the bench is open, and a float turned into text sixty times a second to be thrown away
+        // is sixty allocations a second.
+        private static bool _reportedFilm;
+        private static Shader _plainShader;
+
+        /// <summary>
+        /// Forgets every saved original when the vault underneath us changes.
+        ///
+        /// Loading a second save brings a second set of figures; the first save's are no longer the
+        /// original of anything, and restoring them into the new vault would write one player's
+        /// numbers over another's.
+        /// </summary>
+        private void CheckWhichVault()
+        {
+            try
+            {
+                Vault now = SafeVault();
+                if (ReferenceEquals(now, _knownVault)) return;
+
+                _knownVault = now;
+                _wasMinimumChance = -1f;
+                _wasChancePerTier = -1f;
+                _knowIncidents = false;
+                _knowPairLocked = false;
+                _wasMaxDwellers = -1;
+            }
+            catch { }
+        }
+
+        /// <summary>Puts back everything this panel changed that the vault would otherwise keep.</summary>
+        private void PutTheVaultBack()
+        {
+            SetRushDanger(true);
+
+            try
+            {
+                if (_knowIncidents) SetIncidents(_wasIncidents);
+                if (_knowPairLocked) SetBottleAndCappy(_wasPairLocked);
+
+                if (_wasMaxDwellers >= 0)
+                {
+                    Vault vault = SafeVault();
+                    if (vault != null) WriteMember(vault, "MaxDwellers", _wasMaxDwellers);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not put the vault back: " + e);
+            }
+
+            _knowIncidents = false;
+            _knowPairLocked = false;
+            _wasMaxDwellers = -1;
+        }
 
         /// <summary>
         /// Sets the rush failure chance to nothing, or puts it back.
@@ -3775,6 +3888,11 @@ namespace VaultAdmin
         /// <summary>Holds the failure chance down for every room that is being rushed right now.</summary>
         private void GuardTheRushes()
         {
+            ResetRushChances(true);
+        }
+
+        private void ResetRushChances(bool onlyRushing)
+        {
             try
             {
                 if (_rushingRooms == null)
@@ -3798,10 +3916,17 @@ namespace VaultAdmin
                 for (int i = 0; i < _rushingRooms.Length; i++)
                 {
                     Room room = _rushingRooms[i];
-                    if (room == null || !room.IsRushing) continue;
+                    if (room == null) continue;
+                    if (onlyRushing && !room.IsRushing) continue;
 
+                    // Every frame, so a shout here would fill the log; but a switch that reads ON
+                    // over rushes that still fail is worse than a noisy log, and this used to say
+                    // nothing at all.
                     try { _rushReset.Invoke(room, null); }
-                    catch { }
+                    catch (Exception e)
+                    {
+                        ReportOnce("rushinvoke", "The game refused to reset a rush chance: " + e);
+                    }
                 }
             }
             catch (Exception e)
@@ -3812,31 +3937,18 @@ namespace VaultAdmin
 
         private MethodInfo _rushReset;
 
-        private int ClearRushChances()
+        /// <summary>
+        /// Clears the accumulated rush chance on every room in the vault.
+        ///
+        /// The same work the per-frame guard does, over every room rather than only the ones
+        /// rushing right now. It was a second copy of that method with its own lookup, its own
+        /// silent catch and a count both its callers threw away; now it is the same code with the
+        /// filter switched off.
+        /// </summary>
+        private void ClearRushChances()
         {
-            int cleared = 0;
-
-            try
-            {
-                MethodInfo reset = typeof(Room).GetMethod(
-                    "Cheat_ResetRushFailureChance",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (reset == null) return 0;
-
-                Room[] rooms = Resources.FindObjectsOfTypeAll<Room>();
-
-                for (int i = 0; i < rooms.Length; i++)
-                {
-                    if (rooms[i] == null || !rooms[i].gameObject.activeInHierarchy) continue;
-
-                    try { reset.Invoke(rooms[i], null); cleared++; }
-                    catch { }
-                }
-            }
-            catch { }
-
-            return cleared;
+            _rushingRooms = null;
+            ResetRushChances(false);
         }
 
         private UIInput _populationInput;
@@ -3992,7 +4104,15 @@ namespace VaultAdmin
             try
             {
                 BottleAndCappyMgr pair = BottleAndCappyMgr.Instance;
-                return pair != null && WriteMember(pair, "m_locked", locked);
+                if (pair == null) return false;
+
+                if (!_knowPairLocked)
+                {
+                    object was = ReadObject(pair, "m_locked");
+                    if (was is bool) { _wasPairLocked = (bool)was; _knowPairLocked = true; }
+                }
+
+                return WriteMember(pair, "m_locked", locked);
             }
             catch { return false; }
         }
@@ -4171,6 +4291,12 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 object state = vault == null ? null : ReadObject(vault, "EmergencyState");
                 if (state == null) return false;
+
+                if (!_knowIncidents)
+                {
+                    object was = ReadObject(state, "Enabled");
+                    if (was is bool) { _wasIncidents = (bool)was; _knowIncidents = true; }
+                }
 
                 return WriteMember(state, "Enabled", on);
             }
@@ -4418,6 +4544,12 @@ namespace VaultAdmin
                     return;
                 }
 
+                if (_wasMaxDwellers < 0)
+                {
+                    object was = ReadObject(vault, "MaxDwellers");
+                    if (was != null) _wasMaxDwellers = Convert.ToInt32(was);
+                }
+
                 if (!WriteMember(vault, "MaxDwellers", wanted))
                 {
                     Trouble("The population limit cannot be set from here.");
@@ -4456,6 +4588,12 @@ namespace VaultAdmin
             return true;
         }
 
+        /// <summary>
+        /// The constructor: everything that is built to order rather than handed over as it stands.
+        ///
+        /// Both halves start at the same height and only one is ever shown, so neither leaves a gap
+        /// where the other would have been.
+        /// </summary>
         private void BuildCreatePage(Transform page)
         {
             int width = _windowWidth - Margin * 2;
@@ -5219,6 +5357,11 @@ namespace VaultAdmin
             {
                 GameObject body = _previewDweller.gameObject;
 
+                // The next stand-in is a different figure and deserves its own framing. Kept, the
+                // camera held the first one's height and centre for the rest of the session, so a
+                // change of gender put the new figure slightly off.
+                _framedSize = -1f;
+
                 if (_standInLayer >= 0)
                 {
                     SetLayer(body.transform, _standInLayer);
@@ -5387,8 +5530,7 @@ namespace VaultAdmin
                 if (late > 0)
                     Log.LogWarning("Took " + late + " more visibility watcher(s) off just in time.");
 
-                if (body.GetComponentInChildren(typeof(MonoBehaviour)) != null &&
-                    StillWatching(body))
+                if (StillWatching(body))
                 {
                     ReportOnce("watcher", "A visibility watcher is still on the stand-in; " +
                                           "not filming, because it stops the game when it is seen.");
@@ -5397,8 +5539,12 @@ namespace VaultAdmin
 
                 _previewCamera.Render();
 
-                ReportOnce("filmed", "Filmed the stand-in at camera size " +
-                                     _previewCamera.orthographicSize + ".");
+                if (!_reportedFilm)
+                {
+                    _reportedFilm = true;
+                    Log.LogInfo("Filmed the stand-in at camera size " +
+                                _previewCamera.orthographicSize + ".");
+                }
                 return true;
             }
             catch (Exception e)
@@ -5445,7 +5591,10 @@ namespace VaultAdmin
                     taken++;
                 }
             }
-            catch { }
+            catch (Exception e)
+            {
+                ReportOnce("silence", "Could not take " + component + " off the stand-in: " + e);
+            }
 
             return taken;
         }
@@ -5460,7 +5609,15 @@ namespace VaultAdmin
                     if (parts[i] != null && parts[i].GetType().Name == "DwellerVisibilityDetector")
                         return true;
             }
-            catch { }
+            catch (Exception e)
+            {
+                // Fails closed. This is the last thing standing between the camera and a crash
+                // that has already happened twice, and it used to answer "nothing is watching"
+                // whenever it could not tell — which is the one answer it must never guess.
+                ReportOnce("watchcheck", "Could not tell whether a watcher is still on the " +
+                                         "stand-in, so assuming there is one: " + e);
+                return true;
+            }
 
             return false;
         }
@@ -5539,10 +5696,17 @@ namespace VaultAdmin
             {
                 // The film is an ordinary texture, so the widget goes back to drawing one plainly
                 // rather than wearing the dweller's own material.
-                _previewPicture.material = null;
+                // Both of these are per-frame work for a result that never changes: assigning
+                // the material marks the widget dirty every frame, and Shader.Find is a
+                // string-keyed lookup. Done once, when the picture is actually still wearing the
+                // dweller's own material.
+                if (_previewPicture.material != null)
+                {
+                    _previewPicture.material = null;
 
-                Shader plain = Shader.Find("Unlit/Transparent Colored");
-                if (plain != null) _previewPicture.shader = plain;
+                    if (_plainShader == null) _plainShader = Shader.Find("Unlit/Transparent Colored");
+                    if (_plainShader != null) _previewPicture.shader = _plainShader;
+                }
 
                 _previewPicture.mainTexture = _previewFilm;
                 _previewPicture.uvRect = new Rect(0f, 0f, 1f, 1f);
@@ -5636,13 +5800,6 @@ namespace VaultAdmin
             }
         }
 
-        /// <summary>
-        /// Sizes the picture to whatever shape the dweller's own texture is.
-        ///
-        /// The widget was a guess at a portrait and the picture came out cropped to a head. The
-        /// material and the UV rect between them say exactly what shape it should be, so they are
-        /// asked rather than guessed at.
-        /// </summary>
         /// <summary>
         /// Writes down every piece the dweller is made of and every texture the shader was handed.
         ///
@@ -5841,12 +5998,6 @@ namespace VaultAdmin
             _previewHeadgear.gameObject.SetActive(false);
         }
 
-        /// <summary>
-        /// One thing the dweller carries, shown as a slot with the picture large.
-        ///
-        /// An item is recognised by its picture long before its name is read, and the row it used to
-        /// sit in gave it twenty pixels to be recognised in.
-        /// </summary>
         /// <summary>
         /// One thing the dweller carries, laid out the way the game lays out a card.
         ///
@@ -6123,7 +6274,6 @@ namespace VaultAdmin
                 if (text != null) text.text = Genders[_genderIndex].ToString().ToUpper();
             }
 
-            if (_genderLabel != null) _genderLabel.text = Genders[_genderIndex].ToString();
 
             RebuildLookOptions();
             RemakePreview();
@@ -6224,7 +6374,9 @@ namespace VaultAdmin
             _resourceLabels[resource] = MakeRightLabel(parent, "Value_" + resource, "-",
                                                        right, top, 160, 26, Skin.Bright, 3);
 
-            // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
+            // A copy the handler owns. The hazard the comment here used to describe — C# 5
+            // sharing a foreach variable — is real, but not at this line: resource is a parameter,
+            // already one per call. The real one is the amount below, declared inside its loop.
             EResource captured = resource;
 
             float[] amounts = AmountsFor(resource);
@@ -6790,15 +6942,6 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Reads the game's own item tables.
-        ///
-        /// The identifier differs per family and neither Name nor CodeId is it. Weapons are found
-        /// by a search comparing WeaponId; outfits by a dictionary keyed on the private field
-        /// m_outfitId, which has no Id-suffixed property at all. Both were read out of the IL of
-        /// ItemParameters rather than guessed, because an id the game cannot resolve produces an
-        /// item with no data behind it.
-        /// </summary>
-        /// <summary>
         /// Writes down every name the catalogue asks for and every name the atlases hold.
         ///
         /// Four rounds have now been spent on sprite names, each one a guess corrected by the next.
@@ -6891,6 +7034,15 @@ namespace VaultAdmin
             if (count > 8) text.AppendLine("          ... and " + (count - 8) + " more");
         }
 
+        /// <summary>
+        /// Reads the game's own item tables.
+        ///
+        /// The identifier differs per family and neither Name nor CodeId is it. Weapons are found
+        /// by a search comparing WeaponId; outfits by a dictionary keyed on the private field
+        /// m_outfitId, which has no Id-suffixed property at all. Both were read out of the IL of
+        /// ItemParameters rather than guessed, because an id the game cannot resolve produces an
+        /// item with no data behind it.
+        /// </summary>
         private void BuildCatalogue()
         {
             _catalogue = new List<CatalogueEntry>();
@@ -7904,7 +8056,12 @@ namespace VaultAdmin
                 GUILayout.Label(Specials[i].ToString().Substring(0, 1), GUILayout.Width(12f));
                 string text = GUILayout.TextField(_special[i].ToString(), GUILayout.Width(26f));
                 int parsed;
-                if (int.TryParse(text, out parsed)) _special[i] = parsed;
+
+                // The same bounds the panel applies. This is the screen a player only ever sees
+                // when something has already gone wrong, and it was the one that would put a
+                // strength of minus five into their save.
+                if (int.TryParse(text, out parsed))
+                    _special[i] = Mathf.Clamp(parsed, 1, MaxSpecial);
             }
             GUILayout.EndHorizontal();
 
@@ -8041,6 +8198,7 @@ namespace VaultAdmin
                     if (!string.IsNullOrEmpty(_dwellerLast)) dweller.LastName = _dwellerLast;
 
                     if (!int.TryParse(_dwellerLevel, out level) || level < 1) level = 1;
+            level = Mathf.Min(level, 50);
                     ApplyLevel(dweller, level);
 
                     ApplySpecial(dweller);
@@ -8483,7 +8641,7 @@ namespace VaultAdmin
             catch (Exception e) { ReportOnce("dwellers", "Could not reach the dwellers: " + e.Message); return null; }
         }
 
-        private void ReportOnce(string key, string message)
+        private static void ReportOnce(string key, string message)
         {
             if (_reported.Add(key)) Log.LogWarning(message);
         }

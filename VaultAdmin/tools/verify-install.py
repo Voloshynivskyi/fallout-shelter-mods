@@ -35,7 +35,11 @@ REQUIRED = [
 
 # A control. If this is ever found, the search is matching noise and every other answer here is
 # worthless.
-ABSENT = "ZZ_THIS_STRING_IS_NOT_IN_THE_BUILD_ZZ"
+# A control has to be capable of being found. A thirty-character unique token never appears by
+# chance in any file, so testing for it proved nothing at all — it reported rigour and delivered
+# none. This is a marker for a feature that was removed, in the same character class and the same
+# encodings as the real ones: if the search is matching noise, this is what it will match.
+ABSENT = "PreviewCopyGame"
 
 
 def views(raw):
