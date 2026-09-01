@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.64.0";
+        public const string PluginVersion = "0.65.0";
 
         internal static ManualLogSource Log;
 
@@ -3938,6 +3938,7 @@ namespace VaultAdmin
                     _previewDweller = kept;
                     // Dressed again from the panel: it was put away wearing whatever was chosen
                     // last time, and the choices on screen are what it should be wearing now.
+                    Silence(kept.gameObject, "DwellerVisibilityDetector");
                     ApplyLooks(_previewDweller);
 
                     Log.LogInfo("Reusing the stand-in for " + kind + ".");
@@ -3945,7 +3946,14 @@ namespace VaultAdmin
                 }
 
                 _previewDweller = make.Invoke(pool, new object[] { Genders[_genderIndex] }) as Dweller;
-                if (_previewDweller != null) _standIns[kind] = _previewDweller;
+
+                if (_previewDweller != null)
+                {
+                    _standIns[kind] = _previewDweller;
+
+                    int taken = Silence(_previewDweller.gameObject, "DwellerVisibilityDetector");
+                    Log.LogInfo("Took " + taken + " visibility watcher(s) off the stand-in.");
+                }
 
                 // A pooled dweller has no pieces on it. UpdateTexture does not compose one picture —
                 // it hands the shader a texture per piece, hair here, face there — so with nothing
@@ -4208,13 +4216,17 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Switches off a component by name, wherever it is on the object.
+        /// Takes a component off the stand-in for good, by name.
         ///
-        /// Reached by name because it belongs to the game and not to this: the point is only that
-        /// it should not run while the thing it watches is being handed back.
+        /// DwellerVisibilityDetector throws the moment anything sees the stand-in or stops seeing
+        /// it — it threw when the pool switched the object off, and it threw again when this mod's
+        /// own camera looked at it. Disabling was not enough and would not have been honest anyway:
+        /// the stand-in is never given back, so the watcher on it has nothing left to watch.
         /// </summary>
-        private static void Silence(GameObject body, string component)
+        private static int Silence(GameObject body, string component)
         {
+            int taken = 0;
+
             try
             {
                 MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
@@ -4225,9 +4237,13 @@ namespace VaultAdmin
                     if (parts[i].GetType().Name != component) continue;
 
                     parts[i].enabled = false;
+                    UnityEngine.Object.Destroy(parts[i]);
+                    taken++;
                 }
             }
             catch { }
+
+            return taken;
         }
 
         private static void SetLayer(Transform branch, int layer)
