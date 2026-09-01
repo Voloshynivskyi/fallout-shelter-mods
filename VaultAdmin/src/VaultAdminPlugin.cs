@@ -47,6 +47,19 @@ namespace VaultAdmin
         public static Texture2D Frame(int width, int height, int radius, int thickness,
                                       Color edge, Color inside)
         {
+            return Frame(width, height, radius, thickness, edge, inside, Clear, 0);
+        }
+
+        /// <summary>
+        /// The same, with a second edge outside the first.
+        ///
+        /// The game's windows are outlined twice — a bright line with a darker one around it — and
+        /// a single line beside them reads as a rectangle drawn on top of the game rather than a
+        /// panel belonging to it.
+        /// </summary>
+        public static Texture2D Frame(int width, int height, int radius, int thickness,
+                                      Color edge, Color inside, Color outer, int outerThickness)
+        {
             width = Mathf.Max(1, width);
             height = Mathf.Max(1, height);
 
@@ -55,9 +68,12 @@ namespace VaultAdmin
             float r = Mathf.Clamp(radius * Scale, 0f, Mathf.Min(w, h) / 2f);
             float t = Mathf.Max(1f, thickness * Scale);
 
-            string key = w + "x" + h + "r" + radius + "t" + thickness +
+            float ot = Mathf.Max(0f, outerThickness * Scale);
+
+            string key = w + "x" + h + "r" + radius + "t" + thickness + "o" + outerThickness +
                          "e" + ColorUtility.ToHtmlStringRGBA(edge) +
-                         "i" + ColorUtility.ToHtmlStringRGBA(inside);
+                         "i" + ColorUtility.ToHtmlStringRGBA(inside) +
+                         "u" + ColorUtility.ToHtmlStringRGBA(outer);
 
             Texture2D cached;
             if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
@@ -88,9 +104,12 @@ namespace VaultAdmin
                     if (r <= 0f) coverage = 1f;
 
                     float near = Mathf.Min(Mathf.Min(x, y), Mathf.Min(w - 1 - x, h - 1 - y));
-                    bool onEdge = near < t || d > r - t;
 
-                    Color colour = onEdge ? edge : inside;
+                    Color colour;
+                    if (ot > 0f && (near < ot || d > r - ot)) colour = outer;
+                    else if (near < ot + t || d > r - ot - t) colour = edge;
+                    else colour = inside;
+
                     colour.a *= coverage;
 
                     pixels[y * w + x] = colour;
@@ -106,7 +125,7 @@ namespace VaultAdmin
         /// <summary>The window plate: bright outline, dimmed interior.</summary>
         public static Texture2D Window(int width, int height)
         {
-            return Frame(width, height, 18, 3, Bright, Plate);
+            return Frame(width, height, 18, 3, Bright, Plate, Ink, 2);
         }
 
         /// <summary>An ordinary button: outlined, nothing behind it. Frequent, reversible actions.</summary>
@@ -162,7 +181,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.30.0";
+        public const string PluginVersion = "0.31.0";
 
         internal static ManualLogSource Log;
 
@@ -1204,9 +1223,18 @@ namespace VaultAdmin
                 ShowTab(_tab);
             RefreshThings();
 
-                MakeButton(_nguiWindow.transform, "Close", "CLOSE",
-                           _windowWidth / 2 - 78, -_windowHeight / 2 + 34, 128, 46,
-                           true, TogglePanel);
+                // On the bottom edge, as the title is on the top one: outlined rather than solid,
+                // smaller than it was, and lettered large enough to read as the way out.
+                GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
+                                              0, -_windowHeight / 2, 148, 48, false, TogglePanel);
+
+                UILabel closeText = close.GetComponentInChildren<UILabel>();
+                if (closeText != null)
+                {
+                    closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
+                    closeText.effectStyle = UILabel.Effect.Outline;
+                    closeText.effectColor = Skin.Ink;
+                }
 
                 _nguiWindow.SetActive(false);
                 Log.LogInfo("Built the panel window under " + root.name + ".");
@@ -1447,42 +1475,60 @@ namespace VaultAdmin
                 List<UISpriteData> list = SpritesOf(atlas);
                 if (list == null || list.Count == 0) return null;
 
+                // The same name in a different case. The interface's own dweller icon is
+                // 'Icon_dweller' with a small d, and an exact lookup for 'Icon_Dweller' finds
+                // nothing at all.
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i] == null || list[i].name == null) continue;
+                    if (string.Equals(list[i].name, wanted, StringComparison.OrdinalIgnoreCase))
+                        return list[i].name;
+                }
+
                 string[] parts = Meaningful(wanted);
                 if (parts.Length == 0) return null;
 
-                // The longest word is the one that says which picture this is; the rest say what
-                // kind of picture it is. Matching on the rest alone is how a request for the
+                // Each word in turn as the one that must be present, longest first. Insisting on
+                // the longest alone was too strict — 'NormalClothing' is drawn as 'Normal', and
+                // 'Casual01' as 'Casual' — while insisting on none at all was how a request for the
                 // dwellers icon came back with a mushroom cloud, because both are an 'icon'.
-                string key = parts[0];
-                for (int i = 1; i < parts.Length; i++)
-                    if (parts[i].Length > key.Length) key = parts[i];
+                Array.Sort(parts, LongestFirst);
 
-                string best = null;
-                int bestScore = 0;
-
-                for (int i = 0; i < list.Count; i++)
+                for (int k = 0; k < parts.Length; k++)
                 {
-                    if (list[i] == null || string.IsNullOrEmpty(list[i].name)) continue;
-                    if (list[i].name.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    string best = null;
+                    int bestScore = 0;
 
-                    int score = 0;
-                    for (int j = 0; j < parts.Length; j++)
-                        if (list[i].name.IndexOf(parts[j], StringComparison.OrdinalIgnoreCase) >= 0)
-                            score++;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i] == null || string.IsNullOrEmpty(list[i].name)) continue;
+                        if (list[i].name.IndexOf(parts[k], StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
 
-                    if (score > bestScore) { bestScore = score; best = list[i].name; }
-                }
+                        int score = 0;
+                        for (int j = 0; j < parts.Length; j++)
+                            if (list[i].name.IndexOf(parts[j], StringComparison.OrdinalIgnoreCase) >= 0)
+                                score++;
 
-                if (best != null)
-                {
-                    ReportOnce("match_" + atlas.name + "_" + wanted,
-                               "'" + atlas.name + "' has no '" + wanted + "'; using '" + best + "'.");
-                    return best;
+                        if (score > bestScore) { bestScore = score; best = list[i].name; }
+                    }
+
+                    if (best != null)
+                    {
+                        ReportOnce("match_" + atlas.name + "_" + wanted,
+                                   "'" + atlas.name + "' has no '" + wanted + "'; using '" + best + "'.");
+                        return best;
+                    }
                 }
             }
             catch { }
 
             return null;
+        }
+
+        private static int LongestFirst(string a, string b)
+        {
+            return b.Length.CompareTo(a.Length);
         }
 
         // Words that say what kind of picture something is rather than which picture it is. A
@@ -1493,6 +1539,34 @@ namespace VaultAdmin
             "common", "default", "new", "old", "small", "big", "the"
         };
 
+        private static string[] SplitWords(string token)
+        {
+            if (string.IsNullOrEmpty(token)) return new string[0];
+
+            List<string> words = new List<string>();
+            string current = "";
+
+            for (int i = 0; i < token.Length; i++)
+            {
+                char c = token[i];
+
+                if (char.IsDigit(c)) continue;                       // a variant number, not a word
+
+                if (char.IsUpper(c) && current.Length > 1)
+                {
+                    words.Add(current);
+                    current = "";
+                }
+
+                current += c;
+            }
+
+            if (current.Length > 0) words.Add(current);
+            if (words.Count == 0) words.Add(token);
+
+            return words.ToArray();
+        }
+
         private static string[] Meaningful(string name)
         {
             if (string.IsNullOrEmpty(name)) return new string[0];
@@ -1502,9 +1576,17 @@ namespace VaultAdmin
 
             for (int i = 0; i < raw.Length; i++)
             {
-                if (raw[i].Length < 3) continue;
-                if (Array.IndexOf(EmptyWords, raw[i].ToLower()) >= 0) continue;
-                kept.Add(raw[i]);
+                // Trailing digits number a variant rather than name it: ten Casual outfits are all
+                // drawn as one 'Casual'. And a run-together name is two words to everyone but the
+                // string: NormalClothing is drawn as 'Normal'.
+                string[] words = SplitWords(raw[i]);
+
+                for (int j = 0; j < words.Length; j++)
+                {
+                    if (words[j].Length < 3) continue;
+                    if (Array.IndexOf(EmptyWords, words[j].ToLower()) >= 0) continue;
+                    kept.Add(words[j]);
+                }
             }
 
             return kept.ToArray();
@@ -1611,11 +1693,39 @@ namespace VaultAdmin
             }
         }
 
+        // Icon_dwellerPlain, with a small d, as the atlas itself spells it.
         private static readonly string[] DwellerSprites =
         {
-            "Icon_Dwellers", "Icon_Dweller", "Dwellers", "Dweller",
-            "Icon_population", "Population", "VaultBoy", "Vaultboy"
+            "Icon_dwellerPlain", "Icon_dweller", "new_dweller"
         };
+
+        /// <summary>
+        /// A named dweller's own portrait.
+        ///
+        /// The game keeps one for each of them in an atlas of its own, filed under the name with an
+        /// L for legendary in front of it — sometimes with the spaces kept, sometimes without. So
+        /// both are asked for, and the word matcher covers the rest.
+        /// </summary>
+        private void ShowLegendIcon(UISprite icon, string who)
+        {
+            if (icon == null) return;
+
+            if (string.IsNullOrEmpty(who))
+            {
+                ShowMenuIcon(icon, DwellerSprites);
+                return;
+            }
+
+            Found found = FindIcon(new[] { "L_" + who, "L_" + who.Replace(" ", "") }, "legend " + who);
+            if (found == null)
+            {
+                ShowMenuIcon(icon, DwellerSprites);
+                return;
+            }
+
+            icon.atlas = found.Atlas;
+            icon.spriteName = found.Sprite;
+        }
 
         /// <summary>Puts one of the interface's own icons on a row that has no art of its own.</summary>
         private void ShowMenuIcon(UISprite icon, string[] candidates)
@@ -2124,9 +2234,10 @@ namespace VaultAdmin
                 UniqueDwellerData legend = thing as UniqueDwellerData;
                 if (legend != null)
                 {
-                    row.Name.text = LegendName(legend);
+                    string who = LegendName(legend);
+                    row.Name.text = who;
                     row.Stats.text = "LEGENDARY  brings its own look and stats";
-                    ShowMenuIcon(row.Icon, DwellerSprites);
+                    ShowLegendIcon(row.Icon, who);
                     continue;
                 }
 
@@ -2273,6 +2384,11 @@ namespace VaultAdmin
             }
 
             string chosen = BestSprite(atlas, entry.Sprite);
+
+            // Ten of the outfits name no art at all. Their pictures are in the atlas under the
+            // name the item goes by, so that is what is asked for when the record says nothing.
+            if (string.IsNullOrEmpty(chosen)) chosen = BestSprite(atlas, entry.Name);
+
             if (string.IsNullOrEmpty(chosen))
             {
                 ReportOnce("itemsprite_" + entry.Type,
@@ -3404,6 +3520,11 @@ namespace VaultAdmin
                     // nothing. Offering to hand someone their own fists is not a thing the panel
                     // should do, and the game names both of them for us.
                     if (IsDefaultKit(id)) continue;
+
+                    // The ten costume_NN outfits list as Casual01 to Casual10, name no art, and do
+                    // not arrive when granted. They are dressing for something else in the game,
+                    // not stock a vault can hold.
+                    if (id.StartsWith("costume_", StringComparison.OrdinalIgnoreCase)) continue;
 
                     // The Name property returns the data object's own name, which in these tables
                     // is a bare number. Every family carries a GetName that does the lookup properly.
