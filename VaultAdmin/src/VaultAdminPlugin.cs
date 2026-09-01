@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.57.0";
+        public const string PluginVersion = "0.58.0";
 
         internal static ManualLogSource Log;
 
@@ -3143,6 +3143,7 @@ namespace VaultAdmin
         private sealed class Choice
         {
             public string Caption;
+            public UILabel Title;      // the parameter's name, and how far through its list you are
             public UILabel Display;
 
             // Some choices are better looked at than read: a colour is a colour, and an outfit is
@@ -3154,6 +3155,7 @@ namespace VaultAdmin
             // Some options are colours without being one: a record that stands for a shade. This
             // asks whoever filled the list what colour an option means.
             public Func<object, Color?> SwatchOf;
+            public bool SwatchIsTheAnswer;
             public readonly List<object> Options = new List<object>();
             public readonly List<string> Labels = new List<string>();
             public int Index;
@@ -3174,30 +3176,32 @@ namespace VaultAdmin
             public void Show()
             {
                 if (Display != null)
+                    Display.text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
+
+                // The count belongs beside the thing being counted — the name of the parameter —
+                // not tacked onto whichever value happens to be showing. Counted from nought,
+                // because the first entry is a real choice, not the absence of one.
+                if (Title != null)
                 {
-                    string text = Index >= 0 && Index < Labels.Count ? Labels[Index] : "-";
-
-                    // Where you are in the list, and how much of it there is. Without it every
-                    // choice is a walk in the dark: no telling whether there are three more or
-                    // forty.
-                    // Counted from nought, because the first entry is a real choice — leave it
-                    // alone — and not an absence of one.
                     int total = Options.Count - 1;
-                    if (total > 0) text += "   " + Index + "/" + total;
-
-                    Display.text = text;
+                    Title.text = total > 0 ? Caption + "   " + Index + "/" + total : Caption;
                 }
 
                 object chosen = Selected;
 
+                Color? shade = chosen is Color ? (Color)chosen : (Color?)null;
+                if (shade == null && SwatchOf != null && chosen != null) shade = SwatchOf(chosen);
+
                 if (Swatch != null)
                 {
-                    Color? shade = chosen is Color ? (Color)chosen : (Color?)null;
-                    if (shade == null && SwatchOf != null && chosen != null) shade = SwatchOf(chosen);
-
                     Swatch.gameObject.SetActive(shade != null);
                     if (shade != null) Swatch.color = shade.Value;
                 }
+
+                // Where a swatch says everything, the words are in the way — except when there is
+                // no colour to show, and then the words are all there is.
+                if (Display != null && SwatchIsTheAnswer)
+                    Display.gameObject.SetActive(shade == null);
 
                 if (OnChange != null) OnChange();
             }
@@ -3242,6 +3246,8 @@ namespace VaultAdmin
                                             Skin.Bright, 3);
             caption.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.7f));
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+            caption.maxLineCount = 1;
+            choice.Title = caption;
 
             Choice captured = choice;
 
@@ -3259,11 +3265,18 @@ namespace VaultAdmin
 
             if (swatchOnly)
             {
-                // A shade has no name worth reading. The colour is the answer.
+                // A shade has no name worth reading, but 'the one it was born with' does, and that
+                // is the entry with no colour behind it.
                 choice.Swatch = Plate(parent, "CompactSwatch_" + choice.Caption, centreX, lower,
                                       Mathf.Min(span, 96), Mathf.Min(22, arrow - 4),
                                       Skin.Solid(), 3);
                 choice.Swatch.gameObject.SetActive(false);
+
+                choice.Display = MakeLabel(parent, "CompactValue_" + choice.Caption, "-",
+                                           centreX, lower, span, 22, Skin.Bright, 3);
+                choice.Display.fontSize = Mathf.Max(12, Mathf.RoundToInt(_fontSize * 0.8f));
+                choice.Display.maxLineCount = 1;
+                choice.SwatchIsTheAnswer = true;
             }
             else
             {
@@ -3284,8 +3297,9 @@ namespace VaultAdmin
             Plate(parent, "Choice_" + choice.Caption, 0, y, width, RowHeight,
                   Skin.Row(width, RowHeight), 1);
 
-            MakeLeftLabel(parent, "ChoiceName_" + choice.Caption, choice.Caption,
-                          -width / 2 + 14, y, 130, RowHeight, Skin.Bright, 3);
+            choice.Title = MakeLeftLabel(parent, "ChoiceName_" + choice.Caption, choice.Caption,
+                                         -width / 2 + 14, y, 190, RowHeight, Skin.Bright, 3);
+            choice.Title.maxLineCount = 1;
 
             Choice captured = choice;
             MakeButton(parent, "ChoiceBack_" + choice.Caption, "<", width / 2 - 178, y, 40, 32,
@@ -3574,7 +3588,7 @@ namespace VaultAdmin
             _face.Begin("random");
             _hairColour.Begin("random");
             _helmet.Begin("none");
-            _skin.Begin("random");
+            _skin.Begin("base");
 
             try
             {
@@ -3831,6 +3845,7 @@ namespace VaultAdmin
         }
 
         private Dweller _previewDweller;
+        private bool _reportedPieces;
         private UITexture _previewPicture;
         private UITexture _previewHeadgear;
 
@@ -4045,6 +4060,8 @@ namespace VaultAdmin
 
                 draw.Invoke(_previewDweller, new object[] { _previewPicture, _previewHeadgear });
                 FitPreview();
+
+                if (!_reportedPieces) { _reportedPieces = true; ReportPieces(); }
             }
             catch (Exception e)
             {
@@ -4101,6 +4118,64 @@ namespace VaultAdmin
         /// material and the UV rect between them say exactly what shape it should be, so they are
         /// asked rather than guessed at.
         /// </summary>
+        /// <summary>
+        /// Writes down every piece the dweller is made of and every texture the shader was handed.
+        ///
+        /// Four attempts at the head have each been a theory about which piece was missing. This
+        /// stops the theorising: the material's own texture properties say what is bound and what is
+        /// empty, and the dweller's fields say which pieces it thinks it has.
+        /// </summary>
+        private void ReportPieces()
+        {
+            if (_previewDweller == null) return;
+
+            try
+            {
+                string pieces = "";
+                string[] names = { "m_hair", "m_face", "m_faceMask", "m_body", "m_outfit",
+                                   "m_helmet", "m_overrideFace", "m_helmetCoverCustomization" };
+
+                for (int i = 0; i < names.Length; i++)
+                {
+                    object piece = ReadObject(_previewDweller, names[i]);
+                    UnityEngine.Object asset = piece as UnityEngine.Object;
+
+                    pieces += (pieces.Length > 0 ? ", " : "") + names[i] + "=" +
+                              (asset == null ? "none" : asset.name);
+                }
+
+                Log.LogInfo("The stand-in is made of: " + pieces);
+
+                DwellerItem worn = _previewDweller.EquippedOutfit;
+                Log.LogInfo("  it is wearing " + (worn == null ? "nothing" : worn.Id) +
+                            ", child=" + ReadAsText(_previewDweller, "IsChild") +
+                            ", active=" + _previewDweller.gameObject.activeSelf);
+
+                Material paint = _previewPicture == null ? null : _previewPicture.material;
+                if (paint == null) { Log.LogInfo("  the picture has no material."); return; }
+
+                string bound = "";
+                string[] properties = paint.GetTexturePropertyNames();
+
+                for (int i = 0; i < properties.Length; i++)
+                {
+                    Texture held = paint.GetTexture(properties[i]);
+                    bound += "\n      " + properties[i] + " = " +
+                             (held == null
+                                  ? "empty"
+                                  : held.name + " " + held.width + "x" + held.height +
+                                    " offset " + paint.GetTextureOffset(properties[i]) +
+                                    " scale " + paint.GetTextureScale(properties[i]));
+                }
+
+                Log.LogInfo("  the shader was handed:" + bound);
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not read the stand-in apart: " + e.Message);
+            }
+        }
+
         private void FitPreview()
         {
             if (_previewPicture == null) return;
@@ -4279,8 +4354,10 @@ namespace VaultAdmin
             UILabel caption = MakeLeftLabel(parent, "SlotName_" + choice.Caption, choice.Caption,
                                             textLeft, y + height / 2 - 12, textWidth, 14,
                                             Skin.Bright, 3);
-            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.6f));
+            caption.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
             caption.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+            caption.maxLineCount = 1;
+            choice.Title = caption;
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
                                            textLeft, y + 4, textWidth, 20, Skin.Bright, 3);
