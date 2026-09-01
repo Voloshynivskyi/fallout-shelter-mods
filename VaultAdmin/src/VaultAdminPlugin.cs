@@ -140,6 +140,12 @@ namespace VaultAdmin
             return Frame(width, height, 8, 3, Bright, Bright);
         }
 
+        /// <summary>The same, edged the way the window is: filled, outlined dark, then bright.</summary>
+        public static Texture2D SolidOutlined(int width, int height)
+        {
+            return Frame(width, height, 10, 3, Ink, Bright, Bright, 2);
+        }
+
         /// <summary>
         /// The recess an icon sits in.
         ///
@@ -192,7 +198,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.37.0";
+        public const string PluginVersion = "0.38.0";
 
         internal static ManualLogSource Log;
 
@@ -265,6 +271,7 @@ namespace VaultAdmin
             public string Sprite;    // name of this item's sprite inside its family's atlas
             public string Stats;     // rarity, what it does, what it sells for
             public int Power;        // the same in one number, for ordering
+            public int[] Stats7;     // an outfit's seven bonuses, kept so one can be sorted on
         }
 
         // One atlas per family, resolved once. An atlas is a texture plus a table of rectangles.
@@ -279,6 +286,8 @@ namespace VaultAdmin
             public string Name;
             public string Detail;
             public object PetType;   // EPetType — which atlas this pet's art lives in
+            public EItemRarity Rarity;
+            public int Power;        // the best its bonus can do, for ordering
         }
 
         private List<PetEntry> _pets;
@@ -1066,7 +1075,7 @@ namespace VaultAdmin
                 if (mouse == null) { HoldCamera(true); return; }
 
                 Transform frame = _frame.transform;
-                float halfWidth = _windowWidth / 2f + 34f;    // the scroll bar sits outside the frame
+                float halfWidth = _windowWidth / 2f + 10f;
                 float halfHeight = _windowHeight / 2f + 8f;
 
                 Vector3 lowLeft = _uiCamera.WorldToScreenPoint(
@@ -1243,6 +1252,10 @@ namespace VaultAdmin
                 GameObject close = MakeButton(_nguiWindow.transform, "Close", "CLOSE",
                                               0, -_windowHeight / 2 + 6, 148, 48, true, TogglePanel);
 
+                UITexture closeFace = close.GetComponent<UITexture>();
+                if (closeFace != null)
+                    closeFace.mainTexture = Skin.SolidOutlined(closeFace.width, closeFace.height);
+
                 UILabel closeText = close.GetComponentInChildren<UILabel>();
                 if (closeText != null) closeText.fontSize = Mathf.RoundToInt(_fontSize * 1.25f);
 
@@ -1310,6 +1323,10 @@ namespace VaultAdmin
             view.disableDragIfFits = true;
             view.showScrollBars = UIScrollView.ShowCondition.Always;
 
+            // Where 'the beginning' is. Without this the list opened at the bottom, which for two
+            // hundred outfits meant opening on the last four of them.
+            view.contentPivot = UIWidget.Pivot.Top;
+
             go.SetActive(true);
             view.movement = UIScrollView.Movement.Vertical;
 
@@ -1332,7 +1349,9 @@ namespace VaultAdmin
             GameObject go = new GameObject("ScrollBar");
             go.layer = page.gameObject.layer;
             go.transform.SetParent(page, false);
-            go.transform.localPosition = new Vector3(width / 2 + 12, centre, 0f);
+            // Inside the content rather than on the frame: at the old offset the bar and the
+            // window's own edge were drawn through each other.
+            go.transform.localPosition = new Vector3(width / 2 + 2, centre, 0f);
             go.transform.localScale = Vector3.one;
 
             UITexture track = Plate(go.transform, "Track", 0, 0, 10, viewHeight,
@@ -2088,6 +2107,10 @@ namespace VaultAdmin
                 if (entry.Value != null) entry.Value.SetActive(entry.Key == tab);
             }
 
+            // A page that has been hidden comes back where it was left, which for a list is
+            // wherever the last search happened to end.
+            if (tab == Tab.Grant && _grantScroll != null) _grantScroll.ResetPosition();
+
             // The chosen tab is solid, the rest outlined — the game's own distinction between an
             // emphasised control and an ordinary one.
             foreach (KeyValuePair<Tab, GameObject> entry in _tabButtons)
@@ -2209,14 +2232,17 @@ namespace VaultAdmin
 
             // One switch apiece, off then up then down, rather than four buttons of which two are
             // always the wrong ones to press.
-            int sortWidth = 84;
-            int sortSpan = sortWidth * 2 + 6;
-            int fieldWidth = width - 74 - sortSpan - 14;
+            // One switch apiece, off then up then down, and a square beside the stats switch for
+            // which stat it means. Everything is held clear of the frame on the right.
+            int sortWidth = 76;
+            int pickWidth = 32;
+            int sortSpan = sortWidth * 2 + pickWidth + 12;
+            int fieldWidth = width - 70 - sortSpan - 20;
 
-            _filterInput = AddInput(parent, "Filter", -width / 2 + 74 + fieldWidth / 2, filterY,
+            _filterInput = AddInput(parent, "Filter", -width / 2 + 70 + fieldWidth / 2, filterY,
                                     fieldWidth, "SEARCH");
 
-            int sortX = width / 2 - sortSpan + sortWidth / 2 - 2;
+            int sortX = width / 2 - 10 - sortSpan + sortWidth / 2;
             _rarityToggle = MakeButton(parent, "SortRarity", "RARITY", sortX, filterY,
                                        sortWidth, 32, false,
                                        delegate { CycleOrdering(Ordering.Rarity); });
@@ -2225,6 +2251,10 @@ namespace VaultAdmin
             _powerToggle = MakeButton(parent, "SortPower", "STATS", sortX, filterY,
                                       sortWidth, 32, false,
                                       delegate { CycleOrdering(Ordering.Power); });
+
+            sortX += sortWidth / 2 + pickWidth / 2 + 6;
+            _statPickButton = MakeButton(parent, "StatPick", "*", sortX, filterY,
+                                         pickWidth, 32, false, CycleStatPick);
 
             _cursorY -= RowHeight + RowGap;
 
@@ -2250,6 +2280,24 @@ namespace VaultAdmin
 
         private GameObject _rarityToggle;
         private GameObject _powerToggle;
+        private GameObject _statPickButton;
+
+        // -1 means all seven together; otherwise an index into Specials.
+        private int _statPick = -1;
+
+        private void CycleStatPick()
+        {
+            _statPick++;
+            if (_statPick >= Specials.Length) _statPick = -1;
+
+            if (_statPick >= 0 && _ordering != Ordering.Power)
+            {
+                _ordering = Ordering.Power;
+                _orderingUp = false;      // the strongest first, which is what a stat is asked about
+            }
+
+            RefreshThings();
+        }
 
         /// <summary>Off, then up, then down, then off again.</summary>
         private void CycleOrdering(Ordering which)
@@ -2269,19 +2317,31 @@ namespace VaultAdmin
         /// </summary>
         private void UpdateOrderingSwitches()
         {
-            bool hasRarity = _grantFamily == Family.Weapon || _grantFamily == Family.Outfit ||
-                             _grantFamily == Family.Junk;
-            bool hasPower = _grantFamily == Family.Weapon || _grantFamily == Family.Outfit;
+            // Everything here has a rarity, dwellers included. Only junk has nothing worth calling
+            // a stat — its rating is what it sells for, which says nothing about one lump of scrap
+            // against another.
+            bool hasRarity = true;
+            bool hasPower = _grantFamily != Family.Junk && _grantFamily != Family.Dweller;
+            bool hasPick = _grantFamily == Family.Outfit;
 
             if (_rarityToggle != null) _rarityToggle.SetActive(hasRarity);
             if (_powerToggle != null) _powerToggle.SetActive(hasPower);
+            if (_statPickButton != null) _statPickButton.SetActive(hasPick);
 
-            if ((_ordering == Ordering.Rarity && !hasRarity) ||
-                (_ordering == Ordering.Power && !hasPower))
-                _ordering = Ordering.None;
+            if (_ordering == Ordering.Power && !hasPower) _ordering = Ordering.None;
+            if (!hasPick) _statPick = -1;
 
             Label(_rarityToggle, "RARITY", Ordering.Rarity);
             Label(_powerToggle, "STATS", Ordering.Power);
+
+            if (_statPickButton != null)
+            {
+                UILabel pick = _statPickButton.GetComponentInChildren<UILabel>();
+                if (pick != null)
+                    pick.text = _statPick < 0
+                        ? "*"
+                        : Specials[_statPick].ToString().Substring(0, 1);
+            }
         }
 
         private void Label(GameObject button, string caption, Ordering which)
@@ -2522,9 +2582,26 @@ namespace VaultAdmin
         private int SortKey(object thing)
         {
             CatalogueEntry item = thing as CatalogueEntry;
-            if (item == null) return -1;
+            if (item != null)
+            {
+                if (_ordering == Ordering.Rarity) return (int)item.Rarity;
 
-            return _ordering == Ordering.Rarity ? (int)item.Rarity : item.Power;
+                // One stat at a time when one has been picked out: an outfit worth having for its
+                // Luck is not the outfit with the largest total.
+                if (_statPick >= 0 && item.Stats7 != null) return item.Stats7[_statPick];
+                return item.Power;
+            }
+
+            PetEntry pet = thing as PetEntry;
+            if (pet != null)
+                return _ordering == Ordering.Rarity ? (int)pet.Rarity : pet.Power;
+
+            RandomDweller random = thing as RandomDweller;
+            if (random != null) return (int)random.Rarity;
+
+            if (thing is UniqueDwellerData) return (int)EDwellerRarity.Legendary;
+
+            return -1;
         }
 
         private void FillRows()
@@ -2697,6 +2774,34 @@ namespace VaultAdmin
         /// Each carries a list of effects with a range apiece — happiness by so much, damage by so
         /// much — and the breed alone said none of it.
         /// </summary>
+        /// <summary>The best a pet's bonus reaches, as one number.</summary>
+        private int PetPower(object template)
+        {
+            try
+            {
+                Array bonuses = ReadObject(template, "BonusEffectList") as Array;
+                if (bonuses == null) return 0;
+
+                float best = 0f;
+                for (int i = 0; i < bonuses.Length; i++)
+                {
+                    object bonus = bonuses.GetValue(i);
+                    if (bonus == null) continue;
+
+                    float high;
+                    float.TryParse(ReadAsText(bonus, "MaxValue"),
+                                   System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out high);
+                    if (high > best) best = high;
+                }
+                return Mathf.RoundToInt(best);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         private string PetStats(PetEntry pet)
         {
             try
@@ -2727,7 +2832,8 @@ namespace VaultAdmin
                             (high > low ? "-" + high.ToString("0.#") : "");
                 }
 
-                return line.Length > 0 ? line : pet.Detail;
+                string rarity = pet.Rarity.ToString().ToUpper();
+                return rarity + "  " + (line.Length > 0 ? line : pet.Detail);
             }
             catch
             {
@@ -3971,6 +4077,7 @@ namespace VaultAdmin
                     entry.Sprite = ReadMember(data, spriteMember);
                     entry.Stats = Describe(data, type);
                     entry.Power = Rate(data, type);
+                    if (type == EItemType.Outfit) entry.Stats7 = OutfitStats(data);
                     _catalogue.Add(entry);
                     added++;
                 }
@@ -4150,6 +4257,30 @@ namespace VaultAdmin
                 // No price. Nothing here is being bought, and it crowded out the figures that
                 // actually decide which of two hundred items to pick.
                 return line;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>An outfit's seven bonuses in the order the letters are read.</summary>
+        private int[] OutfitStats(DwellerBaseItem data)
+        {
+            try
+            {
+                object stats = ReadObject(data, "m_specialStats");
+                if (stats == null) return null;
+
+                int[] values = new int[Specials.Length];
+                for (int i = 0; i < Specials.Length; i++)
+                {
+                    object entry = ReadObject(stats, Specials[i].ToString());
+                    int value;
+                    if (entry != null && int.TryParse(ReadAsText(entry, "Value"), out value))
+                        values[i] = value;
+                }
+                return values;
             }
             catch
             {
@@ -4349,6 +4480,12 @@ namespace VaultAdmin
                         entry.PetType = type;
                         entry.Detail = (type == null ? "?" : type.ToString()) + " / " +
                                        (breed == null ? "?" : breed.ToString());
+
+                        // Pets are graded like items — they descend from the same record — and the
+                        // best their bonus can do is what separates one from another.
+                        DwellerBaseItem asItem = template as DwellerBaseItem;
+                        if (asItem != null) entry.Rarity = asItem.ItemRarity;
+                        entry.Power = PetPower(template);
 
                         _pets.Add(entry);
                     }
