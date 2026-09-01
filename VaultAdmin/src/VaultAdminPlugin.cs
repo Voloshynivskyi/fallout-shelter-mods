@@ -201,7 +201,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.39.0";
+        public const string PluginVersion = "0.40.0";
 
         internal static ManualLogSource Log;
 
@@ -2778,40 +2778,50 @@ namespace VaultAdmin
         /// much — and the breed alone said none of it.
         /// </summary>
         /// <summary>
-        /// What a bonus is called, in the game's own words.
+        /// A bonus written the way the game writes it, value and all.
         ///
-        /// PetUniqueData carries a LocalizedBonus of its own, which is where the readable text
-        /// lives; the enum name is a programmer's label and MYSTERIOUSMAGNET told the player
-        /// nothing. A spare record is filled in and asked, and the label is split into words only
-        /// if that fails.
+        /// LocalizedBonusWithValue does not append the value despite its name — it returns the whole
+        /// sentence with a hole in it, and the inventory screen fills that hole with the range. The
+        /// per cent sign, the plus, and the wording all live inside that sentence, which is why
+        /// building the line by hand produced a number with no unit on it.
         /// </summary>
-        private string BonusWords(object effect)
+        private string BonusText(object effect, string amount)
         {
             string key = effect.ToString();
 
-            string known;
-            if (_bonusWords.TryGetValue(key, out known)) return known;
+            string pattern;
+            if (!_bonusWords.TryGetValue(key, out pattern))
+            {
+                pattern = null;
 
-            string text = null;
+                try
+                {
+                    PetUniqueData spare = new PetUniqueData();
+                    spare.Bonus = (EBonusEffect)effect;
+
+                    pattern = CallText(spare, "LocalizedBonusWithValue");
+                    if (!string.IsNullOrEmpty(pattern) && pattern.IndexOf("{0}") < 0) pattern = null;
+                    if (!string.IsNullOrEmpty(pattern) && pattern.StartsWith("Bonus_")) pattern = null;
+                }
+                catch (Exception e)
+                {
+                    ReportOnce("bonuswords", "Could not read the bonus wording: " + e.Message);
+                }
+
+                if (string.IsNullOrEmpty(pattern))
+                    pattern = string.Join(" ", SplitWords(key)) + " +{0}";
+
+                _bonusWords[key] = pattern;
+            }
 
             try
             {
-                PetUniqueData spare = new PetUniqueData();
-                spare.Bonus = (EBonusEffect)effect;
-
-                text = CallText(spare, "LocalizedBonus");
-                if (!string.IsNullOrEmpty(text) && text == key) text = null;
+                return string.Format(pattern, amount);
             }
-            catch (Exception e)
+            catch
             {
-                ReportOnce("bonuswords", "Could not read the bonus names: " + e.Message);
+                return string.Join(" ", SplitWords(key)) + " +" + amount;
             }
-
-            if (string.IsNullOrEmpty(text))
-                text = string.Join(" ", SplitWords(key));
-
-            _bonusWords[key] = text;
-            return text;
         }
 
         private readonly Dictionary<string, string> _bonusWords = new Dictionary<string, string>();
@@ -2830,6 +2840,28 @@ namespace VaultAdmin
             return value.ToString("0.####");
         }
 
+        /// <summary>
+        /// A number as someone typed it.
+        ///
+        /// A decimal point here is written with a comma, and a player typing 0,5 means the same
+        /// thing as one typing 0.5. Accepting only one of the two is a trap set by the machine's
+        /// settings rather than by anything the player did.
+        /// </summary>
+        private static bool TypedNumber(string text, out float value)
+        {
+            value = 0f;
+            if (string.IsNullOrEmpty(text)) return false;
+
+            const System.Globalization.NumberStyles Style = System.Globalization.NumberStyles.Float;
+
+            if (float.TryParse(text, Style,
+                               System.Globalization.CultureInfo.InvariantCulture, out value))
+                return true;
+
+            return float.TryParse(text, Style,
+                                  System.Globalization.CultureInfo.CurrentCulture, out value);
+        }
+
         /// <summary>The best a pet's bonus reaches, as one number.</summary>
         private int PetPower(object template)
         {
@@ -2844,10 +2876,7 @@ namespace VaultAdmin
                     object bonus = bonuses.GetValue(i);
                     if (bonus == null) continue;
 
-                    float high;
-                    float.TryParse(ReadAsText(bonus, "MaxValue"),
-                                   System.Globalization.NumberStyles.Float,
-                                   System.Globalization.CultureInfo.InvariantCulture, out high);
+                    float high = ReadFloat(bonus, "MaxValue");
                     if (high > best) best = high;
                 }
                 return Mathf.RoundToInt(best);
@@ -2875,17 +2904,15 @@ namespace VaultAdmin
                     object effect = ReadObject(bonus, "Effect");
                     if (effect == null || effect.ToString() == "None") continue;
 
-                    float low, high;
-                    float.TryParse(ReadAsText(bonus, "MinValue"),
-                                   System.Globalization.NumberStyles.Float,
-                                   System.Globalization.CultureInfo.InvariantCulture, out low);
-                    float.TryParse(ReadAsText(bonus, "MaxValue"),
-                                   System.Globalization.NumberStyles.Float,
-                                   System.Globalization.CultureInfo.InvariantCulture, out high);
+                    float low = ReadFloat(bonus, "MinValue");
+                    float high = ReadFloat(bonus, "MaxValue");
+
+                    string amount = high > low
+                        ? Figure(low) + "-" + Figure(high)
+                        : Figure(low);
 
                     if (line.Length > 0) line += "   ";
-                    line += BonusWords(effect) + " +" + Figure(low) +
-                            (high > low ? "-" + Figure(high) : "");
+                    line += BonusText(effect, amount);
                 }
 
                 string rarity = pet.Rarity.ToString().ToUpper();
@@ -4176,6 +4203,29 @@ namespace VaultAdmin
         }
 
         /// <summary>
+        /// Reads a number without turning it into words first.
+        ///
+        /// Going through ToString and back was quietly wrong: the text is written in the machine's
+        /// own culture, which here writes 0,05, and it was being read back as invariant, which
+        /// expects 0.05. Every fraction in the game came out as nought, and only whole numbers
+        /// survived the trip.
+        /// </summary>
+        private static float ReadFloat(object target, string member)
+        {
+            object value = ReadObject(target, member);
+            if (value == null) return 0f;
+
+            try
+            {
+                return Convert.ToSingle(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return 0f;
+            }
+        }
+
+        /// <summary>
         /// Reads a member as text, whatever type it is.
         ///
         /// ReadMember casts to string and answers null for everything else, so every number asked
@@ -4644,9 +4694,7 @@ namespace VaultAdmin
                     data.Bonus = BonusEffects[_petBonusIndex];
 
                     float value;
-                    if (float.TryParse(_petBonusValue, System.Globalization.NumberStyles.Float,
-                                       System.Globalization.CultureInfo.InvariantCulture, out value))
-                        data.BonusValue = value;
+                    if (TypedNumber(_petBonusValue, out value)) data.BonusValue = value;
                 }
 
                 item.ExtraData = unique as ItemExtraData;
