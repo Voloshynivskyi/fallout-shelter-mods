@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.82.0";
+        public const string PluginVersion = "0.83.0";
 
         internal static ManualLogSource Log;
 
@@ -1180,6 +1180,7 @@ namespace VaultAdmin
             HoldCamera(false);
             DisposePreview();
             DropPreviewCamera();
+            SetRushDanger(true);
         }
 
         private Camera _uiCamera;
@@ -3430,56 +3431,57 @@ namespace VaultAdmin
             AddHeader(parent, "EVERYONE", width);
 
             AddPower(parent, width, "REVIVE THE DEAD",
-                     "brings back everyone who died, at full health", ReviveEveryone,
+                     "everyone who died, at full health", ReviveEveryone,
                      new[] { "Icon_StimpackPlain", "Icon_Stimpack", "Icon_dwellerPlain" });
             AddPower(parent, width, "HEAL EVERYONE",
-                     "full health, and the radiation cleared", HealEveryone,
+                     "full health, no radiation", HealEveryone,
                      new[] { "Icon_RadawayPlain", "Icon_Radaway", "Icon_StimpackPlain" });
             AddPower(parent, width, "MAKE EVERYONE HAPPY",
-                     "sets every dweller to full happiness", CheerEveryone,
+                     "everyone at 100%", CheerEveryone,
                      new[] { "Icon_Happiness", "Icon_happy", "Icon_dwellerPlain" });
             AddPower(parent, width, "LEVEL EVERYONE",
-                     "takes every dweller to level 50", LevelEveryone,
+                     "everyone to level 50", LevelEveryone,
                      new[] { "Icon_LevelUp", "Icon_levelup", "Icon_dwellerPlain" });
             AddPower(parent, width, "MAX SPECIAL FOR EVERYONE",
-                     "ten in every stat, for every dweller", PerfectEveryone,
+                     "ten in every stat", PerfectEveryone,
                      new[] { "Icon_Special", "Icon_special", "Icon_dwellerPlain" });
             AddPower(parent, width, "DELIVER EVERY BABY",
-                     "every expecting mother gives birth now", DeliverEveryBaby,
+                     "every pregnancy ends now", DeliverEveryBaby,
                      new[] { "new_dweller", "Icon_dwellerPlain" });
             AddPower(parent, width, "GROW THE CHILDREN",
-                     "every child becomes an adult now", GrowTheChildren,
+                     "every child grows up now", GrowTheChildren,
                      new[] { "new_dweller", "Icon_dwellerPlain" });
             AddPower(parent, width, "FINISH ALL TRAINING",
-                     "every dweller in a training room is done", FinishAllTraining,
+                     "every training done", FinishAllTraining,
                      new[] { "Icon_Training", "Icon_training", "Icon_dwellerPlain" });
 
             AddHeader(parent, "THE VAULT", width);
 
             AddPower(parent, width, "FILL FOOD, WATER, POWER",
-                     "the three the vault runs on, to their caps", FillTheEssentials,
+                     "the three, to their caps", FillTheEssentials,
                      new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
-            _rushSwitch = AddPower(parent, width, "RUSHING ALWAYS WORKS",
-                                   "the failure chance never gets a chance to climb",
-                                   ToggleRushing,
-                                   new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
             AddPowerWithNumber(parent, width, "POPULATION LIMIT",
-                               "how many dwellers the vault will take",
+                               "how many the vault takes",
                                MaxDwellersWanted.Value > 0 ? MaxDwellersWanted.Value.ToString() : "200",
                                RaisePopulation,
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
-                     "every weapon and outfit becomes craftable", UnlockEveryRecipe,
+                     "every weapon and outfit", UnlockEveryRecipe,
                      new[] { "Icon_Craft", "Icon_crafting", "Icon_JunkPlain", "Icon_junk" });
 
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
+            _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
+                                   "no accident from rushing",
+                                   ToggleRushing,
+                                   new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
+
             _incidentSwitch = AddPower(parent, width, "INCIDENTS",
-                                       "fires, infestations and raiders", ToggleIncidents,
+                                       "fires, pests, raiders", ToggleIncidents,
                      new[] { "Icon_Fire", "Icon_fire", "Icon_Radawa" });
             _bottleSwitch = AddPower(parent, width, "BOTTLE AND CAPPY",
-                                     "the pair that wander the vault", ToggleBottleAndCappy,
+                                     "the wandering pair", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
 
             EndScroll(view, width);
@@ -3523,7 +3525,7 @@ namespace VaultAdmin
 
             int button = 100;
             int left = -width / 2 + 18 + box;
-            int textWidth = width - button - box - 40;
+            int textWidth = width - button - box - 54;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
                                           left, middle + 13, textWidth, 22, Skin.Bright, 3);
@@ -3574,7 +3576,11 @@ namespace VaultAdmin
                 if (BottleAndCappyOff != null && BottleAndCappyOff.Value && !BottleAndCappyLocked())
                     SetBottleAndCappy(true);
 
-                if (RushAlwaysWorks != null && RushAlwaysWorks.Value) ClearRushChances();
+                if (RushAlwaysWorks != null && RushAlwaysWorks.Value)
+                {
+                    SetRushDanger(false);
+                    ClearRushChances();
+                }
 
                 if (MaxDwellersWanted != null && MaxDwellersWanted.Value > 0)
                 {
@@ -3588,6 +3594,70 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 ReportOnce("upkeep", "Could not hold the powers on: " + e.Message);
+            }
+        }
+
+        // What the two figures were before they were set to nothing, so switching off puts the
+        // game back rather than leaving it altered.
+        private float _wasMinimumChance = -1f;
+        private float _wasChancePerTier = -1f;
+
+        /// <summary>
+        /// Sets the rush failure chance to nothing, or puts it back.
+        ///
+        /// Clearing the room's timer only removed what had been accumulated; underneath it the vault
+        /// keeps a minimum chance — the ten per cent that still went wrong — and the room parameters
+        /// keep a rise per tier on top. Both are plain figures, so a guarantee is a matter of
+        /// setting them rather than of patching anything.
+        /// </summary>
+        private void SetRushDanger(bool dangerous)
+        {
+            try
+            {
+                Vault vault = SafeVault();
+
+                if (vault != null)
+                {
+                    object now = ReadObject(vault, "m_minimumRushFailureChance");
+
+                    if (!dangerous)
+                    {
+                        if (_wasMinimumChance < 0f && now != null)
+                            _wasMinimumChance = Convert.ToSingle(now);
+
+                        WriteMember(vault, "m_minimumRushFailureChance", 0f);
+                    }
+                    else if (_wasMinimumChance >= 0f)
+                    {
+                        WriteMember(vault, "m_minimumRushFailureChance", _wasMinimumChance);
+                        _wasMinimumChance = -1f;
+                    }
+                }
+
+                GameParameters parameters = GameParameters.Instance;
+                object rooms = parameters == null ? null : ReadObject(parameters, "Room");
+
+                if (rooms != null)
+                {
+                    object now = ReadObject(rooms, "m_rushDisasterChancePerTier");
+
+                    if (!dangerous)
+                    {
+                        if (_wasChancePerTier < 0f && now != null)
+                            _wasChancePerTier = Convert.ToSingle(now);
+
+                        WriteMember(rooms, "m_rushDisasterChancePerTier", 0f);
+                    }
+                    else if (_wasChancePerTier >= 0f)
+                    {
+                        WriteMember(rooms, "m_rushDisasterChancePerTier", _wasChancePerTier);
+                        _wasChancePerTier = -1f;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("rushdanger", "Could not set the rush chance: " + e.Message);
             }
         }
 
@@ -3683,7 +3753,7 @@ namespace VaultAdmin
             int button = 84;
             int field = 84;
             int left = -width / 2 + 18 + box;
-            int textWidth = width - button - field - box - 48;
+            int textWidth = width - button - field - box - 60;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
                                           left, middle + 13, textWidth, 22, Skin.Bright, 3);
@@ -4190,12 +4260,11 @@ namespace VaultAdmin
             bool wanted = !RushAlwaysWorks.Value;
             RushAlwaysWorks.Value = wanted;
 
-            int cleared = wanted ? ClearRushChances() : 0;
-            RefreshPowerSwitches();
+            SetRushDanger(!wanted);
+            if (wanted) ClearRushChances();
 
-            Say(wanted
-                ? "Rushing will not fail. Cleared " + cleared + " room(s) to start with."
-                : "Rushing can fail again.");
+            RefreshPowerSwitches();
+            Say(wanted ? "Rushing cannot fail." : "Rushing can fail again.");
         }
 
         private void RaisePopulation()
