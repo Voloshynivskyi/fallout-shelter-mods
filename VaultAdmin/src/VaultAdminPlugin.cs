@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.79.0";
+        public const string PluginVersion = "0.81.0";
 
         internal static ManualLogSource Log;
 
@@ -218,6 +218,11 @@ namespace VaultAdmin
         private static ConfigEntry<bool> WriteIconReport;
         private static ConfigEntry<bool> PreviewWholeSheet;
         private static ConfigEntry<bool> PreviewCopyGame;
+
+        private static ConfigEntry<bool> IncidentsOff;
+        private static ConfigEntry<bool> BottleAndCappyOff;
+        private static ConfigEntry<bool> RushAlwaysWorks;
+        private static ConfigEntry<int> MaxDwellersWanted;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
@@ -425,6 +430,22 @@ namespace VaultAdmin
                 "Master switch, off by default. While this is false the mod reads nothing, draws " +
                 "nothing and binds no key: the game behaves exactly as it does without the plugin. " +
                 "This is a debug tool, so it stays out of the way until it is asked for.");
+
+            // The switches are kept in the config, so a vault left in peace is still at peace
+            // tomorrow. Each is enforced on a slow beat rather than set once, because the game
+            // turns them back on for itself.
+            IncidentsOff = Config.Bind("Powers", "IncidentsOff", false,
+                "Keeps fires, infestations and raiders from starting.");
+
+            BottleAndCappyOff = Config.Bind("Powers", "BottleAndCappyOff", false,
+                "Keeps Bottle and Cappy from wandering the vault.");
+
+            RushAlwaysWorks = Config.Bind("Powers", "RushAlwaysWorks", false,
+                "Keeps the rush failure chance cleared, so rushing never goes wrong. The game " +
+                "raises that chance as rooms are rushed; this releases it again as it climbs.");
+
+            MaxDwellersWanted = Config.Bind("Powers", "MaxDwellers", 0,
+                "How many dwellers the vault will take. Zero leaves the game's own limit alone.");
 
             PreviewCopyGame = Config.Bind("Diagnostics", "PreviewCopyGame", true,
                 "Takes the shape of the game's own dweller picture — its crop and proportions — for " +
@@ -1259,6 +1280,7 @@ namespace VaultAdmin
         private int _scrollTop;
         private int _refreshFrames;
         private int _filmFrames;
+        private int _upkeepFrames;
         private UIAtlas _menuAtlas;
         private readonly List<UITexture> _thumbs = new List<UITexture>();
 
@@ -3436,12 +3458,15 @@ namespace VaultAdmin
             AddPower(parent, width, "FILL FOOD, WATER, POWER",
                      "the three the vault runs on, to their caps", FillTheEssentials,
                      new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
-            AddPower(parent, width, "RUSHING ALWAYS WORKS",
-                     "clears the failure chance on every room", MakeRushingSafe,
-                     new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
-            AddPower(parent, width, "ROOM FOR 999",
-                     "raises the population limit", RaisePopulation,
-                     new[] { "Icon_dwellerPlain", "Icon_dweller" });
+            _rushSwitch = AddPower(parent, width, "RUSHING ALWAYS WORKS",
+                                   "the failure chance never gets a chance to climb",
+                                   ToggleRushing,
+                                   new[] { "Icon_Rush", "Icon_rush", "Icon_nukacapsPlain" });
+            AddPowerWithNumber(parent, width, "POPULATION LIMIT",
+                               "how many dwellers the vault will take",
+                               MaxDwellersWanted.Value > 0 ? MaxDwellersWanted.Value.ToString() : "200",
+                               RaisePopulation,
+                               new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
                      "every weapon and outfit becomes craftable", UnlockEveryRecipe,
                      new[] { "Icon_Craft", "Icon_crafting", "Icon_JunkPlain", "Icon_junk" });
@@ -3462,6 +3487,7 @@ namespace VaultAdmin
 
         private GameObject _incidentSwitch;
         private GameObject _bottleSwitch;
+        private GameObject _rushSwitch;
 
         /// <summary>One thing the vault can be told to do, with the reason it exists beside it.</summary>
         /// <summary>
@@ -3528,6 +3554,130 @@ namespace VaultAdmin
             return press;
         }
 
+        /// <summary>
+        /// Holds the switched-on powers on.
+        ///
+        /// None of these is a setting the game keeps: it starts incidents again, it lets the pair
+        /// wander again, and it raises the rush failure chance every time a room is rushed. A switch
+        /// thrown once would come undone within the minute, so it is thrown again on a slow beat for
+        /// as long as it is meant to be on.
+        /// </summary>
+        private void KeepThePowersOn()
+        {
+            if (SafeVault() == null) return;
+
+            try
+            {
+                if (IncidentsOff != null && IncidentsOff.Value && IncidentsOn()) SetIncidents(false);
+
+                if (BottleAndCappyOff != null && BottleAndCappyOff.Value && !BottleAndCappyLocked())
+                    SetBottleAndCappy(true);
+
+                if (RushAlwaysWorks != null && RushAlwaysWorks.Value) ClearRushChances();
+
+                if (MaxDwellersWanted != null && MaxDwellersWanted.Value > 0)
+                {
+                    Vault vault = SafeVault();
+                    object now = vault == null ? null : ReadObject(vault, "MaxDwellers");
+
+                    if (now != null && Convert.ToInt32(now) != MaxDwellersWanted.Value)
+                        WriteMember(vault, "MaxDwellers", MaxDwellersWanted.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("upkeep", "Could not hold the powers on: " + e.Message);
+            }
+        }
+
+        private int ClearRushChances()
+        {
+            int cleared = 0;
+
+            try
+            {
+                MethodInfo reset = typeof(Room).GetMethod(
+                    "Cheat_ResetRushFailureChance",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (reset == null) return 0;
+
+                Room[] rooms = Resources.FindObjectsOfTypeAll<Room>();
+
+                for (int i = 0; i < rooms.Length; i++)
+                {
+                    if (rooms[i] == null || !rooms[i].gameObject.activeInHierarchy) continue;
+
+                    try { reset.Invoke(rooms[i], null); cleared++; }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return cleared;
+        }
+
+        private UIInput _populationInput;
+
+        /// <summary>
+        /// A power with a figure of its own to be told.
+        ///
+        /// Nine hundred and ninety-nine was a number I chose; how large a vault should be is not my
+        /// decision to make on someone else's behalf.
+        /// </summary>
+        private GameObject AddPowerWithNumber(Transform parent, int width, string name, string what,
+                                              string figure, EventDelegate.Callback action,
+                                              string[] icon)
+        {
+            const int cell = 66;
+            const int box = 38;
+
+            int middle = _cursorY - cell / 2;
+
+            Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
+
+            int iconCentre = -width / 2 + 10 + (box + 6) / 2;
+            AddIcon(parent, "PowerIcon_" + name, icon, "power " + name, iconCentre, middle, box);
+
+            int button = 84;
+            int field = 84;
+            int left = -width / 2 + 18 + box;
+            int textWidth = width - button - field - box - 48;
+
+            UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
+                                          left, middle + 13, textWidth, 22, Skin.Bright, 3);
+            title.maxLineCount = 1;
+
+            UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
+                                         left, middle - 12, textWidth, 20, Skin.Bright, 3);
+            note.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            note.maxLineCount = 1;
+
+            _populationInput = AddInput(parent, "PowerField_" + name,
+                                        width / 2 - button - field / 2 - 16, middle, field,
+                                        figure, true);
+
+            Power power = new Power();
+            power.Note = note;
+            power.Description = what;
+            _powers.Add(power);
+
+            EventDelegate.Callback wrapped = delegate
+            {
+                _pressed = power;
+                action();
+                _pressed = null;
+            };
+
+            GameObject press = MakeButton(parent, "PowerDo_" + name, "SET",
+                                          width / 2 - button / 2 - 10, middle, button, 40,
+                                          false, wrapped);
+
+            _cursorY -= cell + RowGap;
+            return press;
+        }
+
         /// <summary>Puts an answer on the row that was pressed, for as long as it takes to read.</summary>
         private void Answer(string message, bool went)
         {
@@ -3561,6 +3711,7 @@ namespace VaultAdmin
         {
             Switch(_incidentSwitch, IncidentsOn());
             Switch(_bottleSwitch, !BottleAndCappyLocked());
+            Switch(_rushSwitch, RushAlwaysWorks != null && RushAlwaysWorks.Value);
         }
 
         private static void Switch(GameObject button, bool on)
@@ -3589,27 +3740,30 @@ namespace VaultAdmin
         /// The manager keeps a lock of its own for the times the game does not want them — it is
         /// the same switch, thrown by hand.
         /// </summary>
-        private void ToggleBottleAndCappy()
+        private bool SetBottleAndCappy(bool locked)
         {
             try
             {
                 BottleAndCappyMgr pair = BottleAndCappyMgr.Instance;
-                if (pair == null) { Trouble("Bottle and Cappy are not about."); return; }
-
-                bool wanted = !BottleAndCappyLocked();
-                if (!WriteMember(pair, "m_locked", wanted))
-                {
-                    Trouble("That pair cannot be locked from here.");
-                    return;
-                }
-
-                RefreshPowerSwitches();
-                Say(wanted ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
+                return pair != null && WriteMember(pair, "m_locked", locked);
             }
-            catch (Exception e)
+            catch { return false; }
+        }
+
+        private void ToggleBottleAndCappy()
+        {
+            bool wanted = !BottleAndCappyLocked();
+
+            if (!SetBottleAndCappy(wanted))
             {
-                Trouble("Could not settle Bottle and Cappy: " + e.Message);
+                Trouble("That pair cannot be locked from here.");
+                return;
             }
+
+            BottleAndCappyOff.Value = wanted;
+            RefreshPowerSwitches();
+
+            Say(wanted ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
         }
 
         /// <summary>Every child grown, through the call the game makes when one comes of age.</summary>
@@ -3763,34 +3917,33 @@ namespace VaultAdmin
             catch { return true; }
         }
 
-        private void ToggleIncidents()
+        private bool SetIncidents(bool on)
         {
             try
             {
                 Vault vault = SafeVault();
                 object state = vault == null ? null : ReadObject(vault, "EmergencyState");
-                if (state == null) { Trouble("The vault has no emergency state to switch."); return; }
+                if (state == null) return false;
 
-                bool wanted = !IncidentsOn();
-
-                PropertyInfo flag = state.GetType().GetProperty(
-                    "Enabled", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (flag == null || !flag.CanWrite)
-                {
-                    Trouble("The emergency state cannot be switched here.");
-                    return;
-                }
-
-                flag.SetValue(state, wanted, null);
-                RefreshPowerSwitches();
-
-                Say(wanted ? "Incidents are on again." : "Incidents are off.");
+                return WriteMember(state, "Enabled", on);
             }
-            catch (Exception e)
+            catch { return false; }
+        }
+
+        private void ToggleIncidents()
+        {
+            bool wanted = !IncidentsOn();
+
+            if (!SetIncidents(wanted))
             {
-                Trouble("Could not switch incidents: " + e.Message);
+                Trouble("The emergency state cannot be switched here.");
+                return;
             }
+
+            IncidentsOff.Value = !wanted;
+            RefreshPowerSwitches();
+
+            Say(wanted ? "Incidents are on again." : "Incidents are off, and will stay off.");
         }
 
         /// <summary>Everyone the vault knows about, dead ones included.</summary>
@@ -3983,41 +4136,25 @@ namespace VaultAdmin
             Say("Food, water and power are full.");
         }
 
-        private void MakeRushingSafe()
+        /// <summary>
+        /// Rushing that never goes wrong, without patching the game.
+        ///
+        /// The failure chance lives in a timer the room holds; the game's own cheat releases it, and
+        /// the chance climbs again the moment another room is rushed. So it is released again every
+        /// second and a half for as long as the switch is on. Nothing about the game is rewritten —
+        /// the same call it ships is simply made often enough to be a guarantee.
+        /// </summary>
+        private void ToggleRushing()
         {
-            int cleared = 0;
+            bool wanted = !RushAlwaysWorks.Value;
+            RushAlwaysWorks.Value = wanted;
 
-            try
-            {
-                Room[] rooms = Resources.FindObjectsOfTypeAll<Room>();
+            int cleared = wanted ? ClearRushChances() : 0;
+            RefreshPowerSwitches();
 
-                for (int i = 0; i < rooms.Length; i++)
-                {
-                    if (rooms[i] == null || !rooms[i].gameObject.activeInHierarchy) continue;
-
-                    MethodInfo reset = typeof(Room).GetMethod(
-                        "Cheat_ResetRushFailureChance",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                    if (reset == null)
-                    {
-                        Trouble("The game has no way to clear the rush chance.");
-                        return;
-                    }
-
-                    reset.Invoke(rooms[i], null);
-                    cleared++;
-                }
-            }
-            catch (Exception e)
-            {
-                Trouble("Could not clear the rush chances: " + e.Message);
-                return;
-            }
-
-            // The game's own cheat, kept in its own code: the chance climbs again as rooms are
-            // rushed, so this is a reset rather than a switch.
-            Say("Cleared the failure chance on " + cleared + " room(s).");
+            Say(wanted
+                ? "Rushing will not fail. Cleared " + cleared + " room(s) to start with."
+                : "Rushing can fail again.");
         }
 
         private void RaisePopulation()
@@ -4027,12 +4164,27 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault == null) return;
 
-                WriteMember(vault, "MaxDwellers", 999);
-                Say("The vault will take 999 dwellers.");
+                int wanted;
+                if (_populationInput == null ||
+                    !int.TryParse(_populationInput.value, out wanted) || wanted < 1)
+                {
+                    Trouble("Type how many dwellers the vault should take.");
+                    return;
+                }
+
+                if (!WriteMember(vault, "MaxDwellers", wanted))
+                {
+                    Trouble("The population limit cannot be set from here.");
+                    return;
+                }
+
+                // Written down, so the vault is still this size after a restart.
+                MaxDwellersWanted.Value = wanted;
+                Say("The vault will take " + wanted + " dwellers.");
             }
             catch (Exception e)
             {
-                Trouble("Could not raise the population limit: " + e.Message);
+                Trouble("Could not set the population limit: " + e.Message);
             }
         }
 
@@ -6185,6 +6337,12 @@ namespace VaultAdmin
             EnsureHudButton();
             UpdateCameraHold();
             if (_panelOpen) ForgetOldAnswers();
+
+            if (++_upkeepFrames >= 90)
+            {
+                _upkeepFrames = 0;
+                KeepThePowersOn();
+            }
 
             // A window that builds without error and draws nothing is the failure this mod has
             // already paid for once. Rather than trust that it appeared, look: a widget that is
