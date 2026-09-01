@@ -181,7 +181,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.33.0";
+        public const string PluginVersion = "0.34.0";
 
         internal static ManualLogSource Log;
 
@@ -1441,10 +1441,10 @@ namespace VaultAdmin
         {
             switch (type)
             {
-                // The painted article, not the outline. These three are objects the player knows
-                // by sight, and a white silhouette of a box is not one of them.
+                // The painted article and nothing else. The same names elsewhere are pictures of
+                // someone holding the article, or banners too wide to sit in a row.
                 case ELunchBoxType.Regular:
-                    return new[] { "LunchBox", "Lunchbox", "LunchboxPlainColor",
+                    return new[] { "Lunchbox", "LunchboxPlainColor", "LunchBox",
                                    "Icon_LunchboxesPlain" };
                 case ELunchBoxType.MrHandy:
                     return new[] { "MrHandy", "MR_handy", "Icon_MrHandy" };
@@ -1765,7 +1765,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = sprite;
-            FitSprite(icon, 40);
+            FitSprite(icon, IconBox);
         }
 
         /// <summary>
@@ -1788,9 +1788,17 @@ namespace VaultAdmin
                     return;
                 }
 
-                float scale = Mathf.Min((float)box / data.width, (float)box / data.height);
-                sprite.width = Mathf.Max(1, Mathf.RoundToInt(data.width * scale));
-                sprite.height = Mathf.Max(1, Mathf.RoundToInt(data.height * scale));
+                // Trimmed sprites carry their blank margins separately, and a widget is sized to the
+                // whole picture rather than the ink in the middle of it. Measuring only the ink is
+                // why some came out stretched tall and others stretched wide.
+                float full = data.width + data.paddingLeft + data.paddingRight;
+                float tall = data.height + data.paddingTop + data.paddingBottom;
+                if (full <= 0f) full = data.width;
+                if (tall <= 0f) tall = data.height;
+
+                float scale = Mathf.Min(box / full, box / tall);
+                sprite.width = Mathf.Max(1, Mathf.RoundToInt(full * scale));
+                sprite.height = Mathf.Max(1, Mathf.RoundToInt(tall * scale));
             }
             catch
             {
@@ -1812,7 +1820,7 @@ namespace VaultAdmin
 
             icon.atlas = found.Atlas;
             icon.spriteName = found.Sprite;
-            FitSprite(icon, 40);
+            FitSprite(icon, IconBox);
         }
 
         private sealed class Found
@@ -1849,11 +1857,48 @@ namespace VaultAdmin
         /// </summary>
         private Found FindIcon(string[] candidates, string what, bool preferMenu, bool allowFuzzy)
         {
+            return FindIcon(candidates, what, preferMenu, allowFuzzy, null);
+        }
+
+        /// <summary>
+        /// The same, told which atlas the picture ought to come from.
+        ///
+        /// Several atlases hold a sprite called MrHandy and they are not the same picture: one is
+        /// the robot, another is the robot with a boy beside it, a third is a wide banner that
+        /// arrives cropped. Naming the atlas is the difference between a lunchbox and an
+        /// illustration of someone holding one.
+        /// </summary>
+        private Found FindIcon(string[] candidates, string what, bool preferMenu, bool allowFuzzy,
+                               string preferredAtlas)
+        {
             Found known;
             if (_foundIcons.TryGetValue(what, out known)) return known;
 
             UIAtlas[] atlases = Resources.FindObjectsOfTypeAll<UIAtlas>();
             UIAtlas menu = preferMenu ? MenuAtlas() : null;
+
+            if (!string.IsNullOrEmpty(preferredAtlas))
+            {
+                for (int i = 0; i < atlases.Length; i++)
+                {
+                    if (atlases[i] == null || atlases[i].name != preferredAtlas) continue;
+                    if (SpritesOf(atlases[i]) == null) continue;
+
+                    for (int c = 0; c < candidates.Length; c++)
+                    {
+                        if (atlases[i].GetSprite(candidates[c]) == null) continue;
+
+                        Found hit = new Found();
+                        hit.Atlas = atlases[i];
+                        hit.Sprite = candidates[c];
+                        _foundIcons[what] = hit;
+
+                        Log.LogInfo("Icon for " + what + ": '" + candidates[c] +
+                                    "' in '" + preferredAtlas + "'.");
+                        return hit;
+                    }
+                }
+            }
 
             // The interface's own atlas is searched out first and in full — exactly, then by
             // words — before anything else is considered. Letting other atlases compete by name
@@ -1912,7 +1957,13 @@ namespace VaultAdmin
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size, bool preferMenu)
         {
-            Found found = FindIcon(candidates, what, preferMenu, true);
+            AddIcon(parent, name, candidates, what, x, y, size, preferMenu, null);
+        }
+
+        private void AddIcon(Transform parent, string name, string[] candidates, string what,
+                             int x, int y, int size, bool preferMenu, string preferredAtlas)
+        {
+            Found found = FindIcon(candidates, what, preferMenu, true, preferredAtlas);
             if (found == null) return;
 
             UIAtlas atlas = found.Atlas;
@@ -1927,9 +1978,8 @@ namespace VaultAdmin
             UISprite drawn = go.AddComponent<UISprite>();
             drawn.atlas = atlas;
             drawn.spriteName = sprite;
-            drawn.width = size;
-            drawn.height = size;
             drawn.depth = 3;
+            FitSprite(drawn, size);
         }
 
         private void BuildTabs(Transform parent)
@@ -2084,7 +2134,10 @@ namespace VaultAdmin
         private int _rowsPerPage;
         private string _appliedFilter = "";
 
-        private const int ItemRowHeight = 58;
+        // Large enough that a portrait reads as a person rather than a smudge.
+        private const int IconBox = 52;
+
+        private const int ItemRowHeight = 62;
         private const int MaxItemRows = 9;
 
         private void BuildGrantPage(Transform parent)
@@ -2140,16 +2193,16 @@ namespace VaultAdmin
             GameObject iconGo = new GameObject("Icon");
             iconGo.layer = parent.gameObject.layer;
             iconGo.transform.SetParent(row.Root.transform, false);
-            iconGo.transform.localPosition = new Vector3(-width / 2 + 28, 0f, 0f);
+            iconGo.transform.localPosition = new Vector3(-width / 2 + 32, 0f, 0f);
             iconGo.transform.localScale = Vector3.one;
 
             row.Icon = iconGo.AddComponent<UISprite>();
-            row.Icon.width = 40;
-            row.Icon.height = 40;
+            row.Icon.width = IconBox;
+            row.Icon.height = IconBox;
             row.Icon.depth = 3;
 
-            int textLeft = -width / 2 + 52;
-            int textWidth = width - 150;
+            int textLeft = -width / 2 + 62;
+            int textWidth = width - 160;
 
             row.Name = MakeLeftLabel(row.Root.transform, "Name", "",
                                      textLeft, 11, textWidth, 24, Skin.Bright, 3);
@@ -2231,9 +2284,7 @@ namespace VaultAdmin
                 // not one of the fifty-odd people the game has written.
                 for (int i = 0; i < Rarities.Length; i++)
                 {
-                    if (Rarities[i] == EDwellerRarity.Legendary) continue;
-
-                    string label = Rarities[i] + " dweller";
+                    string label = "Random " + Rarities[i] + " dweller";
                     if (filter.Length > 0 && label.ToLower().IndexOf(filter) < 0) continue;
 
                     RandomDweller random = new RandomDweller();
@@ -2324,8 +2375,9 @@ namespace VaultAdmin
                 RandomDweller random = thing as RandomDweller;
                 if (random != null)
                 {
-                    row.Name.text = random.Rarity + " dweller";
-                    row.Stats.text = "ROLLED BY THE GAME  arrives at the vault door";
+                    row.Name.text = "Random " + random.Rarity + " dweller";
+                    row.Stats.text = "RANDOM  a " + random.Rarity.ToString().ToLower() +
+                                     " newcomer, rolled by the game";
                     ShowMenuIcon(row.Icon, DwellerSprites);
                     continue;
                 }
@@ -2497,7 +2549,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
-            FitSprite(icon, 40);
+            FitSprite(icon, IconBox);
         }
 
         private void ShowIcon(UISprite icon, CatalogueEntry entry)
@@ -2530,7 +2582,7 @@ namespace VaultAdmin
 
             icon.atlas = atlas;
             icon.spriteName = chosen;
-            FitSprite(icon, 40);
+            FitSprite(icon, IconBox);
         }
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
@@ -3024,7 +3076,7 @@ namespace VaultAdmin
                   Skin.Row(width, cell), 1);
 
             AddIcon(parent, "BoxIcon_" + type, BoxSprites(type), "box " + type,
-                    -width / 2 + 26, top, 30, false);
+                    -width / 2 + 26, top, 32, false, "VaultTec");
 
             MakeLeftLabel(parent, "BoxName_" + type, type.ToString(),
                           -width / 2 + 48, top, width - 60, 26, Skin.Bright, 3);
@@ -3636,6 +3688,8 @@ namespace VaultAdmin
             if (table == null) return 0;
 
             int added = 0;
+            int nameless = 0;
+
             for (int i = 0; i < table.Length; i++)
             {
                 try
@@ -3665,13 +3719,15 @@ namespace VaultAdmin
                     string label = CallText(data, "GetName");
                     if (string.IsNullOrEmpty(label)) label = Localised(ReadMember(data, nameMember));
 
-                    // The Name member on these tables is the data object's own name, which is a row
-                    // number. A code at least says what the thing is, and some of these items have
-                    // no written name at all — they are real and can be granted, so they are listed
-                    // by whatever can be read rather than hidden.
-                    if (string.IsNullOrEmpty(label)) label = data.CodeId;
-                    if (string.IsNullOrEmpty(label)) label = id;
-                    if (string.IsNullOrEmpty(label)) label = ReadMember(data, "Name");
+                    // Every item the vault can actually hold has a written name. The handful that
+                    // have none are leftovers — the police baton with one point of damage and no
+                    // picture, the plain clothes a dweller arrives in — and listing them by their
+                    // row number offered the player something they could not use.
+                    if (string.IsNullOrEmpty(label))
+                    {
+                        nameless++;
+                        continue;
+                    }
 
                     CatalogueEntry entry = new CatalogueEntry();
                     entry.Type = type;
@@ -3685,6 +3741,10 @@ namespace VaultAdmin
                 }
                 catch { }   // one unreadable row must not cost the whole family
             }
+
+            if (nameless > 0)
+                Log.LogInfo("Left out " + nameless + " " + type + " row(s) with no written name.");
+
             return added;
         }
 
