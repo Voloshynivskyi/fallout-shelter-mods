@@ -223,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.99.1";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
 
@@ -4810,7 +4810,9 @@ namespace VaultAdmin
                 }
 
                 if (match == null) continue;
-                _petGrade.Add(match, RarityWord(PetRarities[i]) + "   " + PetStats(match));
+                // The rarity, and nothing else. What the animal does is the bonus row's business; this
+                // row was asked twice to say only how the game grades it.
+                _petGrade.Add(match, RarityWord(PetRarities[i]));
             }
 
             _petGrade.Show();
@@ -4998,7 +5000,7 @@ namespace VaultAdmin
                         string kind = ReadAsText(entry, "Attribute");
                         string label = LookLabel(entry);
 
-                        if (kind == "Hair") _hair.Add(entry, label);
+                        if (kind == "Hair") _hair.Add(entry, StyleName(label));
                         else if (kind == "Face") _face.Add(entry, label);
                         else if (kind == "HairColor") _hairColour.Add(entry, HairColourName(entry, label));
                         else if (kind == "Helmet") _helmet.Add(entry, label);
@@ -5049,6 +5051,25 @@ namespace VaultAdmin
             ShowIcon(choice.Picture, entry);
 
             if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 58);
+        }
+
+        /// <summary>
+        /// A hairstyle's name, given that half of them have none.
+        ///
+        /// The game has no word for these: _DwellerCustomization_Hair_Male_01 localises to "01" and
+        /// that is the whole of it. A bare 03 in a row captioned HAIR is not wrong so much as
+        /// unhelpful, so the number is given something to be the number of. The one whose piece is
+        /// literally called null is the absence of hair, and says so.
+        /// </summary>
+        private static string StyleName(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return "STYLE ?";
+            if (label.Equals("null", StringComparison.OrdinalIgnoreCase)) return "BALD";
+
+            for (int i = 0; i < label.Length; i++)
+                if (!char.IsDigit(label[i])) return label;
+
+            return "STYLE " + label;
         }
 
         private string LookLabel(object entry)
@@ -5628,6 +5649,7 @@ namespace VaultAdmin
                 // was lying back with its legs out. The camera framed that, locked to it, and then
                 // the figure stood up inside a frame cut for someone lying down: too small, and
                 // then suddenly the right size when a change of gender built a new one.
+                KeepItCheerful();
                 KeepItMoving(body);
 
                 // Framed on what is actually there, so a tall dweller and a child both fit. Held
@@ -5762,6 +5784,8 @@ namespace VaultAdmin
                 // Animation component and the game's own AnimationController on top of it, which
                 // is why every previous attempt here changed nothing: they were winding a clock
                 // that was not in the room.
+                HushTheDriver(body);
+
                 Animation[] reels = body.GetComponentsInChildren<Animation>(true);
 
                 if (!_reportedMovers)
@@ -5853,20 +5877,79 @@ namespace VaultAdmin
         private static AnimationState PickIdle(Animation reel)
         {
             AnimationState first = null;
-            AnimationState fallback = null;
+            AnimationState named = null;
 
             foreach (AnimationState state in reel)
             {
                 if (state == null || state.clip == null) continue;
                 if (first == null) first = state;
 
-                if (state.name.IndexOf("idle", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return state;
+                // The component's own default is the game's answer to this question, and the game
+                // is right: it reads ANI_Dweller_Woman_Idle, which is a person standing about.
+                // Searching the clip names for "idle" was asking a question that had already been
+                // answered, and answering it worse.
+                if (reel.clip != null && state.clip == reel.clip) return state;
 
-                if (reel.clip != null && state.clip == reel.clip) fallback = state;
+                if (named == null &&
+                    state.name.IndexOf("idle", StringComparison.OrdinalIgnoreCase) >= 0)
+                    named = state;
             }
 
-            return fallback != null ? fallback : first;
+            return named != null ? named : first;
+        }
+
+        /// <summary>
+        /// Keeps the stand-in in a good mood.
+        ///
+        /// A dweller's face is its happiness: the one out of the pool arrives with whatever it was
+        /// feeling when it was last put away, and a miserable figure is a poor advertisement for
+        /// the person you are about to make. Written every frame because it costs one field, and
+        /// because whatever set it low is still running.
+        /// </summary>
+        private void KeepItCheerful()
+        {
+            try
+            {
+                if (_previewDweller == null) return;
+
+                object mood = ReadObject(_previewDweller, "Happiness");
+                if (mood != null) WriteMember(mood, "HappinessValue", 100f);
+            }
+            catch (Exception e)
+            {
+                ReportOnce("cheerful", "Could not cheer the stand-in up: " + e);
+            }
+        }
+
+        /// <summary>
+        /// Switches off the game's own animation driver on the stand-in.
+        ///
+        /// It runs every frame and plays whatever it thinks the dweller should be doing, which for
+        /// one that has no job and no room is not standing about. It was overwriting the clip this
+        /// panel had just chosen, one frame later, every frame -- which is why the figure kept its
+        /// pose while plainly being animated.
+        /// </summary>
+        private static void HushTheDriver(GameObject body)
+        {
+            try
+            {
+                MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i] == null || !parts[i].enabled) continue;
+
+                    string kind = parts[i].GetType().Name;
+                    if (kind != "AnimationController" && kind != "DwellerAnimationController") continue;
+
+                    parts[i].enabled = false;
+                    ReportOnce("hushed", "Switched off " + kind + " on the stand-in so the idle sticks.");
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("hush", "Could not switch off the stand-in's animation driver: " + e);
+            }
         }
 
         /// <summary>
@@ -6526,17 +6609,20 @@ namespace VaultAdmin
 
         private GameObject _genderSwitch;
 
+        /// <summary>Makes the gender button say what the bench is actually set to.</summary>
+        private void ShowGender()
+        {
+            if (_genderSwitch == null) return;
+
+            UILabel text = _genderSwitch.GetComponentInChildren<UILabel>();
+            if (text != null) text.text = Genders[_genderIndex].ToString().ToUpper();
+        }
+
         private void StepGender(int by)
         {
             _genderIndex = (_genderIndex + by + Genders.Length) % Genders.Length;
 
-            if (_genderSwitch != null)
-            {
-                UILabel text = _genderSwitch.GetComponentInChildren<UILabel>();
-                if (text != null) text.text = Genders[_genderIndex].ToString().ToUpper();
-            }
-
-
+            ShowGender();
             RebuildLookOptions();
             RemakePreview();
         }
@@ -7241,6 +7327,11 @@ namespace VaultAdmin
                 text.AppendLine();
                 text.AppendLine("== appearance ==");
 
+                // Borrowed, and given back. Walking both catalogues means moving the bench's own
+                // gender, and this used to end by setting it to Male rather than to whatever it
+                // found -- which is how choosing a woman produced a man.
+                int wasGender = _genderIndex;
+
                 foreach (EGender gender in Genders)
                 {
                     _genderIndex = Array.IndexOf(Genders, gender);
@@ -7257,8 +7348,9 @@ namespace VaultAdmin
                     AppendChoice(text, _skin);
                 }
 
-                _genderIndex = 0;
+                _genderIndex = wasGender;
                 RebuildLookOptions();
+                ShowGender();
 
                 text.AppendLine();
                 text.AppendLine("== atlases ==");
@@ -8384,11 +8476,12 @@ namespace VaultAdmin
             if (GUILayout.Button(">", GUILayout.Width(24f)))
                 _rarityIndex = (_rarityIndex + 1) % Rarities.Length;
 
-            if (GUILayout.Button("<", GUILayout.Width(24f)))
-                _genderIndex = (_genderIndex - 1 + Genders.Length) % Genders.Length;
+            // Through the same door as the panel's own button. Setting the field here left the
+            // looks built for the other gender and the panel's caption saying the opposite, which
+            // is the drift this whole change is about.
+            if (GUILayout.Button("<", GUILayout.Width(24f))) StepGender(-1);
             GUILayout.Label(Genders[_genderIndex].ToString(), GUILayout.Width(60f));
-            if (GUILayout.Button(">", GUILayout.Width(24f)))
-                _genderIndex = (_genderIndex + 1) % Genders.Length;
+            if (GUILayout.Button(">", GUILayout.Width(24f))) StepGender(1);
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
