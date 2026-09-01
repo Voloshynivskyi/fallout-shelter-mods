@@ -162,7 +162,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.28.0";
+        public const string PluginVersion = "0.29.0";
 
         internal static ManualLogSource Log;
 
@@ -202,6 +202,25 @@ namespace VaultAdmin
         };
 
         private static readonly float[] GrantAmounts = { 100f, 1000f, 10000f };
+
+        // A vault holds caps and water by the thousand and stimpaks by the handful. One set of
+        // amounts for both makes the buttons useless for half of them.
+        private static readonly float[] SmallAmounts = { 1f, 5f, 25f };
+        private static readonly float[] MediumAmounts = { 10f, 100f, 1000f };
+
+        private static float[] AmountsFor(EResource resource)
+        {
+            switch (resource)
+            {
+                case EResource.StimPack:
+                case EResource.RadAway:
+                    return SmallAmounts;
+                case EResource.NukaColaQuantum:
+                    return MediumAmounts;
+                default:
+                    return GrantAmounts;
+            }
+        }
         private static readonly int[] BoxAmounts = { 1, 5, 25 };
 
         // The item catalogue, read from the game once and kept. The tables do not change during a
@@ -275,10 +294,11 @@ namespace VaultAdmin
         // A long list drawn in full costs a frame. The filter is how you reach the rest.
         private const int MaxRowsShown = 40;
 
+        // Quantum is a resource in its own right and is granted as one; counting it here as well
+        // was the same thing offered twice.
         private static readonly ELunchBoxType[] BoxTypes =
         {
-            ELunchBoxType.Regular, ELunchBoxType.MrHandy, ELunchBoxType.PetCarrier,
-            ELunchBoxType.NukaColaQuantum
+            ELunchBoxType.Regular, ELunchBoxType.MrHandy, ELunchBoxType.PetCarrier
         };
 
         private void Awake()
@@ -982,11 +1002,62 @@ namespace VaultAdmin
             HoldCamera(false);
         }
 
+        private Camera _uiCamera;
+
+        /// <summary>
+        /// Holds the vault camera only while the cursor is actually over the panel.
+        ///
+        /// Switching it off for as long as the panel was open meant the vault could not be moved
+        /// at all without closing the panel first, which is worse than the problem it fixed. The
+        /// window's own rectangle is the boundary: inside it the wheel belongs to the list, outside
+        /// it the game behaves exactly as it always did.
+        /// </summary>
+        private void UpdateCameraHold()
+        {
+            if (!_panelOpen || _nguiWindow == null || _frame == null)
+            {
+                HoldCamera(false);
+                return;
+            }
+
+            try
+            {
+                if (_uiCamera == null) _uiCamera = NGUITools.FindCameraForLayer(_nguiWindow.layer);
+                if (_uiCamera == null) { HoldCamera(true); return; }
+
+                Mouse mouse = Mouse.current;
+                if (mouse == null) { HoldCamera(true); return; }
+
+                Transform frame = _frame.transform;
+                float halfWidth = _windowWidth / 2f + 34f;    // the scroll bar sits outside the frame
+                float halfHeight = _windowHeight / 2f + 8f;
+
+                Vector3 lowLeft = _uiCamera.WorldToScreenPoint(
+                    frame.TransformPoint(new Vector3(-halfWidth, -halfHeight, 0f)));
+                Vector3 topRight = _uiCamera.WorldToScreenPoint(
+                    frame.TransformPoint(new Vector3(halfWidth, halfHeight, 0f)));
+
+                Vector2 point = mouse.position.ReadValue();
+
+                bool over = point.x >= Mathf.Min(lowLeft.x, topRight.x) &&
+                            point.x <= Mathf.Max(lowLeft.x, topRight.x) &&
+                            point.y >= Mathf.Min(lowLeft.y, topRight.y) &&
+                            point.y <= Mathf.Max(lowLeft.y, topRight.y);
+
+                HoldCamera(over);
+            }
+            catch (Exception e)
+            {
+                ReportOnce("hover", "Could not tell where the cursor is: " + e.Message);
+                HoldCamera(true);
+            }
+        }
+
         /// <summary>Opens or closes the panel. Shared by the hotkey and the HUD button.</summary>
         public void TogglePanel()
         {
             _panelOpen = !_panelOpen;
-            HoldCamera(_panelOpen);
+            if (!_panelOpen) HoldCamera(false);
 
             if (_nguiWindow == null) BuildWindow();
 
@@ -1338,18 +1409,15 @@ namespace VaultAdmin
         {
             switch (type)
             {
+                // The proper artwork first, the flat pictogram only as a fallback: these three have
+                // pictures of their own and a plain outline of a box is not one of them.
                 case ELunchBoxType.Regular:
-                    return new[] { "Icon_LunchboxesPlain", "LunchboxPlainColor", "Lunchbox",
-                                   "LunchBox", "Icon_LunchboxesPlain" };
+                    return new[] { "LunchBox", "Lunchbox", "LunchboxPlainColor",
+                                   "Icon_LunchboxesPlain" };
                 case ELunchBoxType.MrHandy:
-                    // Icon_MrHandy, as the atlas itself reported when the first guess missed.
-                    return new[] { "Icon_MrHandy", "Icon_MrHandyCollect", "MrHandy", "MR_handy" };
+                    return new[] { "MrHandy", "MR_handy", "Icon_MrHandy", "Icon_MrHandyCollect" };
                 case ELunchBoxType.PetCarrier:
-                    return new[] { "Icon_PetCarrier", "PetCarrier", "Pet Carrier",
-                                   "Icon_Pet_Carrier", "Icon_Carrier", "Icon_Pet" };
-                case ELunchBoxType.NukaColaQuantum:
-                    return new[] { "Icon_NukaColaQuantum", "Icon_NukaQuantum", "NukaQuantum",
-                                   "NukaColaQuantum002" };
+                    return new[] { "PetCarrier", "Pet Carrier", "Icon_PetCarrier" };
                 default:
                     return null;
             }
@@ -1370,11 +1438,18 @@ namespace VaultAdmin
 
             try
             {
-                List<UISpriteData> list = atlas.spriteList;
-                if (list == null) return null;
+                List<UISpriteData> list = SpritesOf(atlas);
+                if (list == null || list.Count == 0) return null;
 
-                string[] parts = wanted.Split('_');
-                int needed = Mathf.Max(1, parts.Length - 1);
+                string[] parts = Meaningful(wanted);
+                if (parts.Length == 0) return null;
+
+                // The longest word is the one that says which picture this is; the rest say what
+                // kind of picture it is. Matching on the rest alone is how a request for the
+                // dwellers icon came back with a mushroom cloud, because both are an 'icon'.
+                string key = parts[0];
+                for (int i = 1; i < parts.Length; i++)
+                    if (parts[i].Length > key.Length) key = parts[i];
 
                 string best = null;
                 int bestScore = 0;
@@ -1382,19 +1457,17 @@ namespace VaultAdmin
                 for (int i = 0; i < list.Count; i++)
                 {
                     if (list[i] == null || string.IsNullOrEmpty(list[i].name)) continue;
+                    if (list[i].name.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0) continue;
 
                     int score = 0;
                     for (int j = 0; j < parts.Length; j++)
-                    {
-                        if (parts[j].Length < 3) continue;
                         if (list[i].name.IndexOf(parts[j], StringComparison.OrdinalIgnoreCase) >= 0)
                             score++;
-                    }
 
                     if (score > bestScore) { bestScore = score; best = list[i].name; }
                 }
 
-                if (best != null && bestScore >= needed)
+                if (best != null)
                 {
                     ReportOnce("match_" + atlas.name + "_" + wanted,
                                "'" + atlas.name + "' has no '" + wanted + "'; using '" + best + "'.");
@@ -1403,6 +1476,53 @@ namespace VaultAdmin
             }
             catch { }
 
+            return null;
+        }
+
+        // Words that say what kind of picture something is rather than which picture it is. A
+        // match on these alone means nothing at all.
+        private static readonly string[] EmptyWords =
+        {
+            "icon", "icons", "plain", "color", "colour", "sprite", "image", "img",
+            "common", "default", "new", "old", "small", "big", "the"
+        };
+
+        private static string[] Meaningful(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return new string[0];
+
+            string[] raw = name.Split('_', ' ', '-');
+            List<string> kept = new List<string>();
+
+            for (int i = 0; i < raw.Length; i++)
+            {
+                if (raw[i].Length < 3) continue;
+                if (Array.IndexOf(EmptyWords, raw[i].ToLower()) >= 0) continue;
+                kept.Add(raw[i]);
+            }
+
+            return kept.ToArray();
+        }
+
+        /// <summary>
+        /// An atlas's sprites, following the replacement it may stand in for.
+        ///
+        /// An atlas can be a stand-in that points at the real one, and pet art arrives that way:
+        /// the object exists from the moment it is asked for and holds nothing until the load
+        /// finishes. Reading the empty list and believing it is why the drone had no picture.
+        /// </summary>
+        private static List<UISpriteData> SpritesOf(UIAtlas atlas)
+        {
+            int guard = 0;
+            while (atlas != null && guard++ < 8)
+            {
+                List<UISpriteData> list = atlas.spriteList;
+                if (list != null && list.Count > 0) return list;
+
+                UIAtlas next = atlas.replacement;
+                if (next == null || next == atlas) return list;
+                atlas = next;
+            }
             return null;
         }
 
@@ -1487,8 +1607,8 @@ namespace VaultAdmin
 
         private static readonly string[] DwellerSprites =
         {
-            "Icon_Dwellers", "Icon_Dweller", "Icon_population", "Icon_Population",
-            "Icon_VaultBoy", "Dweller"
+            "Icon_Dwellers", "Icon_Dweller", "Dwellers", "Dweller",
+            "Icon_population", "Population", "VaultBoy", "Vaultboy"
         };
 
         /// <summary>Puts one of the interface's own icons on a row that has no art of its own.</summary>
@@ -1499,20 +1619,85 @@ namespace VaultAdmin
             icon.atlas = null;
             icon.spriteName = "";
 
-            UIAtlas atlas = MenuAtlas();
-            string sprite = ResolveSprite(atlas, candidates, "dweller");
-            if (string.IsNullOrEmpty(sprite)) return;
+            Found found = FindIcon(candidates, "dweller");
+            if (found == null) return;
 
-            icon.atlas = atlas;
-            icon.spriteName = sprite;
+            icon.atlas = found.Atlas;
+            icon.spriteName = found.Sprite;
+        }
+
+        private sealed class Found
+        {
+            public UIAtlas Atlas;
+            public string Sprite;
+        }
+
+        private readonly Dictionary<string, Found> _foundIcons = new Dictionary<string, Found>();
+
+        /// <summary>
+        /// Hunts one picture through every atlas the game has loaded.
+        ///
+        /// The interface's own menu atlas holds flat pictograms; the lunchboxes, the robot and the
+        /// pet carrier have proper artwork, and it lives elsewhere. Rather than name the atlas —
+        /// which would be another guess — every loaded one is asked, the menu's first, and the
+        /// answer is written down so the search happens once.
+        /// </summary>
+        private Found FindIcon(string[] candidates, string what)
+        {
+            Found known;
+            if (_foundIcons.TryGetValue(what, out known)) return known;
+
+            UIAtlas[] atlases = Resources.FindObjectsOfTypeAll<UIAtlas>();
+            UIAtlas menu = MenuAtlas();
+
+            // Candidates in the outer loop, atlases in the inner one: the order the names are
+            // written in is what says which picture is wanted most, and it has to beat the order
+            // the atlases happen to be searched in. The menu atlas is tried first within each name,
+            // so a pictogram in the right style still wins a tie.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int i = 0; i < candidates.Length; i++)
+                {
+                    for (int a = -1; a < atlases.Length; a++)
+                    {
+                        UIAtlas atlas = a < 0 ? menu : atlases[a];
+                        if (atlas == null || (a >= 0 && atlas == menu)) continue;
+                        if (SpritesOf(atlas) == null) continue;
+
+                        string sprite = pass == 0
+                            ? (atlas.GetSprite(candidates[i]) != null ? candidates[i] : null)
+                            : BestSprite(atlas, candidates[i]);
+
+                        if (string.IsNullOrEmpty(sprite)) continue;
+
+                        Found hit = new Found();
+                        hit.Atlas = atlas;
+                        hit.Sprite = sprite;
+                        _foundIcons[what] = hit;
+
+                        Log.LogInfo("Icon for " + what + ": '" + sprite + "' in '" + atlas.name + "'.");
+                        return hit;
+                    }
+                }
+            }
+
+            ReportOnce("icon_" + what,
+                       "No atlas holds a picture for " + what + "; tried " +
+                       string.Join(", ", candidates) + ".");
+            if (menu != null) SuggestSprites(menu, candidates[0]);
+
+            _foundIcons[what] = null;
+            return null;
         }
 
         private void AddIcon(Transform parent, string name, string[] candidates, string what,
                              int x, int y, int size)
         {
-            UIAtlas atlas = MenuAtlas();
-            string sprite = ResolveSprite(atlas, candidates, what);
-            if (string.IsNullOrEmpty(sprite)) return;
+            Found found = FindIcon(candidates, what);
+            if (found == null) return;
+
+            UIAtlas atlas = found.Atlas;
+            string sprite = found.Sprite;
 
             GameObject go = new GameObject(name);
             go.layer = parent.gameObject.layer;
@@ -1981,10 +2166,20 @@ namespace VaultAdmin
                     if (type == null || type.ToString() != key) continue;
 
                     UIAtlas atlas = ReadObject(info, "Atlas") as UIAtlas;
-                    if (atlas != null)
+
+                    // An atlas with no sprites in it has not finished loading. Caching one is how
+                    // a pet ends up permanently without a picture: the load lands a moment later
+                    // and nothing ever asks again.
+                    if (atlas != null && SpritesOf(atlas) != null)
                     {
                         _petAtlases[key] = atlas;
                         return atlas;
+                    }
+
+                    if (atlas != null)
+                    {
+                        _petArtPending = true;
+                        return null;
                     }
 
                     // Not loaded yet. Ask for it, and let the refresh tick pick it up when it lands.
@@ -2537,13 +2732,15 @@ namespace VaultAdmin
             // C# 5 shares a foreach variable across iterations, so each handler needs its own copy.
             EResource captured = resource;
 
-            int count = GrantAmounts.Length + 1;
+            float[] amounts = AmountsFor(resource);
+
+            int count = amounts.Length + 1;
             int buttonWidth = (width - 16 - (count - 1) * 5) / count;
             int x = -width / 2 + 8 + buttonWidth / 2;
 
-            for (int i = 0; i < GrantAmounts.Length; i++)
+            for (int i = 0; i < amounts.Length; i++)
             {
-                float amount = GrantAmounts[i];
+                float amount = amounts[i];
                 MakeButton(parent, "Grant_" + resource + "_" + amount,
                            "+" + Short(amount), x, bottom, buttonWidth, 30, false,
                            delegate { Grant(captured, amount); });
@@ -2866,6 +3063,7 @@ namespace VaultAdmin
             if (!Enabled.Value) return;
 
             EnsureHudButton();
+            UpdateCameraHold();
 
             // A window that builds without error and draws nothing is the failure this mod has
             // already paid for once. Rather than trust that it appeared, look: a widget that is
@@ -3079,6 +3277,11 @@ namespace VaultAdmin
 
                 ItemParameters items = parameters.Items;
 
+                _defaultOutfitId = ReadMember(items, "m_vaultDefaultOutfit");
+                _defaultWeaponId = ReadMember(items, "m_vaultDefaultWeapon");
+                Log.LogInfo("The default kit is outfit '" + _defaultOutfitId +
+                            "' and weapon '" + _defaultWeaponId + "'; neither is offered.");
+
                 int weapons = Collect(items.WeaponsList, EItemType.Weapon,
                                       "WeaponId", "WeaponSprite", "m_NameLocalizationId");
                 int outfits = Collect(items.OutfitList, EItemType.Outfit,
@@ -3103,6 +3306,16 @@ namespace VaultAdmin
         /// Pulls one family into the catalogue, taking the id off whichever member that family is
         /// keyed by. Reflection rather than a direct call because the outfit id is a private field.
         /// </summary>
+        private string _defaultOutfitId;
+        private string _defaultWeaponId;
+
+        private bool IsDefaultKit(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return false;
+
+            return id == _defaultOutfitId || id == _defaultWeaponId;
+        }
+
         private int Collect(Array table, EItemType type, string idMember, string spriteMember,
                             string nameMember)
         {
@@ -3118,6 +3331,11 @@ namespace VaultAdmin
 
                     string id = ReadMember(data, idMember);
                     if (string.IsNullOrEmpty(id)) continue;
+
+                    // The bare hand and the vault suit are what a dweller has when they have
+                    // nothing. Offering to hand someone their own fists is not a thing the panel
+                    // should do, and the game names both of them for us.
+                    if (IsDefaultKit(id)) continue;
 
                     // The Name property returns the data object's own name, which in these tables
                     // is a bare number. Every family carries a GetName that does the lookup properly.
