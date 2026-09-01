@@ -224,7 +224,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.1.2";
 
         internal static ManualLogSource Log;
 
@@ -6941,7 +6941,13 @@ namespace VaultAdmin
 
             const int rowGap = 4;
 
-            int block = PreviewHeight + 14;
+            // Room under the figure for the one control that belongs to it. On the header it was
+            // a dark word crammed into a bright bar, next to a title it had nothing to do with;
+            // under the figure it is plainly the button that changes the figure.
+            const int rollHeight = 26;
+            const int rollRoom = 34;
+
+            int block = PreviewHeight + 14 + rollRoom;
             int middle = _cursorY - block / 2;
 
             // The rows share the picture's height between them rather than bunching at the top and
@@ -6950,16 +6956,18 @@ namespace VaultAdmin
 
             Plate(parent, "LooksPlate", 0, middle, width, block, Skin.Row(width, block), 1);
 
-            // The picture, down the left.
+            // The picture, down the left, lifted by half the room the button takes so that the
+            // pair of them sit centred together.
             int pictureX = -width / 2 + PreviewWidth / 2 + 10;
+            int pictureY = middle + rollRoom / 2;
 
-            Plate(parent, "PreviewWell", pictureX, middle, PreviewWidth + 8, PreviewHeight + 8,
+            Plate(parent, "PreviewWell", pictureX, pictureY, PreviewWidth + 8, PreviewHeight + 8,
                   Skin.Well(PreviewWidth + 8), 2);
 
             GameObject picture = new GameObject("PreviewPicture");
             picture.layer = parent.gameObject.layer;
             picture.transform.SetParent(parent, false);
-            picture.transform.localPosition = new Vector3(pictureX, middle, 0f);
+            picture.transform.localPosition = new Vector3(pictureX, pictureY, 0f);
             picture.transform.localScale = Vector3.one;
 
             _previewPicture = picture.AddComponent<UITexture>();
@@ -6970,13 +6978,21 @@ namespace VaultAdmin
             GameObject headgear = new GameObject("PreviewHeadgear");
             headgear.layer = parent.gameObject.layer;
             headgear.transform.SetParent(parent, false);
-            headgear.transform.localPosition = new Vector3(pictureX, middle, 0f);
+            headgear.transform.localPosition = new Vector3(pictureX, pictureY, 0f);
             headgear.transform.localScale = Vector3.one;
 
             _previewHeadgear = headgear.AddComponent<UITexture>();
             _previewHeadgear.width = PreviewWidth;
             _previewHeadgear.height = PreviewHeight;
             _previewHeadgear.depth = 4;
+
+            // Directly beneath the figure and exactly as wide as its recess, so it reads as
+            // belonging to the picture rather than to the panel.
+            int wellBottom = pictureY - (PreviewHeight + 8) / 2;
+            int blockBottom = middle - block / 2;
+
+            MakeButton(parent, "RollLooks", "RANDOM", pictureX, (wellBottom + blockBottom) / 2,
+                       PreviewWidth + 8, rollHeight, false, delegate { RollTheLooks(); });
 
             // The choices, down the right.
             int columnLeft = -width / 2 + PreviewWidth + 24;
@@ -7107,14 +7123,7 @@ namespace VaultAdmin
 
             _cursorY -= RowHeight + RowGap;
 
-            // The header, and on its right the one control that makes the whole section agree
-            // with itself again: a roll that puts a real value in every appearance slot.
-            int looksY = _cursorY - 17;
             AddHeader(parent, "LOOKS", width);
-
-            MakeButton(parent, "RollLooks", "RANDOM", width / 2 - 52, looksY, 92, 26, false,
-                       delegate { RollTheLooks(); });
-
             BuildLooksBlock(parent, width);
 
             _hair.OnChange = delegate { LookChanged(_hair); };
