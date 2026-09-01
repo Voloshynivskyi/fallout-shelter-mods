@@ -201,7 +201,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.42.0";
+        public const string PluginVersion = "0.43.0";
 
         internal static ManualLogSource Log;
 
@@ -3110,7 +3110,7 @@ namespace VaultAdmin
             return choice;
         }
 
-        private enum Making { Dweller, Pet, Outfit, Weapon }
+        private enum Making { Dweller, Pet }
 
         private Making _making = Making.Dweller;
         private GameObject _dwellerSection;
@@ -3147,19 +3147,8 @@ namespace VaultAdmin
             _cursorY = sectionTop;
             _petSection = MakeSection(parent, "PetSection");
             BuildPetSection(_petSection.transform, width);
-            int afterPet = _cursorY;
 
-            _cursorY = sectionTop;
-            _outfitSection = MakeSection(parent, "OutfitSection");
-            BuildOutfitSection(_outfitSection.transform, width);
-            int afterOutfit = _cursorY;
-
-            _cursorY = sectionTop;
-            _weaponSection = MakeSection(parent, "WeaponSection");
-            BuildWeaponSection(_weaponSection.transform, width);
-
-            _cursorY = Mathf.Min(Mathf.Min(afterDweller, afterPet),
-                                 Mathf.Min(afterOutfit, _cursorY));
+            _cursorY = Mathf.Min(afterDweller, _cursorY);
             EndScroll(_createView, width);
 
             ShowMaking(_making);
@@ -3175,10 +3164,7 @@ namespace VaultAdmin
             return go;
         }
 
-        private static readonly Making[] Makings =
-        {
-            Making.Dweller, Making.Pet, Making.Outfit, Making.Weapon
-        };
+        private static readonly Making[] Makings = { Making.Dweller, Making.Pet };
 
         private void StepMaking(int by)
         {
@@ -3196,8 +3182,6 @@ namespace VaultAdmin
 
             if (_dwellerSection != null) _dwellerSection.SetActive(making == Making.Dweller);
             if (_petSection != null) _petSection.SetActive(making == Making.Pet);
-            if (_outfitSection != null) _outfitSection.SetActive(making == Making.Outfit);
-            if (_weaponSection != null) _weaponSection.SetActive(making == Making.Weapon);
 
             if (_createView != null) _createView.ResetPosition();
         }
@@ -3496,284 +3480,6 @@ namespace VaultAdmin
             {
                 Log.LogWarning("Equipping " + entry.Name + " failed: " + e.Message);
             }
-        }
-
-        private GameObject _outfitSection;
-        private GameObject _weaponSection;
-
-        private readonly Choice _tuneOutfit = new Choice();
-        private readonly Choice _tuneWeapon = new Choice();
-        private readonly Choice _tuneOutfitRarity = new Choice();
-        private readonly Choice _tuneWeaponRarity = new Choice();
-
-        private readonly UIInput[] _outfitStatInputs = new UIInput[7];
-        private UIInput _damageLow;
-        private UIInput _damageHigh;
-
-        private static readonly EItemRarity[] ItemRarities =
-        {
-            EItemRarity.Common, EItemRarity.Normal, EItemRarity.Rare, EItemRarity.Legendary
-        };
-
-        /// <summary>
-        /// Fills a picker with one family of the item catalogue.
-        /// </summary>
-        private void FillItemChoice(Choice choice, EItemType type, string caption)
-        {
-            if (_catalogue == null) BuildCatalogue();
-
-            choice.Caption = caption;
-            choice.Begin("-");
-
-            if (_catalogue == null) return;
-
-            for (int i = 0; i < _catalogue.Count; i++)
-                if (_catalogue[i].Type == type) choice.Add(_catalogue[i], _catalogue[i].Name);
-
-            if (choice.Options.Count > 1) choice.Index = 1;
-            choice.Show();
-        }
-
-        private void FillRarityChoice(Choice choice)
-        {
-            choice.Caption = "RARITY";
-            choice.Begin("unchanged");
-
-            for (int i = 0; i < ItemRarities.Length; i++)
-                choice.Add(ItemRarities[i], ItemRarities[i].ToString());
-
-            choice.Show();
-        }
-
-        /// <summary>
-        /// An outfit's bench.
-        ///
-        /// A weapon or an outfit keeps nothing of its own per copy — the record in the inventory is
-        /// an identifier and nothing else, and every figure comes from one shared table. So there is
-        /// no such thing as a single custom coat: what can be done is to change what that kind of
-        /// coat is, for as long as the game is running. The note on the bench says so.
-        /// </summary>
-        private void BuildOutfitSection(Transform parent, int width)
-        {
-            AddHeader(parent, "OUTFIT", width);
-
-            FillItemChoice(_tuneOutfit, EItemType.Outfit, "OUTFIT");
-            FillRarityChoice(_tuneOutfitRarity);
-
-            AddChoiceRow(parent, width, _tuneOutfit);
-            AddChoiceRow(parent, width, _tuneOutfitRarity);
-
-            AddHeader(parent, "SPECIAL", width);
-            AddStatRow(parent, width, _outfitStatInputs);
-
-            MakeButton(parent, "ApplyOutfit", "APPLY TO THIS OUTFIT", 0, _cursorY - 22, width, 44,
-                       true, ApplyOutfitChanges);
-            _cursorY -= 44 + RowGap;
-
-            MakeButton(parent, "GiveOutfit", "GIVE ONE", 0, _cursorY - 20, width, 40, false,
-                       delegate { GiveChosen(_tuneOutfit); });
-            _cursorY -= 40 + RowGap;
-
-            AddNote(parent, width, "Changes every copy of this outfit, until the game is restarted.");
-        }
-
-        private void BuildWeaponSection(Transform parent, int width)
-        {
-            AddHeader(parent, "WEAPON", width);
-
-            FillItemChoice(_tuneWeapon, EItemType.Weapon, "WEAPON");
-            FillRarityChoice(_tuneWeaponRarity);
-
-            AddChoiceRow(parent, width, _tuneWeapon);
-            AddChoiceRow(parent, width, _tuneWeaponRarity);
-
-            AddHeader(parent, "DAMAGE", width);
-
-            int y = _cursorY - RowHeight / 2;
-            Plate(parent, "DamageRow", 0, y, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            MakeLeftLabel(parent, "DamageCaption", "MIN / MAX", -width / 2 + 14, y, 150,
-                          RowHeight, Skin.Bright, 3);
-            _damageLow = AddInput(parent, "DamageLow", width / 2 - 150, y, 100, "0", true);
-            _damageHigh = AddInput(parent, "DamageHigh", width / 2 - 46, y, 100, "0", true);
-            _cursorY -= RowHeight + RowGap;
-
-            MakeButton(parent, "ApplyWeapon", "APPLY TO THIS WEAPON", 0, _cursorY - 22, width, 44,
-                       true, ApplyWeaponChanges);
-            _cursorY -= 44 + RowGap;
-
-            MakeButton(parent, "GiveWeapon", "GIVE ONE", 0, _cursorY - 20, width, 40, false,
-                       delegate { GiveChosen(_tuneWeapon); });
-            _cursorY -= 40 + RowGap;
-
-            AddNote(parent, width, "Changes every copy of this weapon, until the game is restarted.");
-        }
-
-        private void AddNote(Transform parent, int width, string text)
-        {
-            MakeLabel(parent, "Note_" + text.GetHashCode(), text, 0, _cursorY - 13, width, 26,
-                      Skin.Rim, 3);
-            _cursorY -= 26 + RowGap;
-        }
-
-        /// <summary>Seven typed figures across one row, as on the dweller's bench.</summary>
-        private void AddStatRow(Transform parent, int width, UIInput[] into)
-        {
-            const int height = 92;
-            int cell = (width - 16) / 7;
-            int middle = _cursorY - height / 2;
-
-            Plate(parent, "StatRow" + into.GetHashCode(), 0, middle, width, height,
-                  Skin.Row(width, height), 1);
-
-            for (int i = 0; i < Specials.Length; i++)
-            {
-                int x = -width / 2 + cell / 2 + 8 + i * cell;
-
-                MakeLabel(parent, "StatLetter" + into.GetHashCode() + i,
-                          Specials[i].ToString().Substring(0, 1),
-                          x, middle + 32, cell, 22, Skin.Bright, 3);
-
-                into[i] = AddInput(parent, "Stat" + into.GetHashCode() + i, x, middle + 4,
-                                   cell - 6, "0", true);
-            }
-
-            _cursorY -= height + RowGap;
-        }
-
-        private void GiveChosen(Choice choice)
-        {
-            CatalogueEntry entry = choice.Selected as CatalogueEntry;
-            if (entry != null) GrantItem(entry);
-        }
-
-        /// <summary>Writes a figure into the game's own record for this kind of item.</summary>
-        private static bool WriteField(object target, string member, object value)
-        {
-            if (target == null) return false;
-
-            FieldInfo field = target.GetType().GetField(
-                member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            if (field == null) return false;
-
-            field.SetValue(target, value);
-            return true;
-        }
-
-        private void ApplyOutfitChanges()
-        {
-            CatalogueEntry entry = _tuneOutfit.Selected as CatalogueEntry;
-            if (entry == null) return;
-
-            try
-            {
-                DwellerBaseItem data = FindItemData(EItemType.Outfit, entry.Id);
-                if (data == null) return;
-
-                object stats = ReadObject(data, "m_specialStats");
-                int changed = 0;
-
-                for (int i = 0; i < Specials.Length; i++)
-                {
-                    if (_outfitStatInputs[i] == null) continue;
-
-                    int typed;
-                    if (!int.TryParse(_outfitStatInputs[i].value, out typed)) continue;
-
-                    object slot = stats != null ? ReadObject(stats, Specials[i].ToString()) : null;
-                    if (slot != null && WriteField(slot, "Value", typed)) changed++;
-                }
-
-                ApplyRarity(data, _tuneOutfitRarity);
-
-                // The rows on the grant list were written when the catalogue was read, so they are
-                // now out of date about an item they describe.
-                entry.Stats = Describe(data, EItemType.Outfit);
-                entry.Power = Rate(data, EItemType.Outfit);
-                entry.Stats7 = OutfitStats(data);
-
-                Log.LogInfo("Changed " + entry.Name + ": " + changed + " stat(s) rewritten.");
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Changing " + entry.Name + " failed: " + e.Message);
-            }
-        }
-
-        private void ApplyWeaponChanges()
-        {
-            CatalogueEntry entry = _tuneWeapon.Selected as CatalogueEntry;
-            if (entry == null) return;
-
-            try
-            {
-                DwellerBaseItem data = FindItemData(EItemType.Weapon, entry.Id);
-                if (data == null) return;
-
-                int low = 0;
-                int high = 0;
-
-                bool haveLow = _damageLow != null && int.TryParse(_damageLow.value, out low);
-                bool haveHigh = _damageHigh != null && int.TryParse(_damageHigh.value, out high);
-
-                if (haveLow) WriteField(data, "m_DamageMin", low);
-                if (haveHigh) WriteField(data, "m_DamageMax", high);
-
-                // The weapon keeps the line it last wrote about itself; leaving it in place would
-                // show the old damage everywhere the game asks.
-                WriteField(data, "m_cachedWeaponDamageString", null);
-
-                ApplyRarity(data, _tuneWeaponRarity);
-
-                entry.Stats = Describe(data, EItemType.Weapon);
-                entry.Power = Rate(data, EItemType.Weapon);
-
-                Log.LogInfo("Changed " + entry.Name + ": damage " + low + "-" + high + ".");
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Changing " + entry.Name + " failed: " + e.Message);
-            }
-        }
-
-        private void ApplyRarity(DwellerBaseItem data, Choice choice)
-        {
-            object rarity = choice.Selected;
-            if (rarity == null) return;
-
-            WriteField(data, "m_itemRarity", rarity);
-        }
-
-        /// <summary>Finds the game's record for one item, by the family and identifier it is filed under.</summary>
-        private DwellerBaseItem FindItemData(EItemType type, string id)
-        {
-            try
-            {
-                GameParameters parameters = GameParameters.Instance;
-                ItemParameters items = parameters != null ? parameters.Items : null;
-                if (items == null) return null;
-
-                Array table = type == EItemType.Weapon ? (Array)items.WeaponsList
-                            : type == EItemType.Outfit ? (Array)items.OutfitList
-                            : (Array)items.JunksList;
-
-                string member = type == EItemType.Weapon ? "WeaponId"
-                              : type == EItemType.Outfit ? "m_outfitId"
-                              : "JunkId";
-
-                for (int i = 0; i < table.Length; i++)
-                {
-                    DwellerBaseItem data = table.GetValue(i) as DwellerBaseItem;
-                    if (data == null) continue;
-                    if (ReadMember(data, member) == id) return data;
-                }
-            }
-            catch (Exception e)
-            {
-                ReportOnce("finditem", "Could not reach the item tables: " + e.Message);
-            }
-
-            return null;
         }
 
         private void BuildDwellerSection(Transform parent, int width)
