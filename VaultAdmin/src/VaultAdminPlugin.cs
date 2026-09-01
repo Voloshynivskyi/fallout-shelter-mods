@@ -34,9 +34,12 @@ namespace VaultAdmin
         // are a dark green wash over the vault with a bright edge; a card inside one is the same
         // wash again, lighter, so the vault still shows through it; a recess is the dark green
         // solid, which is what makes it read as a hole rather than a panel.
-        public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xD2);   // the window
-        public static readonly Color Card = new Color32(0x08, 0x51, 0x08, 0x6E);    // a row on it
-        public static readonly Color Hole = new Color32(0x08, 0x51, 0x08, 0xFF);    // a recess
+        // Measured off the game's own windows rather than chosen. Its build screen shows the
+        // vault clearly through the panel, and every card on that panel is edged in the bright
+        // green — not in the dark one, which is what made this panel look muddy beside it.
+        public static readonly Color Plate = new Color32(0x08, 0x51, 0x08, 0xB4);   // the window
+        public static readonly Color Card = new Color32(0x08, 0x51, 0x08, 0x5A);    // a row on it
+        public static readonly Color Hole = new Color32(0x08, 0x51, 0x08, 0xE6);    // a recess
 
         // Border weights, so every edge in the panel is one of three thicknesses rather than
         // whatever each piece of code felt like.
@@ -176,7 +179,7 @@ namespace VaultAdmin
         /// </summary>
         public static Texture2D Well(int size)
         {
-            return Frame(size, size, 6, EdgeCard, Rim, Hole);
+            return Frame(size, size, 6, EdgeCard, Bright, Hole);
         }
 
         /// <summary>A place to type: outlined bright, sunk dark, so it reads as a field.</summary>
@@ -188,13 +191,13 @@ namespace VaultAdmin
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
-            return Frame(width, height, 6, EdgeCard, Rim, Card);
+            return Frame(width, height, 8, EdgeCard, Bright, Card);
         }
 
         /// <summary>A section header: solid, inverted against the rows beneath it.</summary>
         public static Texture2D Header(int width, int height)
         {
-            return Frame(width, height, 6, 2, Bright, Bright);
+            return Frame(width, height, 6, EdgeCard, Bright, Bright);
         }
     }
 
@@ -220,7 +223,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.93.0";
+        public const string PluginVersion = "0.94.1";
 
         internal static ManualLogSource Log;
 
@@ -1524,7 +1527,7 @@ namespace VaultAdmin
             // texture has to survive being stretched: a nearly square source with a small radius
             // stays a bar, where a long rounded one turns into a smear.
             UITexture thumb = Plate(go.transform, "Thumb", 0, 0, 10, viewHeight,
-                                    Skin.Frame(10, viewHeight, 5, 5, Skin.Bright, Skin.Bright), 3);
+                                    Skin.Frame(10, viewHeight, 5, Skin.EdgeButton, Skin.Bright, Skin.Bright), 3);
 
             BoxCollider box = go.AddComponent<BoxCollider>();
             box.size = new Vector3(22f, viewHeight, 1f);
@@ -3904,9 +3907,11 @@ namespace VaultAdmin
             if (_pressed == null || _pressed.Note == null) return;
 
             _pressed.Note.text = message;
+            // A refusal is quieter, not a different colour. There are three greens in this
+            // interface and an amber warning belongs to some other program.
             _pressed.Note.color = went
                 ? Skin.Bright
-                : new Color(1f, 0.75f, 0.2f, 1f);
+                : new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.55f);
 
             _pressed.Until = Time.time + 6f;
         }
@@ -3951,10 +3956,17 @@ namespace VaultAdmin
             UILabel text = button.GetComponentInChildren<UILabel>();
             if (text == null) return;
 
+            // The game's own switches are a filled half and an empty one: on is solid with dark
+            // lettering, off is an outline. Two states that differ only in a word are two states
+            // nobody reads.
             text.text = on ? "ON" : "OFF";
-            text.color = on
-                ? Skin.Bright
-                : new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.5f);
+            text.color = on ? Skin.Ink : Skin.Bright;
+
+            UITexture face = button.GetComponent<UITexture>();
+            if (face != null)
+                face.mainTexture = on
+                    ? Skin.SolidButton(face.width, face.height)
+                    : Skin.Button(face.width, face.height);
         }
 
         private bool BottleAndCappyLocked()
@@ -6617,7 +6629,7 @@ namespace VaultAdmin
                         if (thumb.mainTexture != null &&
                             thumb.mainTexture.height == Mathf.RoundToInt(step * Skin.Scale)) continue;
 
-                        thumb.mainTexture = Skin.Frame(10, step, 5, 5, Skin.Bright, Skin.Bright);
+                        thumb.mainTexture = Skin.Frame(10, step, 5, Skin.EdgeButton, Skin.Bright, Skin.Bright);
                     }
 
                     if (_petArtPending)
