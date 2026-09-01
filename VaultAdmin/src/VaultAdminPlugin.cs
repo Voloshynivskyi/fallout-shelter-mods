@@ -224,7 +224,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.1";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
 
@@ -390,8 +390,66 @@ namespace VaultAdmin
         private string _petName = "";
         private string _petBonusValue = "10";
         private int _petBonusIndex;
-        private static readonly EBonusEffect[] BonusEffects =
+        private static readonly EBonusEffect[] AllBonusEffects =
             (EBonusEffect[])Enum.GetValues(typeof(EBonusEffect));
+
+        private EBonusEffect[] _bonusChoices;
+
+        /// <summary>
+        /// The bonuses a pet can actually be given.
+        ///
+        /// The list used to be every value of EBonusEffect, which is not the same question. The
+        /// enum carries names no pet in the game is built with, and choosing one produced an
+        /// animal with an empty description and a bonus that does nothing -- while a name that
+        /// does appear on a real pet, Stranger Magnet among them, worked perfectly. So the list is
+        /// read off the pet templates rather than off the type: if no animal in the game has it,
+        /// it is not on offer.
+        /// </summary>
+        private EBonusEffect[] Bonuses()
+        {
+            if (_bonusChoices != null) return _bonusChoices;
+
+            List<EBonusEffect> found = new List<EBonusEffect>();
+
+            try
+            {
+                if (_pets == null) BuildPetCatalogue();
+
+                if (_pets != null)
+                {
+                    for (int i = 0; i < _pets.Count; i++)
+                    {
+                        Array bonuses = ReadObject(_pets[i].Template, "BonusEffectList") as Array;
+                        if (bonuses == null) continue;
+
+                        for (int j = 0; j < bonuses.Length; j++)
+                        {
+                            object bonus = bonuses.GetValue(j);
+                            object effect = bonus == null ? null : ReadObject(bonus, "Effect");
+                            if (!(effect is EBonusEffect)) continue;
+
+                            EBonusEffect kind = (EBonusEffect)effect;
+                            if (!found.Contains(kind)) found.Add(kind);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("bonuslist", "Could not read which bonuses pets have: " + e);
+            }
+
+            // Never leave the row with nothing to offer. If the templates could not be read, the
+            // whole enum is a worse list than this one but better than an empty one.
+            if (found.Count == 0) found.AddRange(AllBonusEffects);
+            else Log.LogInfo("Pets are built with " + found.Count + " of the " +
+                             AllBonusEffects.Length + " bonus kinds the game defines.");
+
+            _bonusChoices = found.ToArray();
+            _petBonusIndex = Mathf.Clamp(_petBonusIndex, 0, _bonusChoices.Length - 1);
+
+            return _bonusChoices;
+        }
 
         // Dwellers are serialised in full, so unlike a weapon every attribute here reaches the save.
         private static readonly EDwellerRarity[] Rarities =
@@ -2857,8 +2915,8 @@ namespace VaultAdmin
 
         private void StepBonus(int by)
         {
-            _petBonusIndex = (_petBonusIndex + by + BonusEffects.Length) % BonusEffects.Length;
-            if (_bonusLabel != null) _bonusLabel.text = BonusEffects[_petBonusIndex].ToString();
+            _petBonusIndex = (_petBonusIndex + by + Bonuses().Length) % Bonuses().Length;
+            if (_bonusLabel != null) _bonusLabel.text = Bonuses()[_petBonusIndex].ToString();
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -5070,7 +5128,7 @@ namespace VaultAdmin
             MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, bonusY, 40, 32, false,
                        delegate { StepBonus(1); });
             _bonusLabel = MakeLeftLabel(parent, "PetBonusName",
-                                        BonusEffects[_petBonusIndex].ToString(),
+                                        Bonuses()[_petBonusIndex].ToString(),
                                         -width / 2 + 98, bonusY, width - 200, RowHeight,
                                         Skin.Bright, 3);
             _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, bonusY, 76, "10");
@@ -5217,7 +5275,7 @@ namespace VaultAdmin
             {
                 if (_pets == null) BuildPetCatalogue();
 
-                EBonusEffect wanted = BonusEffects[_petBonusIndex];
+                EBonusEffect wanted = Bonuses()[_petBonusIndex];
                 float best = 0f;
 
                 if (_pets != null)
@@ -8692,10 +8750,10 @@ namespace VaultAdmin
             GUILayout.BeginHorizontal();
             GUILayout.Label("Bonus", GUILayout.Width(44f));
             if (GUILayout.Button("<", GUILayout.Width(24f)))
-                _petBonusIndex = (_petBonusIndex - 1 + BonusEffects.Length) % BonusEffects.Length;
-            GUILayout.Label(BonusEffects[_petBonusIndex].ToString(), GUILayout.Width(180f));
+                _petBonusIndex = (_petBonusIndex - 1 + Bonuses().Length) % Bonuses().Length;
+            GUILayout.Label(Bonuses()[_petBonusIndex].ToString(), GUILayout.Width(180f));
             if (GUILayout.Button(">", GUILayout.Width(24f)))
-                _petBonusIndex = (_petBonusIndex + 1) % BonusEffects.Length;
+                _petBonusIndex = (_petBonusIndex + 1) % Bonuses().Length;
             GUILayout.EndHorizontal();
 
             GUILayout.Label("    An empty name keeps the one the game generates.");
@@ -8760,7 +8818,7 @@ namespace VaultAdmin
                 {
                     if (!string.IsNullOrEmpty(_petName)) data.Name = _petName;
 
-                    data.Bonus = BonusEffects[_petBonusIndex];
+                    data.Bonus = Bonuses()[_petBonusIndex];
 
                     float value;
                     if (TypedNumber(_petBonusValue, out value)) data.BonusValue = value;
@@ -9328,7 +9386,17 @@ namespace VaultAdmin
                 // stand-in -- it came out of the same pool and was never given back -- then the
                 // figure on the bench has just walked off to the vault door, which would explain
                 // both the avatar going and the newcomer arriving as something else.
-                if (_previewDweller != null && ReferenceEquals(dweller, _previewDweller))
+                // Against every stand-in, not just the one on screen. One is kept per gender, and
+                // checking only the current one left the other in the cache -- so the next time
+                // the gender was stepped, the bench adopted a dweller the player had created and
+                // re-randomised their face. Which is exactly what a newcomer arriving as somebody
+                // else looks like.
+                string standingFor = null;
+
+                foreach (KeyValuePair<string, Dweller> kept in _standIns)
+                    if (ReferenceEquals(kept.Value, dweller)) { standingFor = kept.Key; break; }
+
+                if (standingFor != null)
                 {
                     Log.LogWarning("The spawner handed back the stand-in itself; letting go of it.");
 
@@ -9341,9 +9409,9 @@ namespace VaultAdmin
                     PutTheFigureBack(dweller.gameObject);
                     dweller.gameObject.SetActive(true);
 
-                    _standIns.Remove(Genders[_genderIndex].ToString());
+                    _standIns.Remove(standingFor);
 
-                    _previewDweller = null;
+                    if (ReferenceEquals(dweller, _previewDweller)) _previewDweller = null;
                     _texturedOnce = false;
                     _framedSize = -1f;
                     _framedLocked = false;
@@ -9367,6 +9435,14 @@ namespace VaultAdmin
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
                 // the dweller afterwards what it is actually wearing.
+                // Chosen on the left, what the dweller actually ended up with on the right. The
+                // panel and the person who walks away from it have disagreed twice before, and
+                // reading both back in one line is how that gets settled rather than argued about.
+                if (customise)
+                    Log.LogInfo("Asked for " + Picked(_hair) + ", " + Picked(_face) + ", " +
+                                Picked(_skin) + ", " + Picked(_helmet) + ", " + Picked(_outfit) +
+                                ", " + Picked(_weapon) + "  ->  got " + Describe(dweller));
+
                 Say("Created " + Describe(dweller) + " — waiting at the vault door.");
             }
             catch (Exception e)

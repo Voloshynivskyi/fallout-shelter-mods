@@ -8,7 +8,7 @@ resource or lunchbox in the game, and throw a set of vault-wide switches. The pa
 the game's own NGUI widgets, so it looks and behaves like the rest of the interface rather than
 floating over it.
 
-> **Status: 1.5.0.** Feature-complete for what it set out to do. No Harmony patches: everything goes
+> **Status: 1.0.0** — first public release. Feature-complete for what it set out to do. No Harmony patches: everything goes
 > through the game's own methods, so the vault never disagrees with itself the next time it saves.
 
 ---

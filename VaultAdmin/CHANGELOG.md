@@ -1,8 +1,9 @@
 # Changelog
 
-## 1.5.0
+## 1.0.0 — first public release
 
-The release. Everything below this line was found by playing the thing.
+Everything below this line was found by playing the thing. The version numbers under this
+entry are development history and were never released.
 
 **The bench was minting weapons.** Dressing the preview figure calls the game's own `EquipWeapon`,
 and the game does what it always does when a dweller's weapon is swapped: it hands the old one back
@@ -29,7 +30,7 @@ component with the game's own controller switched off.
 **Grants confirm themselves** on the row that was pressed, and hairstyles and hair colours are named
 after what they are rather than after the group they belong to.
 
-## 1.0.0
+### Before that
 
 The interface settled on the three greens, three border weights and four text sizes it uses now, and
 an independent audit of the whole file was acted on: a guard that fails closed rather than open,
