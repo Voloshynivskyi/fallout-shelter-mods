@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.71.0";
+        public const string PluginVersion = "0.75.0";
 
         internal static ManualLogSource Log;
 
@@ -1266,7 +1266,7 @@ namespace VaultAdmin
         // hand something over, or build something that does not exist yet. A dweller belongs in two
         // of those, which is why splitting by kind put its two halves in one place and nothing in
         // the other.
-        private enum Tab { Resources, Grant, Create }
+        private enum Tab { Resources, Grant, Create, Powers }
 
         // Dwellers are handed out from the same list as items even though the game does not count
         // them as one, so the picker has a family of its own for them.
@@ -2171,11 +2171,11 @@ namespace VaultAdmin
 
         private void BuildTabs(Transform parent)
         {
-            Tab[] tabs = { Tab.Resources, Tab.Grant, Tab.Create };
-            string[] names = { "RESOURCES", "GRANT", "CREATE" };
+            Tab[] tabs = { Tab.Resources, Tab.Grant, Tab.Create, Tab.Powers };
+            string[] names = { "STOCK", "GRANT", "CREATE", "POWERS" };
 
             int usable = _windowWidth - Margin * 2;
-            int width = (usable - 12) / 3;
+            int width = (usable - 18) / 4;
             int y = _windowHeight / 2 - 58;
             int x = -usable / 2 + width / 2;
 
@@ -2191,7 +2191,7 @@ namespace VaultAdmin
 
         private void BuildPages(Transform parent)
         {
-            foreach (Tab tab in new[] { Tab.Resources, Tab.Grant, Tab.Create })
+            foreach (Tab tab in new[] { Tab.Resources, Tab.Grant, Tab.Create, Tab.Powers })
             {
                 GameObject page = new GameObject("Page_" + tab);
                 page.layer = parent.gameObject.layer;
@@ -2204,6 +2204,7 @@ namespace VaultAdmin
             BuildResourcesPage(_tabPages[Tab.Resources].transform);
             BuildGrantPage(_tabPages[Tab.Grant].transform);
             BuildCreatePage(_tabPages[Tab.Create].transform);
+            BuildPowersPage(_tabPages[Tab.Powers].transform);
         }
 
         /// <summary>
@@ -2564,7 +2565,7 @@ namespace VaultAdmin
             // worth is the reason to pick one item out of two hundred.
             row.Stats = MakeLeftLabel(row.Root.transform, "Stats", "",
                                       textLeft, -12, textWidth, 20, Skin.Bright, 3);
-            row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
+            row.Stats.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
 
             int captured = index;
             row.Give = MakeButton(row.Root.transform, "Give", "GIVE", width / 2 - 44, 0, 76, 34,
@@ -3389,6 +3390,444 @@ namespace VaultAdmin
         /// Both halves start at the same height and only one is ever shown, so neither leaves a gap
         /// where the other would have been.
         /// </summary>
+        /// <summary>
+        /// The things that act on the whole vault at once.
+        ///
+        /// Everything here goes through the game's own methods — reviving, healing, levelling,
+        /// setting a cap — because a vault edited around the game's back is a vault that disagrees
+        /// with itself the next time it is saved.
+        /// </summary>
+        private void BuildPowersPage(Transform page)
+        {
+            int width = _windowWidth - Margin * 2;
+
+            Transform parent;
+            UIScrollView view = BeginScroll(page, width, ContentTop(), ContentBottom(), out parent);
+
+            AddHeader(parent, "EVERYONE", width);
+
+            AddPower(parent, width, "REVIVE THE DEAD",
+                     "brings back everyone who died, at full health", ReviveEveryone);
+            AddPower(parent, width, "HEAL EVERYONE",
+                     "full health, and the radiation cleared", HealEveryone);
+            AddPower(parent, width, "MAKE EVERYONE HAPPY",
+                     "sets every dweller to full happiness", CheerEveryone);
+            AddPower(parent, width, "LEVEL EVERYONE",
+                     "takes every dweller to level 50", LevelEveryone);
+            AddPower(parent, width, "MAX SPECIAL FOR EVERYONE",
+                     "ten in every stat, for every dweller", PerfectEveryone);
+            AddPower(parent, width, "DELIVER EVERY BABY",
+                     "every expecting mother gives birth now", DeliverEveryBaby);
+
+            AddHeader(parent, "THE VAULT", width);
+
+            AddPower(parent, width, "FILL THE STORES",
+                     "every resource to its cap", FillEverything);
+            AddPower(parent, width, "RUSHING ALWAYS WORKS",
+                     "clears the failure chance on every room", MakeRushingSafe);
+            AddPower(parent, width, "ROOM FOR 999",
+                     "raises the population limit", RaisePopulation);
+            AddPower(parent, width, "TENFOLD STORAGE",
+                     "raises what the vault can hold", RaiseStorage);
+
+            AddHeader(parent, "PEACE AND QUIET", width);
+
+            _incidentSwitch = AddPower(parent, width, "INCIDENTS",
+                                       "fires, infestations and raiders", ToggleIncidents);
+
+            EndScroll(view, width);
+            RefreshPowerSwitches();
+        }
+
+        private GameObject _incidentSwitch;
+
+        /// <summary>One thing the vault can be told to do, with the reason it exists beside it.</summary>
+        private GameObject AddPower(Transform parent, int width, string name, string what,
+                                    EventDelegate.Callback action)
+        {
+            const int cell = 62;
+            int middle = _cursorY - cell / 2;
+
+            Plate(parent, "Power_" + name, 0, middle, width, cell, Skin.Row(width, cell), 1);
+
+            int button = 104;
+            int textWidth = width - button - 34;
+
+            UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
+                                          -width / 2 + 14, middle + 12, textWidth, 22,
+                                          Skin.Bright, 3);
+            title.maxLineCount = 1;
+
+            UILabel note = MakeLeftLabel(parent, "PowerNote_" + name, what,
+                                         -width / 2 + 14, middle - 12, textWidth, 20,
+                                         Skin.Bright, 3);
+            note.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            note.maxLineCount = 1;
+
+            GameObject press = MakeButton(parent, "PowerDo_" + name, "DO IT",
+                                          width / 2 - button / 2 - 10, middle, button, 40,
+                                          false, action);
+
+            _cursorY -= cell + RowGap;
+            return press;
+        }
+
+        private void RefreshPowerSwitches()
+        {
+            if (_incidentSwitch == null) return;
+
+            UILabel text = _incidentSwitch.GetComponentInChildren<UILabel>();
+            if (text == null) return;
+
+            text.text = IncidentsOn() ? "TURN OFF" : "TURN ON";
+        }
+
+        private bool IncidentsOn()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                object state = vault == null ? null : ReadObject(vault, "EmergencyState");
+                object on = state == null ? null : ReadObject(state, "Enabled");
+
+                return on is bool && (bool)on;
+            }
+            catch { return true; }
+        }
+
+        private void ToggleIncidents()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                object state = vault == null ? null : ReadObject(vault, "EmergencyState");
+                if (state == null) { Trouble("The vault has no emergency state to switch."); return; }
+
+                bool wanted = !IncidentsOn();
+
+                PropertyInfo flag = state.GetType().GetProperty(
+                    "Enabled", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (flag == null || !flag.CanWrite)
+                {
+                    Trouble("The emergency state cannot be switched here.");
+                    return;
+                }
+
+                flag.SetValue(state, wanted, null);
+                RefreshPowerSwitches();
+
+                Say(wanted ? "Incidents are on again." : "Incidents are off.");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not switch incidents: " + e.Message);
+            }
+        }
+
+        /// <summary>Everyone the vault knows about, dead ones included.</summary>
+        private List<Dweller> Everyone()
+        {
+            List<Dweller> all = new List<Dweller>();
+
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null) return all;
+
+                List<Dweller> living = ReadObject(vault, "Dwellers") as List<Dweller>;
+                if (living != null) all.AddRange(living);
+            }
+            catch (Exception e)
+            {
+                ReportOnce("everyone", "Could not list the dwellers: " + e.Message);
+            }
+
+            return all;
+        }
+
+        private void ReviveEveryone()
+        {
+            int brought = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null || !one.IsDead) continue;
+
+                try
+                {
+                    MethodInfo revive = typeof(Dweller).GetMethod(
+                        "TryReviveInVaultWithFullHealth",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                    if (revive != null && (bool)revive.Invoke(one, new object[] { true })) brought++;
+                }
+                catch { }
+            }
+
+            Say(brought == 0 ? "Nobody was dead." : "Brought back " + brought + " dweller(s).");
+        }
+
+        private void HealEveryone()
+        {
+            int mended = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+
+                try
+                {
+                    object health = ReadObject(one, "Health");
+                    if (health == null) continue;
+
+                    object most = ReadObject(health, "HealthMax");
+                    if (most != null) WriteMember(health, "HealthValue", Convert.ToSingle(most));
+
+                    WriteMember(health, "RadiationValue", 0f);
+                    mended++;
+                }
+                catch { }
+            }
+
+            Say("Healed " + mended + " dweller(s).");
+        }
+
+        private void CheerEveryone()
+        {
+            int cheered = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+
+                try
+                {
+                    object mood = ReadObject(one, "Happiness");
+                    if (mood == null) continue;
+
+                    WriteMember(mood, "HappinessValue", 100f);
+                    cheered++;
+                }
+                catch { }
+            }
+
+            Say("Cheered up " + cheered + " dweller(s).");
+        }
+
+        private void LevelEveryone()
+        {
+            int raised = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+
+                try
+                {
+                    ApplyLevel(one, 50);
+                    raised++;
+                }
+                catch { }
+            }
+
+            Say("Took " + raised + " dweller(s) to level 50.");
+        }
+
+        private void PerfectEveryone()
+        {
+            int improved = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+
+                try
+                {
+                    object stats = ReadObject(one, "Stats");
+                    if (stats == null) continue;
+
+                    for (int i = 0; i < Specials.Length; i++)
+                    {
+                        MethodInfo find = stats.GetType().GetMethod(
+                            "GetStat",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                        object stat = find == null ? null : find.Invoke(stats, new object[] { Specials[i] });
+                        if (stat == null) continue;
+
+                        MethodInfo set = stat.GetType().GetMethod(
+                            "SetValueAndMinExp",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                        if (set != null) set.Invoke(stat, new object[] { 10 });
+                    }
+
+                    improved++;
+                }
+                catch { }
+            }
+
+            Say("Gave " + improved + " dweller(s) ten in everything.");
+        }
+
+        private void DeliverEveryBaby()
+        {
+            int born = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+
+                try
+                {
+                    object expecting = ReadObject(one, "Pregnant");
+                    if (!(expecting is bool) || !(bool)expecting) continue;
+
+                    object relations = ReadObject(one, "Relations");
+                    object bond = relations == null ? null : ReadObject(relations, "Partnership");
+                    if (bond == null) continue;
+
+                    MethodInfo deliver = bond.GetType().GetMethod(
+                        "BabyBirth",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                    if (deliver != null) { deliver.Invoke(bond, new object[] { true }); born++; }
+                }
+                catch { }
+            }
+
+            Say(born == 0 ? "Nobody is expecting." : "Delivered " + born + " baby(ies).");
+        }
+
+        private void FillEverything()
+        {
+            foreach (EResource resource in Enum.GetValues(typeof(EResource)))
+            {
+                if (resource == EResource.None || resource == EResource.Count) continue;
+                if (Array.IndexOf(NotRealResources, resource) >= 0) continue;
+
+                FillToCap(resource);
+            }
+
+            Say("Filled every store to its cap.");
+        }
+
+        private void MakeRushingSafe()
+        {
+            int cleared = 0;
+
+            try
+            {
+                Room[] rooms = Resources.FindObjectsOfTypeAll<Room>();
+
+                for (int i = 0; i < rooms.Length; i++)
+                {
+                    if (rooms[i] == null || !rooms[i].gameObject.activeInHierarchy) continue;
+
+                    MethodInfo reset = typeof(Room).GetMethod(
+                        "Cheat_ResetRushFailureChance",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                    if (reset == null)
+                    {
+                        Trouble("The game has no way to clear the rush chance.");
+                        return;
+                    }
+
+                    reset.Invoke(rooms[i], null);
+                    cleared++;
+                }
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not clear the rush chances: " + e.Message);
+                return;
+            }
+
+            // The game's own cheat, kept in its own code: the chance climbs again as rooms are
+            // rushed, so this is a reset rather than a switch.
+            Say("Cleared the failure chance on " + cleared + " room(s).");
+        }
+
+        private void RaisePopulation()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null) return;
+
+                WriteMember(vault, "MaxDwellers", 999);
+                Say("The vault will take 999 dwellers.");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not raise the population limit: " + e.Message);
+            }
+        }
+
+        private void RaiseStorage()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || vault.Storage == null) return;
+
+                GameResources cap = vault.Storage.MaxResources;
+                if (cap == null) { Trouble("The vault has no caps to raise."); return; }
+
+                GameResources raised = new GameResources(cap);
+
+                foreach (EResource resource in Enum.GetValues(typeof(EResource)))
+                {
+                    if (resource == EResource.None || resource == EResource.Count) continue;
+
+                    try
+                    {
+                        float now = cap[resource];
+                        if (now > 0f) raised[resource] = now * 10f;
+                    }
+                    catch { }
+                }
+
+                MethodInfo set = typeof(Storage).GetMethod(
+                    "SetMaxResources",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (set == null) { Trouble("The storage caps cannot be set here."); return; }
+
+                set.Invoke(vault.Storage, new object[] { raised });
+                Say("The vault holds ten times what it did.");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not raise the storage: " + e.Message);
+            }
+        }
+
+        /// <summary>Writes a property or a field, whichever the member turns out to be.</summary>
+        private static bool WriteMember(object target, string member, object value)
+        {
+            if (target == null) return false;
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            PropertyInfo property = target.GetType().GetProperty(member, Flags);
+            if (property != null && property.CanWrite)
+            {
+                property.SetValue(target, value, null);
+                return true;
+            }
+
+            FieldInfo field = target.GetType().GetField(member, Flags);
+            if (field == null) return false;
+
+            field.SetValue(target, value);
+            return true;
+        }
+
         private void BuildCreatePage(Transform page)
         {
             int width = _windowWidth - Margin * 2;
@@ -3479,10 +3918,8 @@ namespace VaultAdmin
                        delegate { StepPet(1); });
 
             // Named before the row is made: AddChoiceRow writes the caption into a label there and
-            // then, and an empty caption stays empty.
-            // Named for what it is: the same animal is filed once per rarity, and this picks which
-            // of those copies you get.
-            _petGrade.Caption = "GRADE";
+            // then, and an empty caption stays empty. It is a rarity, the same word a dweller uses.
+            _petGrade.Caption = "RARITY";
 
             _petPickLabel = MakeLeftLabel(parent, "PetPickName", "-",
                                           -width / 2 + 154, pickY, width - 164, RowHeight,
@@ -4762,15 +5199,15 @@ namespace VaultAdmin
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
                                            textLeft, y + 8, textWidth, 20, Skin.Bright, 3);
-            choice.Display.fontSize = Mathf.Max(11, Mathf.RoundToInt(_fontSize * 0.72f));
+            choice.Display.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.82f));
             choice.Display.maxLineCount = 1;
 
             // What it does, under what it is called. A coat chosen by its name alone is a coat
             // chosen for nothing.
             UILabel effect = MakeLeftLabel(parent, "SlotStats_" + choice.Caption, "",
                                            textLeft, y - 12, textWidth - 58, 18, Skin.Bright, 3);
-            effect.fontSize = Mathf.Max(10, Mathf.RoundToInt(_fontSize * 0.62f));
-            effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            effect.fontSize = Mathf.Max(13, Mathf.RoundToInt(_fontSize * 0.8f));
+            effect.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.9f);
             effect.maxLineCount = 1;
             choice.Detail = effect;
 
@@ -4883,10 +5320,11 @@ namespace VaultAdmin
 
             // The one line a stats panel would show: which stat this dweller leads with, and what
             // the coat on its back adds to it.
-            _mainStatLabel = MakeLabel(parent, "MainStat", "", 0, _cursorY - 14, width - 20, 26,
+            _mainStatLabel = MakeLabel(parent, "MainStat", "", 0, _cursorY - 24, width - 16, 46,
                                        Skin.Bright, 3);
-            _mainStatLabel.maxLineCount = 1;
-            _cursorY -= 28 + RowGap;
+            _mainStatLabel.maxLineCount = 2;
+            _mainStatLabel.overflowMethod = UILabel.Overflow.ShrinkContent;
+            _cursorY -= 48 + RowGap;
 
             MakeButton(parent, "CreateDweller", "CREATE DWELLER", 0, _cursorY - 22, width, 44, true,
                        CreateDwellerFromPanel);
