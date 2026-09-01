@@ -209,7 +209,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "0.65.0";
+        public const string PluginVersion = "0.66.0";
 
         internal static ManualLogSource Log;
 
@@ -4198,6 +4198,20 @@ namespace VaultAdmin
                     new Vector3(seen.center.x, seen.center.y, seen.center.z - 10f);
                 _previewCamera.orthographicSize = Mathf.Max(0.2f, seen.extents.y * 1.12f);
 
+                // Last look before the shutter. Anything that throws when it is seen must be gone
+                // by now, and if it is not, no picture is worth the game stopping for.
+                int late = Silence(body, "DwellerVisibilityDetector");
+                if (late > 0)
+                    Log.LogWarning("Took " + late + " more visibility watcher(s) off just in time.");
+
+                if (body.GetComponentInChildren(typeof(MonoBehaviour)) != null &&
+                    StillWatching(body))
+                {
+                    ReportOnce("watcher", "A visibility watcher is still on the stand-in; " +
+                                          "not filming, because it stops the game when it is seen.");
+                    return false;
+                }
+
                 _previewCamera.Render();
 
                 ReportOnce("filmed", "Filmed the stand-in: bounds " + seen.size +
@@ -4236,14 +4250,33 @@ namespace VaultAdmin
                     if (parts[i] == null) continue;
                     if (parts[i].GetType().Name != component) continue;
 
+                    // Immediately, not at the end of the frame. Destroy is deferred, and the
+                    // camera looks at the stand-in inside the same frame the component is taken
+                    // off — so a deferred removal is a component that is still there when it
+                    // matters, which is exactly how this crashed again.
                     parts[i].enabled = false;
-                    UnityEngine.Object.Destroy(parts[i]);
+                    UnityEngine.Object.DestroyImmediate(parts[i]);
                     taken++;
                 }
             }
             catch { }
 
             return taken;
+        }
+
+        private static bool StillWatching(GameObject body)
+        {
+            try
+            {
+                MonoBehaviour[] parts = body.GetComponentsInChildren<MonoBehaviour>(true);
+
+                for (int i = 0; i < parts.Length; i++)
+                    if (parts[i] != null && parts[i].GetType().Name == "DwellerVisibilityDetector")
+                        return true;
+            }
+            catch { }
+
+            return false;
         }
 
         private static void SetLayer(Transform branch, int layer)
