@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.8.1";
+        public const string PluginVersion = "1.8.2";
 
         internal static ManualLogSource Log;
 
@@ -6287,11 +6287,14 @@ namespace VaultAdmin
                     posted += Staff(ranks[i], pool, assign, manager, best);
                 }
 
-                Say("Took " + lifted + " off their posts and put " + posted + " back across " +
-                    rooms + " room(s): " + ranks[0].Count + " producing, " + ranks[1].Count +
-                    " training, " + ranks[2].Count + " crafting, " + ranks[3].Count + " door, " +
-                    ranks[4].Count + " quarters, " + ranks[5].Count + " last. " + turnedAway +
-                    " were never eligible.");
+                // Whoever is left is left: unassigned, wandering the vault. Every rank has been
+                // offered its places and none of them wanted these, so nothing is gained by
+                // pushing them into a room that has no use for them.
+                Say("Posted " + posted + " across " + rooms + " room(s) — " + ranks[0].Count +
+                    " producing, " + ranks[1].Count + " training, " + ranks[2].Count +
+                    " crafting, " + ranks[3].Count + " door, " + ranks[4].Count + " quarters, " +
+                    ranks[5].Count + " last. " + pool.Count + " are on a coffee break; " +
+                    turnedAway + " were never eligible.");
             }
             catch (Exception e)
             {
