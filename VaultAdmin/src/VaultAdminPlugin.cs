@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.2";
+        public const string PluginVersion = "1.6.0";
 
         internal static ManualLogSource Log;
 
@@ -770,6 +770,13 @@ namespace VaultAdmin
         private static ConfigEntry<bool> BottleAndCappyOff;
         private static ConfigEntry<bool> RushAlwaysWorks;
         private static ConfigEntry<int> MaxDwellersWanted;
+
+        // The same four, kept per vault. The entries above are what a vault falls back on when it
+        // has never been given an answer of its own.
+        private static ConfigEntry<string> IncidentsOffHere;
+        private static ConfigEntry<string> BottleAndCappyOffHere;
+        private static ConfigEntry<string> RushAlwaysWorksHere;
+        private static ConfigEntry<string> MaxDwellersHere;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
         private static ConfigEntry<string> HudButtonSprite;
@@ -1049,6 +1056,20 @@ namespace VaultAdmin
             RushAlwaysWorks = Config.Bind("Powers", "RushAlwaysWorks", false,
                 "Keeps the rush failure chance cleared, so rushing never goes wrong. The game " +
                 "raises that chance as rooms are rushed; this releases it again as it climbs.");
+
+            IncidentsOffHere = Config.Bind("Powers", "IncidentsOffPerVault", "",
+                "Which vaults have incidents switched off, as name=true;name=false. A vault with " +
+                "no entry here follows IncidentsOff.");
+
+            BottleAndCappyOffHere = Config.Bind("Powers", "BottleAndCappyOffPerVault", "",
+                "Which vaults have the wandering pair switched off, as name=true;name=false.");
+
+            RushAlwaysWorksHere = Config.Bind("Powers", "RushAlwaysWorksPerVault", "",
+                "Which vaults have rushing made safe, as name=true;name=false.");
+
+            MaxDwellersHere = Config.Bind("Powers", "MaxDwellersPerVault", "",
+                "The population limit per vault, as name=200;name=150. Zero or no entry leaves " +
+                "the game's own limit alone.");
 
             MaxDwellersWanted = Config.Bind("Powers", "MaxDwellers", 0,
                 "How many dwellers the vault will take. Zero leaves the game's own limit alone.");
@@ -5009,7 +5030,9 @@ namespace VaultAdmin
                      new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
             AddPowerWithNumber(parent, width, "POPULATION LIMIT",
                                "how many the vault takes",
-                               MaxDwellersWanted.Value > 0 ? MaxDwellersWanted.Value.ToString() : "200",
+                               NumberFor(MaxDwellersHere, MaxDwellersWanted) > 0
+                                   ? NumberFor(MaxDwellersHere, MaxDwellersWanted).ToString()
+                                   : "200",
                                RaisePopulation,
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
@@ -5168,12 +5191,12 @@ namespace VaultAdmin
 
             try
             {
-                if (IncidentsOff != null && IncidentsOff.Value && IncidentsOn()) SetIncidents(false);
+                if (PowerFor(IncidentsOffHere, IncidentsOff) && IncidentsOn()) SetIncidents(false);
 
-                if (BottleAndCappyOff != null && BottleAndCappyOff.Value && !BottleAndCappyLocked())
+                if (PowerFor(BottleAndCappyOffHere, BottleAndCappyOff) && !BottleAndCappyLocked())
                     SetBottleAndCappy(true);
 
-                if (RushAlwaysWorks != null && RushAlwaysWorks.Value)
+                if (PowerFor(RushAlwaysWorksHere, RushAlwaysWorks))
                 {
                     SetRushDanger(false);
                     ClearRushChances();
@@ -5181,14 +5204,16 @@ namespace VaultAdmin
 
                 WatchTheArmoury();
 
-                if (MaxDwellersWanted != null && MaxDwellersWanted.Value > 0)
+                int wantedHere = NumberFor(MaxDwellersHere, MaxDwellersWanted);
+
+                if (wantedHere > 0)
                 {
                     object now = ReadObject(vault, "MaxDwellers");
 
-                    if (now != null && Convert.ToInt32(now) != MaxDwellersWanted.Value)
+                    if (now != null && Convert.ToInt32(now) != wantedHere)
                     {
                         if (_wasMaxDwellers < 0) _wasMaxDwellers = Convert.ToInt32(now);
-                        WriteMember(vault, "MaxDwellers", MaxDwellersWanted.Value);
+                        WriteMember(vault, "MaxDwellers", wantedHere);
                     }
                 }
             }
@@ -5269,6 +5294,127 @@ namespace VaultAdmin
             _texturedOnce = false;
 
             Log.LogInfo("The vault closed; everything belonging to it has been let go.");
+        }
+
+        /// <summary>
+        /// The name of the vault currently loaded, or nothing if none is.
+        ///
+        /// A save calls it VaultName and it is what the player calls it too -- 167, 67, 512. Good
+        /// enough to key settings by, and readable in the config file afterwards, which a numeric
+        /// id would not be.
+        /// </summary>
+        private string VaultKey()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null || !vault.Loaded) return null;
+
+                string name = ReadAsText(vault, "VaultName");
+                if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "m_vaultName");
+                if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "Name");
+
+                return string.IsNullOrEmpty(name) ? null : name.Trim();
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// A setting remembered for one vault rather than for the game.
+        ///
+        /// The switches on the overrides page were kept once for everybody, which is wrong the
+        /// moment somebody has two vaults: turning incidents off in the one you are experimenting
+        /// with turned them off in the one you were playing properly. They are kept per vault now,
+        /// written as "167=true;67=false" so the config file stays something a person can read and
+        /// edit.
+        ///
+        /// The old game-wide entries survive as the default for a vault that has never been given
+        /// an answer of its own, which is what makes an existing config keep working.
+        /// </summary>
+        private bool PowerFor(ConfigEntry<string> store, ConfigEntry<bool> fallback)
+        {
+            string key = VaultKey();
+            if (key == null || store == null) return fallback != null && fallback.Value;
+
+            string said = Written(store.Value, key);
+            if (said == null) return fallback != null && fallback.Value;
+
+            return said == "true";
+        }
+
+        private void RememberPower(ConfigEntry<string> store, ConfigEntry<bool> fallback, bool on)
+        {
+            if (fallback != null) fallback.Value = on;
+
+            string key = VaultKey();
+            if (key == null || store == null) return;
+
+            store.Value = Write(store.Value, key, on ? "true" : "false");
+        }
+
+        private int NumberFor(ConfigEntry<string> store, ConfigEntry<int> fallback)
+        {
+            string key = VaultKey();
+            if (key == null || store == null) return fallback == null ? 0 : fallback.Value;
+
+            string said = Written(store.Value, key);
+            if (said == null) return fallback == null ? 0 : fallback.Value;
+
+            int many;
+            return int.TryParse(said, out many) ? many : 0;
+        }
+
+        private void RememberNumber(ConfigEntry<string> store, ConfigEntry<int> fallback, int many)
+        {
+            if (fallback != null) fallback.Value = many;
+
+            string key = VaultKey();
+            if (key == null || store == null) return;
+
+            store.Value = Write(store.Value, key, many.ToString());
+        }
+
+        /// <summary>What was written for one vault in a "name=value;name=value" line.</summary>
+        private static string Written(string all, string key)
+        {
+            if (string.IsNullOrEmpty(all)) return null;
+
+            string[] parts = all.Split(';');
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                int at = parts[i].IndexOf('=');
+                if (at <= 0) continue;
+
+                if (parts[i].Substring(0, at).Trim() == key)
+                    return parts[i].Substring(at + 1).Trim().ToLowerInvariant();
+            }
+
+            return null;
+        }
+
+        /// <summary>The same line with one vault's answer replaced or added.</summary>
+        private static string Write(string all, string key, string value)
+        {
+            List<string> kept = new List<string>();
+
+            if (!string.IsNullOrEmpty(all))
+            {
+                string[] parts = all.Split(';');
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i].Trim().Length == 0) continue;
+
+                    int at = parts[i].IndexOf('=');
+                    if (at > 0 && parts[i].Substring(0, at).Trim() == key) continue;
+
+                    kept.Add(parts[i].Trim());
+                }
+            }
+
+            kept.Add(key + "=" + value);
+            return string.Join(";", kept.ToArray());
         }
 
         private void CheckWhichVault()
@@ -5546,7 +5692,7 @@ namespace VaultAdmin
             // backwards.
             Switch(_incidentSwitch, !IncidentsOn());
             Switch(_bottleSwitch, BottleAndCappyLocked());
-            Switch(_rushSwitch, RushAlwaysWorks != null && RushAlwaysWorks.Value);
+            Switch(_rushSwitch, PowerFor(RushAlwaysWorksHere, RushAlwaysWorks));
         }
 
         /// <summary>
@@ -5622,7 +5768,7 @@ namespace VaultAdmin
                 return;
             }
 
-            BottleAndCappyOff.Value = wanted;
+            RememberPower(BottleAndCappyOffHere, BottleAndCappyOff, wanted);
             RefreshPowerSwitches();
 
             Say(wanted ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
@@ -6760,7 +6906,7 @@ namespace VaultAdmin
                 return;
             }
 
-            IncidentsOff.Value = !wanted;
+            RememberPower(IncidentsOffHere, IncidentsOff, !wanted);
             RefreshPowerSwitches();
 
             Say(wanted ? "Incidents are on again." : "Incidents are off, and will stay off.");
@@ -6966,8 +7112,8 @@ namespace VaultAdmin
         /// </summary>
         private void ToggleRushing()
         {
-            bool wanted = !RushAlwaysWorks.Value;
-            RushAlwaysWorks.Value = wanted;
+            bool wanted = !PowerFor(RushAlwaysWorksHere, RushAlwaysWorks);
+            RememberPower(RushAlwaysWorksHere, RushAlwaysWorks, wanted);
 
             SetRushDanger(!wanted);
             if (wanted) ClearRushChances();
@@ -7004,7 +7150,7 @@ namespace VaultAdmin
                 }
 
                 // Written down, so the vault is still this size after a restart.
-                MaxDwellersWanted.Value = wanted;
+                RememberNumber(MaxDwellersHere, MaxDwellersWanted, wanted);
                 Say("The vault will take " + wanted + " dwellers.");
             }
             catch (Exception e)
@@ -10147,7 +10293,7 @@ namespace VaultAdmin
             // A slow beat leaves a gap, and a rush that finishes inside that gap can still go
             // wrong. While anything is being rushed the chance is cleared every frame, which costs
             // one call per rushing room — and a vault rarely rushes more than one at a time.
-            if (RushAlwaysWorks != null && RushAlwaysWorks.Value) GuardTheRushes();
+            if (PowerFor(RushAlwaysWorksHere, RushAlwaysWorks)) GuardTheRushes();
 
             // A window that builds without error and draws nothing is the failure this mod has
             // already paid for once. Rather than trust that it appeared, look: a widget that is
