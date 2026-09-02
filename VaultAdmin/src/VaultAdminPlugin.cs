@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.1";
+        public const string PluginVersion = "1.3.2";
 
         internal static ManualLogSource Log;
 
@@ -7167,7 +7167,13 @@ namespace VaultAdmin
                     int who = order[i];
                     int best = BestInWardrobe(wardrobe, wants[who]);
 
-                    if (best < 0) break;   // nothing left that helps anybody
+                    // Not break. Nothing in the wardrobe helping THIS dweller says nothing about
+                    // the next one, and stopping there is why two outfits and fourteen working
+                    // dwellers produced one dressed and one left in storage: the second coat did
+                    // nothing for the second person in the queue, so everybody after them was
+                    // abandoned. An outfit nobody in front can use is an outfit for somebody
+                    // behind them.
+                    if (best < 0) continue;
 
                     string id = wardrobe[best];
                     wardrobe.RemoveAt(best);
@@ -8681,6 +8687,12 @@ namespace VaultAdmin
                 // guessing at names, pointed at a different question.
                 int swept = SweepForCapacity();
                 if (swept > 0) return swept;
+
+                // Nothing in the game will say it in one number, so it is counted. This is what
+                // was asked for in the first place -- what the living quarters hold -- and the
+                // rooms answer it one at a time even when nothing answers it all at once.
+                int counted = CountTheQuarters();
+                if (counted > 0) return counted;
             }
             catch (Exception e)
             {
@@ -8735,6 +8747,10 @@ namespace VaultAdmin
                         if (how == null)
                         {
                             held = types[t].GetProperty("MaxDwellersInVault", Statics | Ones);
+
+                            if (held == null)
+                                held = types[t].GetProperty("MaxDwellerCount", Statics | Ones);
+
                             if (held != null && !held.CanRead) held = null;
                             if (held != null && held.GetIndexParameters().Length > 0) held = null;
                         }
@@ -8759,7 +8775,7 @@ namespace VaultAdmin
 
                         Log.LogInfo("The rooms hold " + number + ", which " + types[t].Name +
                                     " keeps as " + (how != null ? "GetMaxDwellers()"
-                                                                : "MaxDwellersInVault") + ".");
+                                                                : held.Name) + ".");
 
                         return number;
                     }
@@ -8774,6 +8790,80 @@ namespace VaultAdmin
             }
 
             return -1;
+        }
+
+        /// <summary>
+        /// Adds up what the living quarters hold.
+        ///
+        /// Asked of the rooms rather than of the vault, because the vault has no such number and
+        /// neither has anything else in the game: the sweep looked at every class and came back
+        /// empty. A room does know how many it sleeps, and the sum of them is the answer the
+        /// button was always meant to give.
+        ///
+        /// Which rooms count is decided by the room, not by a list kept here: anything the game
+        /// files as living quarters is counted, so a room from an update or another mod is counted
+        /// on the same terms as the one that shipped.
+        /// </summary>
+        private int CountTheQuarters()
+        {
+            try
+            {
+                Room[] all = Resources.FindObjectsOfTypeAll<Room>();
+
+                int total = 0;
+                int rooms = 0;
+                string how = null;
+
+                string[] names = { "MaxDwellerCount", "m_maxDwellerCount", "Capacity",
+                                   "m_capacity" };
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Room room = all[i];
+                    if (room == null || !room.gameObject.activeInHierarchy) continue;
+
+                    string kind = TypeOf(room);
+                    if (kind == null) continue;
+
+                    if (kind.IndexOf("LivingQuarter", StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    for (int n = 0; n < names.Length; n++)
+                    {
+                        object many = ReadObject(room, names[n]);
+                        if (many == null) continue;
+
+                        try
+                        {
+                            int holds = Convert.ToInt32(many);
+                            if (holds <= 0) continue;
+
+                            total += holds;
+                            rooms++;
+                            if (how == null) how = names[n];
+                            break;
+                        }
+                        catch { }
+                    }
+                }
+
+                if (rooms == 0)
+                {
+                    ReportOnce("quarters", "No living quarters in this vault would say how many " +
+                                           "they sleep.");
+                    return -1;
+                }
+
+                Log.LogInfo("The living quarters hold " + total + " between " + rooms +
+                            " room(s), counted from " + how + ".");
+
+                return total;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("quarters", "Could not count the living quarters: " + e.Message);
+                return -1;
+            }
         }
 
         /// <summary>Hands the limit back to the living quarters.</summary>
@@ -8799,7 +8889,7 @@ namespace VaultAdmin
                 RememberNumber(MaxDwellersHere, MaxDwellersWanted, 0);
                 _wasMaxDwellers = -1;
 
-                Say("Back to what the rooms hold: " + real + ".");
+                Say("Back to what the quarters hold: " + real + ".");
             }
             catch (Exception e)
             {
