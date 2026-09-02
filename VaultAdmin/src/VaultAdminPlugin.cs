@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.6";
+        public const string PluginVersion = "1.0.7";
 
         internal static ManualLogSource Log;
 
@@ -11020,6 +11020,20 @@ namespace VaultAdmin
                 {
                     _wasInAVault = false;
                     Trace("the vault closed; back at the menu");
+
+                    // The window lived in the vault's scene and went down with it. Left standing
+                    // as "open", the panel had nothing left to draw with, and OnGUI fell through
+                    // to the scaffold that came before it -- the grey box in the main menu saying
+                    // no vault was loaded. It belongs to the vault, so it closes with the vault,
+                    // and the references go too: the next vault builds a fresh window rather than
+                    // reaching for widgets that were destroyed with the last one.
+                    _panelOpen = false;
+                    _nguiWindow = null;
+                    _frame = null;
+                    _drawChecked = false;
+                    _nguiDrawing = false;
+
+                    ForgetTheOldWindow();
                 }
 
                 if (_knownVault != null) LetTheOldVaultGo();
@@ -11172,6 +11186,12 @@ namespace VaultAdmin
             // came before it. It stays for the case where the window cannot be built or, having
             // been built, never reaches the screen — so the mod is never simply unreachable.
             if (_nguiWindow != null && (!_drawChecked || _nguiDrawing)) return;
+
+            // And it is a fallback for a vault, not for the menu. Outside one it has nothing to
+            // draw but a line saying there is no vault, which is the whole of what appeared in the
+            // main menu: an old grey window from a version of this panel that had been replaced.
+            Vault open = SafeVault();
+            if (open == null || !open.Loaded) return;
 
             try
             {
