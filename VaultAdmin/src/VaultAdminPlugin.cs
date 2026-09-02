@@ -30,6 +30,10 @@ namespace VaultAdmin
         public static readonly Color Ink = new Color32(0x08, 0x51, 0x08, 0xFF);      // 085108
         public static readonly Color Rim = new Color32(0x08, 0x60, 0x0A, 0xFF);      // 08600A
 
+        // Below the ink, and still green: the line drawn inside a solid shape, where black would
+        // read as a hole in it rather than a fold of it.
+        public static readonly Color Deep = new Color32(0x04, 0x31, 0x05, 0xFF);     // 043105
+
         // The same three greens at different weights, and nothing else. The game's own windows
         // are a dark green wash over the vault with a bright edge; a card inside one is the same
         // wash again, lighter, so the vault still shows through it; a recess is the dark green
@@ -294,7 +298,10 @@ namespace VaultAdmin
             // numbers, darker still for the edges between them.
             Color solid = Bright;
             Color spots = Ink;
-            Color edge = Color.Lerp(Ink, Color.black, 0.45f);
+            // Darker green, not nearly black. Lerping towards black took the green out of it and
+            // left a grey line, which in a panel with three greens in it reads as a different
+            // program's edge.
+            Color edge = Deep;
 
             // Finer. At the old weight the edges were as loud as the numbers, and on a shape
             // this small that is a drawing of a cage rather than of a cube.
@@ -832,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.5";
+        public const string PluginVersion = "1.4.6";
 
         internal static ManualLogSource Log;
 
@@ -12197,6 +12204,16 @@ namespace VaultAdmin
         /// says otherwise is showing the player the inside of the game rather than the game.
         /// Anything not in this list is at least split into words rather than left as one.
         /// </summary>
+        /// <summary>An item by the name it is known by, tidied if all it has is an id.</summary>
+        private static string Spoken(CatalogueEntry entry)
+        {
+            if (entry == null) return "nothing";
+
+            if (!string.IsNullOrEmpty(entry.Name) && entry.Name != entry.Id) return entry.Name;
+
+            return Tidy(entry.Id);
+        }
+
         private static string ResourceName(EResource resource)
         {
             // By what the name contains rather than by a member I have to spell right. Two
@@ -14164,8 +14181,11 @@ namespace VaultAdmin
 
                 if (vault.Inventory.EmptySpace() <= 0)
                 {
-                    // Say so rather than calling into an add that may quietly drop it.
-                    Log.LogWarning("The inventory is full; " + entry.Name + " was not granted.");
+                    // Trouble, not a log line. The row marks itself given unless the grant reports
+                    // a fault, and a warning in a file nobody has open is not reporting a fault --
+                    // so a full vault handed out nothing and said it had, on the card of every
+                    // weapon pressed.
+                    Trouble("Storage is full; " + Spoken(entry) + " was not given.");
                     return;
                 }
 
@@ -14173,11 +14193,14 @@ namespace VaultAdmin
                 vault.Inventory.AddItem(item, false, false);
                 if (entry.Type == EItemType.Weapon) _grantsMade++;
 
-                Say("Granted " + entry.Name + ".");
+                // The name a player reads, and the id only where there is no name to read. An
+                // id is a key into somebody's table: "032Pistol_Rusty" is not a thing anybody
+                // has ever called a gun.
+                Say("Gave " + Spoken(entry) + ".");
             }
             catch (Exception e)
             {
-                Trouble("Could not grant " + entry.Name + ": " + e.Message);
+                Trouble("Could not give " + Spoken(entry) + ": " + e.Message);
             }
         }
 
@@ -14198,7 +14221,9 @@ namespace VaultAdmin
                 vault.Storage.AddResource(new GameResources(resource, amount), true, true);
                 ShowResourceFlight(resource, amount);
 
-                Log.LogInfo("Granted " + amount.ToString("0") + " " + resource + ".");
+                // In the band, and by the name on the row rather than the name in the enum:
+                // "Gave 1000 CAPS", not "Granted 1000 Nuka".
+                Say("Gave " + amount.ToString("0") + " " + ResourceName(resource) + ".");
             }
             catch (Exception e)
             {
@@ -14218,12 +14243,19 @@ namespace VaultAdmin
                 if (space == null) return;
 
                 float room = space[resource];
-                if (room <= 0f) return;
+
+                // Silence looked like a broken button. It is not broken; there is nowhere to put
+                // any more, and that is worth a word.
+                if (room <= 0f)
+                {
+                    Say(ResourceName(resource) + " is already at the cap.");
+                    return;
+                }
 
                 vault.Storage.AddResource(new GameResources(resource, room), true, true);
                 ShowResourceFlight(resource, room);
 
-                Log.LogInfo("Filled " + resource + " to its cap (+" + room.ToString("0") + ").");
+                Say(ResourceName(resource) + " filled to the cap, +" + room.ToString("0") + ".");
             }
             catch (Exception e)
             {
@@ -14388,7 +14420,8 @@ namespace VaultAdmin
                                    "went from " + before + " to " + after + ", which is " +
                                    (after - before) + ".");
 
-                Say("Granted " + quantity + " " + type + " box" + (quantity == 1 ? "" : "es") + ".");
+                Say("Gave " + quantity + " " + BoxName(type) +
+                    (quantity == 1 ? "" : "s") + ".");
             }
             catch (Exception e)
             {
