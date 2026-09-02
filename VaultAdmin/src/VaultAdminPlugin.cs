@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.6.0";
+        public const string PluginVersion = "1.7.0";
 
         internal static ManualLogSource Log;
 
@@ -5009,16 +5009,16 @@ namespace VaultAdmin
                      new[] { "Icon_happiness" });
             AddPower(parent, width, "LEVEL EVERYONE",
                      "everyone to level 50", LevelEveryone,
-                     new[] { "Lvl_Up", "Icon_UpgradePlain" });
+                     new[] { "Lvl_Up", "Icon_UpgradePlain" }, true);
             AddPower(parent, width, "MAX SPECIAL FOR EVERYONE",
                      "ten in every stat", PerfectEveryone,
-                     new[] { "Icon_TrainingStrength", "Icon_TrainingPlain" });
+                     new[] { "Icon_TrainingStrength", "Icon_TrainingPlain" }, true);
             AddPower(parent, width, "DELIVER EVERY BABY",
                      "every pregnancy ends now", DeliverEveryBaby,
-                     new[] { "Icon_Pregnant" });
+                     new[] { "Icon_Pregnant" }, true);
             AddPower(parent, width, "GROW THE CHILDREN",
                      "every child grows up now", GrowTheChildren,
-                     new[] { "Icon_ChildrenGrowthColorGreen" });
+                     new[] { "Icon_ChildrenGrowthColorGreen" }, true);
             AddPower(parent, width, "FINISH ALL TRAINING",
                      "every training done", FinishAllTraining,
                      new[] { "Icon_TrainingPlain", "Icon_Training" });
@@ -5047,7 +5047,7 @@ namespace VaultAdmin
 
             AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
                      "best where it works, worst where it trains", AssignTheBest,
-                     Skin.Ranked(38));
+                     Skin.Ranked(38), true);
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
@@ -5080,9 +5080,21 @@ namespace VaultAdmin
         /// </summary>
         private sealed class Power
         {
+            // A power that cannot be undone asks twice. These are the second question: the first
+            // button steps aside and these two take its place until one of them is pressed or the
+            // moment passes.
+            public GameObject Ask;
+            public GameObject Yes;
+            public GameObject No;
+            public float ArmedUntil;
+            public string Wording;
+
             public UILabel Note;
             public string Description;
             public float Until;
+
+            // What YES will do, kept so the two buttons can carry out the row's own action.
+            public EventDelegate.Callback Deed;
         }
 
         private readonly List<Power> _powers = new List<Power>();
@@ -5091,8 +5103,14 @@ namespace VaultAdmin
         private GameObject AddPower(Transform parent, int width, string name, string what,
                                     EventDelegate.Callback action, Texture2D drawn)
         {
+            return AddPower(parent, width, name, what, action, drawn, false);
+        }
+
+        private GameObject AddPower(Transform parent, int width, string name, string what,
+                                    EventDelegate.Callback action, Texture2D drawn, bool grave)
+        {
             _drawnPowerIcon = drawn;
-            try { return AddPower(parent, width, name, what, action, (string[])null); }
+            try { return AddPower(parent, width, name, what, action, (string[])null, grave); }
             finally { _drawnPowerIcon = null; }
         }
 
@@ -5100,6 +5118,12 @@ namespace VaultAdmin
 
         private GameObject AddPower(Transform parent, int width, string name, string what,
                                     EventDelegate.Callback action, string[] icon)
+        {
+            return AddPower(parent, width, name, what, action, icon, false);
+        }
+
+        private GameObject AddPower(Transform parent, int width, string name, string what,
+                                    EventDelegate.Callback action, string[] icon, bool grave)
         {
             const int cell = 66;
             const int box = 38;
@@ -5159,6 +5183,11 @@ namespace VaultAdmin
 
             EventDelegate.Callback wrapped = delegate
             {
+                // A power that cannot be undone asks first. Everything else simply happens: a
+                // question in front of a harmless action is a question people learn to click
+                // through, and then it is not there when it matters.
+                if (grave) { Arm(power); return; }
+
                 // Cleared even when the action throws. Left set, the next power's answer was
                 // written onto this row instead of its own.
                 _pressed = power;
@@ -5169,6 +5198,30 @@ namespace VaultAdmin
             GameObject press = MakeButton(parent, "PowerDo_" + name, "DO IT",
                                           width / 2 - button / 2 - 10, middle, button, 40,
                                           false, wrapped);
+
+            if (grave)
+            {
+                // Built now and hidden, rather than made on the press. A button that appears is a
+                // button whose first frame nobody has aimed at yet, and this one is asking whether
+                // to do something that cannot be taken back.
+                power.Ask = press;
+                power.Wording = what;
+
+                int half = (button - 4) / 2;
+                int right = width / 2 - 10;
+
+                power.Yes = MakeButton(parent, "PowerYes_" + name, "YES",
+                                       right - button + half / 2, middle, half, 40, true,
+                                       delegate { Confirmed(power); });
+
+                power.No = MakeButton(parent, "PowerNo_" + name, "NO",
+                                      right - half / 2, middle, half, 40, false,
+                                      delegate { Disarm(power, true); });
+
+                power.Yes.SetActive(false);
+                power.No.SetActive(false);
+                power.Deed = action;
+            }
 
             _cursorY -= cell + RowGap;
             return press;
@@ -5652,6 +5705,82 @@ namespace VaultAdmin
 
             _cursorY -= cell + RowGap;
             return press;
+        }
+
+        /// <summary>
+        /// Asks the row's question: the button steps aside and YES and NO take its place.
+        ///
+        /// Giving a hundred dwellers level fifty is not a mistake anybody makes twice, because
+        /// there is no way back from it -- and it is one press away from the thing above it. So
+        /// the ones that cannot be undone ask, and the ones that can do not: a question in front
+        /// of a harmless action is a question people learn to click through, and then it is not
+        /// there when it matters.
+        /// </summary>
+        private void Arm(Power power)
+        {
+            if (power == null || power.Yes == null) return;
+
+            // Only one question at a time. Two rows both asking is two rows both looking answered
+            // by whichever is pressed.
+            for (int i = 0; i < _powers.Count; i++)
+                if (_powers[i] != power) Disarm(_powers[i], false);
+
+            power.ArmedUntil = Time.time + 6f;
+
+            if (power.Ask != null) power.Ask.SetActive(false);
+            power.Yes.SetActive(true);
+            if (power.No != null) power.No.SetActive(true);
+
+            if (power.Note != null)
+            {
+                power.Note.text = "THIS CANNOT BE UNDONE";
+                power.Note.color = Skin.Bright;
+            }
+        }
+
+        /// <summary>Puts the row back to a question not being asked.</summary>
+        private void Disarm(Power power, bool say)
+        {
+            if (power == null || power.ArmedUntil <= 0f) return;
+
+            power.ArmedUntil = 0f;
+
+            if (power.Ask != null) power.Ask.SetActive(true);
+            if (power.Yes != null) power.Yes.SetActive(false);
+            if (power.No != null) power.No.SetActive(false);
+
+            if (power.Note != null)
+            {
+                power.Note.text = say ? "left alone" : power.Description;
+                power.Note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
+            }
+
+            if (say) power.Until = Time.time + 2f;
+        }
+
+        /// <summary>The answer was yes.</summary>
+        private void Confirmed(Power power)
+        {
+            if (power == null || power.Deed == null) return;
+
+            EventDelegate.Callback deed = power.Deed;
+            Disarm(power, false);
+
+            _pressed = power;
+            try { deed(); }
+            finally { _pressed = null; }
+        }
+
+        /// <summary>Takes down a question nobody answered.</summary>
+        private void ForgetOldQuestions()
+        {
+            float now = Time.time;
+
+            for (int i = 0; i < _powers.Count; i++)
+            {
+                Power one = _powers[i];
+                if (one != null && one.ArmedUntil > 0f && now >= one.ArmedUntil) Disarm(one, false);
+            }
         }
 
         /// <summary>Puts an answer on the row that was pressed, for as long as it takes to read.</summary>
@@ -10280,6 +10409,7 @@ namespace VaultAdmin
             {
                 ForgetOldAnswers();
                 if (_tab == Tab.Grant) TickConfirmations();
+                if (_tab == Tab.Powers) ForgetOldQuestions();
                 if (_tab == Tab.Create) TickTheDie();
             }
 
