@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.7";
+        public const string PluginVersion = "1.3.8";
 
         internal static ManualLogSource Log;
 
@@ -7327,7 +7327,7 @@ namespace VaultAdmin
                     string id = ReadAsText(worn, "Id");
                     if (id == plain) continue;
 
-                    wearers[i].EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
+                    wearers[i].EquipOutfit(new DwellerItem(EItemType.Outfit, plain), true);
                     changed++;
 
                     // Put back by hand if the game did not put it back itself. It does not: the
@@ -7465,9 +7465,17 @@ namespace VaultAdmin
         /// </summary>
         private bool Wear(Dweller who, DwellerItem coat, VaultInventory inventory)
         {
+            SayWhatEquipTakes();
+
             try
             {
-                who.EquipOutfit(coat, false);
+                // True, where it used to be false, and the false is why a vault full of dressed
+                // dwellers came back naked. Every outfit put on this way survived until the save
+                // and not past it, and the same argument set to false is why undressing destroyed
+                // what it took off instead of returning it. Both are the game not being told to
+                // do its own bookkeeping. The bench keeps false on purpose: the figure on it is a
+                // picture, and a picture must not touch the vault's inventory at all.
+                who.EquipOutfit(coat, true);
             }
             catch (Exception e)
             {
@@ -9103,9 +9111,12 @@ namespace VaultAdmin
 
                 PutInField(_populationInput, real.ToString());
 
-                // Nought means "leave it alone" to the standing rule, which is what a reset is:
-                // the vault goes back to being governed by its rooms rather than by a number.
-                RememberNumber(MaxDwellersHere, MaxDwellersWanted, 0);
+                // The counted number, not nought. Nought means "leave it alone", and leaving it
+                // alone is not what was wanted: the game recomputes the limit at load and another
+                // mod raises it, so a reset that only stopped overriding lasted until the next
+                // reload and then read 200 again. Writing what the quarters hold makes the
+                // standing rule put it back every time the vault opens.
+                RememberNumber(MaxDwellersHere, MaxDwellersWanted, real);
                 _wasMaxDwellers = -1;
 
                 Say("Back to what the quarters hold: " + real + ".");
@@ -10128,6 +10139,62 @@ namespace VaultAdmin
 
         private static bool _saidWhatStorageHolds;
         private static readonly List<string> _benchWore = new List<string>();
+
+        /// <summary>
+        /// Writes down what EquipOutfit's second argument is called, once.
+        ///
+        /// It was being passed false because the bench passes false, and the bench is drawing a
+        /// picture. Two faults came out of that one borrowed line -- clothes destroyed on removal
+        /// and clothes not saved on wearing -- and neither would have happened if the argument had
+        /// been read rather than copied. The game names its own parameters; it has settled this
+        /// kind of question twice before.
+        /// </summary>
+        private static void SayWhatEquipTakes()
+        {
+            if (_saidWhatEquipTakes) return;
+            _saidWhatEquipTakes = true;
+
+            try
+            {
+                MethodInfo how = FindMethod2(typeof(Dweller), "EquipOutfit");
+                if (how == null) return;
+
+                ParameterInfo[] takes = how.GetParameters();
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("Dweller.EquipOutfit takes:");
+
+                for (int i = 0; i < takes.Length; i++)
+                    said.Append(" ").Append(takes[i].ParameterType.Name).Append(" ")
+                        .Append(takes[i].Name);
+
+                Log.LogInfo(said.ToString());
+            }
+            catch { }
+        }
+
+        private static bool _saidWhatEquipTakes;
+
+        /// <summary>A method by name whatever it takes, for reading its parameters.</summary>
+        private static MethodInfo FindMethod2(Type type, string member)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            for (; type != null; type = type.BaseType)
+            {
+                try
+                {
+                    MethodInfo[] all = type.GetMethods(Flags);
+
+                    for (int i = 0; i < all.Length; i++)
+                        if (all[i].Name == member) return all[i];
+                }
+                catch { }
+            }
+
+            return null;
+        }
 
         /// <summary>Whether storage is already holding this exact item.</summary>
         private static bool InStorage(VaultInventory inventory, DwellerItem thing)
