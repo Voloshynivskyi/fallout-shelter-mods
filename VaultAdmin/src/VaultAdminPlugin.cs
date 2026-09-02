@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.8.2";
+        public const string PluginVersion = "1.9.0";
 
         internal static ManualLogSource Log;
 
@@ -4996,17 +4996,35 @@ namespace VaultAdmin
             Transform parent;
             UIScrollView view = BeginScroll(page, width, ContentTop(), ContentBottom(), out parent);
 
-            AddHeader(parent, "EVERYONE", width);
+            // One list, in the order somebody actually wants them. The page used to be split
+            // between what is done to the dwellers and what is done to the vault, which is a
+            // distinction that mattered to whoever wrote it and to nobody using it: staffing the
+            // rooms and filling the larder are the two things you reach for first, and they sat in
+            // different sections halfway down.
+            AddHeader(parent, "THE VAULT", width);
 
-            AddPower(parent, width, "REVIVE THE DEAD",
-                     "everyone who died, at full health", ReviveEveryone,
-                     new[] { "Icon_StimpackPlain", "Icon_Stimpack", "Icon_dwellerPlain" });
+            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
+                     "best where it works, worst where it trains", AssignTheBest,
+                     Skin.Ranked(38), true);
+            AddPower(parent, width, "FILL FOOD, WATER, POWER",
+                     "the three, to their caps", FillTheEssentials,
+                     new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
             AddPower(parent, width, "HEAL EVERYONE",
                      "full health, no radiation", HealEveryone,
                      new[] { "Icon_RadawayPlain", "Icon_Radaway", "Icon_StimpackPlain" });
+            AddPower(parent, width, "REVIVE THE DEAD",
+                     "everyone who died, at full health", ReviveEveryone,
+                     new[] { "Icon_StimpackPlain", "Icon_Stimpack", "Icon_dwellerPlain" });
             AddPower(parent, width, "MAKE EVERYONE HAPPY",
                      "everyone at 100%", CheerEveryone,
                      new[] { "Icon_happiness" });
+
+            AddPower(parent, width, "FINISH ALL TRAINING",
+                     "every training done", FinishAllTraining,
+                     new[] { "Icon_TrainingPlain", "Icon_Training" });
+            AddPower(parent, width, "UNLOCK EVERY RECIPE",
+                     "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
+
             AddPower(parent, width, "LEVEL EVERYONE",
                      "everyone to level 50", LevelEveryone,
                      new[] { "Lvl_Up", "Icon_UpgradePlain" }, true);
@@ -5019,37 +5037,10 @@ namespace VaultAdmin
             AddPower(parent, width, "GROW THE CHILDREN",
                      "every child grows up now", GrowTheChildren,
                      new[] { "Icon_ChildrenGrowthColorGreen" }, true);
-            AddPower(parent, width, "FINISH ALL TRAINING",
-                     "every training done", FinishAllTraining,
-                     new[] { "Icon_TrainingPlain", "Icon_Training" });
 
-            AddHeader(parent, "THE VAULT", width);
-
-            AddPower(parent, width, "FILL FOOD, WATER, POWER",
-                     "the three, to their caps", FillTheEssentials,
-                     new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
-            AddPowerWithNumber(parent, width, "POPULATION LIMIT",
-                               "how many the vault takes",
-                               NumberFor(MaxDwellersHere, MaxDwellersWanted) > 0
-                                   ? NumberFor(MaxDwellersHere, MaxDwellersWanted).ToString()
-                                   : "200",
-                               RaisePopulation,
-                               new[] { "Icon_dwellerPlain", "Icon_dweller" });
-            AddPower(parent, width, "UNLOCK EVERY RECIPE",
-                     "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
-
-
-
-            // On its own, and next to last. Everything else here changes a rule and is done with;
-            // this moves fifty people about, and it is the only thing on the page worth a moment's
-            // thought before pressing.
-            AddHeader(parent, "ASSIGNMENT", width);
-
-            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
-                     "best where it works, worst where it trains", AssignTheBest,
-                     Skin.Ranked(38), true);
-
-            AddHeader(parent, "PEACE AND QUIET", width);
+            // The switches, and the one number that behaves like one: a population limit is a rule
+            // the vault keeps, not a thing you do to it once.
+            AddHeader(parent, "RULES", width);
 
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
                                    "no accident from rushing",
@@ -5061,6 +5052,14 @@ namespace VaultAdmin
             _bottleSwitch = AddPower(parent, width, "NO BOTTLE AND CAPPY",
                                      "the pair stay away", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
+
+            AddPowerWithNumber(parent, width, "POPULATION LIMIT",
+                               "how many the vault takes",
+                               NumberFor(MaxDwellersHere, MaxDwellersWanted) > 0
+                                   ? NumberFor(MaxDwellersHere, MaxDwellersWanted).ToString()
+                                   : "200",
+                               RaisePopulation,
+                               new[] { "Icon_dwellerPlain", "Icon_dweller" });
 
             EndScroll(view, width);
             RefreshPowerSwitches();
@@ -11825,6 +11824,27 @@ namespace VaultAdmin
         /// </summary>
         private static bool _reportedFlight;
 
+        /// <summary>How many lunchboxes the vault is holding, or -1 if it will not say.</summary>
+        private static int BoxesHeld(Vault vault)
+        {
+            string[] names = { "LunchBoxesCount", "m_lunchBoxesCount", "LunchBoxes" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                object many = ReadObject(vault, names[i]);
+                if (many == null) continue;
+
+                try
+                {
+                    System.Collections.ICollection list = many as System.Collections.ICollection;
+                    return list != null ? list.Count : Convert.ToInt32(many);
+                }
+                catch { }
+            }
+
+            return -1;
+        }
+
         private void ShowBoxFlight(ELunchBoxType type, int quantity)
         {
             if (quantity <= 0) return;
@@ -11867,11 +11887,11 @@ namespace VaultAdmin
                     Log.LogInfo(said.ToString());
                 }
 
-                // False, where it used to be true. The boxes were arriving twice -- once from the
-                // loop above, which adds them on purpose, and once from this, which was asked for
-                // an animation and was quietly doing the giving as well. A flight of boxes that
-                // also delivers them is not decoration.
-                fly.Invoke(particles, new object[] { from, quantity, type, false, null });
+                // True again. The argument I turned off is withSfx -- the game said so when it
+                // was asked -- so it was the sound, and silencing it fixed nothing. The doubling
+                // is somewhere else, and the count below is how it gets found rather than guessed
+                // at a second time.
+                fly.Invoke(particles, new object[] { from, quantity, type, true, null });
             }
             catch (Exception e)
             {
@@ -11936,7 +11956,16 @@ namespace VaultAdmin
                 // AddLunchBox(type, n) does not add n boxes. All three of its overloads insert a
                 // single one; the number is handed to the LunchBox constructor, not counted. So the
                 // count is kept here, where it means what it says.
+                int before = BoxesHeld(vault);
+
                 for (int i = 0; i < quantity; i++) vault.AddLunchBox(type);
+
+                int after = BoxesHeld(vault);
+
+                if (before >= 0 && after >= 0 && after - before != quantity)
+                    Log.LogWarning("Asked for " + quantity + " " + type + " box(es); the vault " +
+                                   "went from " + before + " to " + after + ", which is " +
+                                   (after - before) + ".");
 
                 ShowBoxFlight(type, quantity);
                 Say("Granted " + quantity + " " + type + " box" + (quantity == 1 ? "" : "es") + ".");
