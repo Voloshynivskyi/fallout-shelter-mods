@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.9.0";
+        public const string PluginVersion = "1.9.1";
 
         internal static ManualLogSource Log;
 
@@ -5956,6 +5956,8 @@ namespace VaultAdmin
             Log.LogWarning("Nothing grew: " + seen + " dweller(s) looked at, " + small +
                            " of them children by the game's own reckoning.");
 
+            if (small > 0) SayWhatADwellerOffers("grow", "child", "age");
+
             Say(small == 0
                 ? "No children among " + seen + " dwellers."
                 : small + " children found, but the game would not grow them.");
@@ -7193,6 +7195,63 @@ namespace VaultAdmin
             return all;
         }
 
+        /// <summary>
+        /// Writes down what a dweller offers on a subject, once per subject.
+        ///
+        /// Twice now a power has done half of what the game does: the dead smile and stay dead,
+        /// the children keep a three-hour task that never finishes. Both mean the call being made
+        /// is real and is not the whole of it. The rest of what the game has to say about the
+        /// subject is one line, and it is a line I keep needing.
+        /// </summary>
+        private static void SayWhatADwellerOffers(params string[] about)
+        {
+            try
+            {
+                string key = "offers_" + string.Join("_", about);
+                if (!_reported.Add(key)) return;
+
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("Dweller offers, on ").Append(string.Join("/", about)).Append(":");
+
+                MethodInfo[] all = typeof(Dweller).GetMethods(Flags);
+                for (int i = 0; i < all.Length; i++)
+                {
+                    bool wanted = false;
+                    for (int a = 0; a < about.Length && !wanted; a++)
+                        wanted = all[i].Name.IndexOf(about[a], StringComparison.OrdinalIgnoreCase) >= 0;
+
+                    if (!wanted) continue;
+
+                    said.Append(" ").Append(all[i].Name).Append("(");
+
+                    ParameterInfo[] args = all[i].GetParameters();
+                    for (int p = 0; p < args.Length; p++)
+                        said.Append(p > 0 ? "," : "").Append(args[p].ParameterType.Name);
+
+                    said.Append(")");
+                }
+
+                Type task = FindType("TaskMgr");
+                if (task != null)
+                {
+                    said.Append("  |  TaskMgr:");
+
+                    MethodInfo[] jobs = task.GetMethods(Flags);
+                    for (int i = 0; i < jobs.Length; i++)
+                        if (jobs[i].Name.IndexOf("task", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            jobs[i].Name.IndexOf("finish", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            jobs[i].Name.IndexOf("complete", StringComparison.OrdinalIgnoreCase) >= 0)
+                            said.Append(" ").Append(jobs[i].Name);
+                }
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
         private void ReviveEveryone()
         {
             int brought = 0;
@@ -7212,7 +7271,18 @@ namespace VaultAdmin
                 catch { }
             }
 
-            Say(brought == 0 ? "Nobody was dead." : "Brought back " + brought + " dweller(s).");
+            if (brought > 0) { Say("Brought back " + brought + " dweller(s)."); return; }
+
+            // Nobody came back, and the reason is worth more than the sentence. The dead are
+            // smiling and still dead, which means the call is being made and is not the whole of
+            // what the game does to bring somebody back.
+            SayWhatADwellerOffers("reviv", "dead", "death");
+
+            int dead = 0;
+            foreach (Dweller one in Everyone())
+                if (one != null) { try { if (one.IsDead) dead++; } catch { } }
+
+            Say(dead == 0 ? "Nobody was dead." : dead + " are dead and would not come back.");
         }
 
         private void HealEveryone()
