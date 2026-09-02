@@ -670,7 +670,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.10";
+        public const string PluginVersion = "1.0.11";
 
         internal static ManualLogSource Log;
 
@@ -1113,7 +1113,7 @@ namespace VaultAdmin
             // the player: changing a default does nothing for anybody who has already run the mod,
             // so tuning where this sits by changing a default would have moved it for nobody.
             const float nudgeAcross = 0f;
-            const float nudgeUp = 10f;
+            const float nudgeUp = 4f;
 
             float drop = seen.extents.y + mine.extents.y - nudgeUp;
 
@@ -1397,7 +1397,9 @@ namespace VaultAdmin
                 clone.transform.SetParent(parent, false);
                 clone.transform.localPosition = place;
                 clone.transform.localRotation = source.transform.localRotation;
-                clone.transform.localScale = source.transform.localScale;
+                // A tenth larger than the button it was copied from, so it reads as ours rather
+                // than as one of the game's that somebody forgot to label.
+                clone.transform.localScale = source.transform.localScale * 1.1f;
 
                 StripClonedBehaviour(clone);
                 ReleaseAnchors(clone);
@@ -4364,7 +4366,7 @@ namespace VaultAdmin
 
         private bool _wantWholeAnimal;
         private static bool _reportedAnimalSize;
-        private int _wholeAnimalBox = 190;
+        private int _wholeAnimalBox = 76;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6356,7 +6358,7 @@ namespace VaultAdmin
             // two things you choose about it in rows beside it. Choosing a pet by a photograph of
             // its head was choosing a pet by its passport.
             const int pad = 8;
-            const int petBlock = 210;
+            const int petBlock = 140;
 
             int blockY = _cursorY - petBlock / 2;
 
@@ -8311,8 +8313,20 @@ namespace VaultAdmin
             int rollWidth = wellWidth - pad * 2;
             int rollTall = rollHeight + 2;
 
-            Plate(parent, "RollPlate", pictureX, dieY, rollWidth, rollTall,
-                  Skin.Well(rollWidth, rollTall), 3);
+            // Lighter than the recess the figure stands in, because it is not a recess: it is a
+            // thing you press, and the two should not look like the same kind of surface.
+            UITexture rollPlate = Plate(parent, "RollPlate", pictureX, dieY, rollWidth, rollTall,
+                                        Skin.Row(rollWidth, rollTall), 3);
+
+            // The whole plate takes the press. A word and a picture that do the same thing should
+            // not have a gap between them that does nothing.
+            BoxCollider rollHit = rollPlate.gameObject.AddComponent<BoxCollider>();
+            rollHit.size = new Vector3(rollWidth, rollTall, 1f);
+            rollHit.isTrigger = true;
+
+            UIButton rollPress = rollPlate.gameObject.AddComponent<UIButton>();
+            rollPress.tweenTarget = rollPlate.gameObject;
+            rollPress.onClick.Add(new EventDelegate(RollTheLooks));
 
             // The word before the picture. A die alone is a die; a die after the word RANDOM is a
             // button that rolls one, which is the thing this actually does.
@@ -8338,13 +8352,7 @@ namespace VaultAdmin
             Shader flat = Shader.Find("Unlit/Transparent Colored");
             if (flat != null) _dieFace.shader = flat;
 
-            BoxCollider hit = die.AddComponent<BoxCollider>();
-            hit.size = new Vector3(rollHeight + 10, rollHeight + 10, 1f);
-            hit.isTrigger = true;
-
-            UIButton press = die.AddComponent<UIButton>();
-            press.tweenTarget = die;
-            press.onClick.Add(new EventDelegate(RollTheLooks));
+            // No collider of its own. The die is what turns; the plate is what is pressed.
 
             // The choices, down the right, with the same padding from the box as the box has
             // from the plate and as the rows have from each other's ends.
