@@ -839,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.6";
+        public const string PluginVersion = "1.4.7";
 
         internal static ManualLogSource Log;
 
@@ -14071,7 +14071,7 @@ namespace VaultAdmin
 
                 if (vault.Inventory.EmptySpace() <= 0)
                 {
-                    Trouble("The inventory is full; " + entry.Name + " was not granted.");
+                    Trouble("Storage is full; " + entry.Name + " was not given.");
                     return;
                 }
 
@@ -14086,7 +14086,9 @@ namespace VaultAdmin
                 object unique = InvokeGenerateRandomData(entry.Template);
                 if (unique == null)
                 {
-                    Log.LogWarning("The game did not generate data for " + entry.Name + "; nothing granted.");
+                    // Trouble, not a log line: the row marks itself given unless it hears
+                    // otherwise, and this is the other thing that can quietly go wrong.
+                    Trouble("The game made no data for " + entry.Name + "; nothing was given.");
                     return;
                 }
 
@@ -14105,13 +14107,13 @@ namespace VaultAdmin
                 vault.Inventory.AddItem(item, false, false);
 
                 Say(customise
-                    ? "Created " + (string.IsNullOrEmpty(_petName) ? entry.Name : _petName) +
-                      ", a " + entry.Name + "."
-                    : "Granted " + entry.Name + ".");
+                    ? "CREATED " + (string.IsNullOrEmpty(_petName) ? entry.Name : _petName)
+                          .ToUpper() + "\na " + entry.Name
+                    : "Gave " + entry.Name + ".");
             }
             catch (Exception e)
             {
-                Log.LogWarning("Granting pet " + entry.Name + " failed: " + e.Message);
+                Trouble("Could not give " + entry.Name + ": " + e.Message);
             }
         }
 
@@ -14513,6 +14515,15 @@ namespace VaultAdmin
         /// Every piece here is one that was just set through the game's own methods; naming them
         /// back turns a silent failure into a line that says which part did not take.
         /// </summary>
+        /// <summary>A dweller by name, for a sentence somebody reads rather than searches.</summary>
+        private static string WhoIs(Dweller dweller)
+        {
+            if (dweller == null) return "a dweller";
+
+            string called = (dweller.Name + " " + dweller.LastName).Trim();
+            return called.Length == 0 ? "a dweller" : called.ToUpper();
+        }
+
         private string Describe(Dweller dweller)
         {
             string line = (dweller.Name + " " + dweller.LastName).Trim();
@@ -14903,7 +14914,15 @@ namespace VaultAdmin
                 // Read back rather than assume. Applying a look is a chain of reflection calls into
                 // somebody else's object graph, and the only honest way to know it took is to ask
                 // the dweller afterwards what it is actually wearing.
-                Say("Created " + Describe(dweller) + " — waiting at the vault door.");
+                // Two readers, two sentences. The log keeps the whole description -- hair, face,
+                // what they are wearing, what they are holding -- because that is what is worth
+                // having when something comes out wrong. The band gets the answer to the question
+                // that was actually asked: who did I just make, and where are they.
+                Log.LogInfo("Created " + Describe(dweller) + " — waiting at the vault door.");
+
+                Say("CREATED " + WhoIs(dweller) + "\n" +
+                    Rarities[_rarityIndex].ToString().ToLower() + ", level " + LevelOf(dweller) +
+                    " — waiting at the vault door");
             }
             catch (Exception e)
             {
@@ -15290,7 +15309,7 @@ namespace VaultAdmin
                     return;
                 }
 
-                Say("Created " + label + " — waiting at the vault door.");
+                Say("CREATED " + label + "\nwaiting at the vault door");
 
                 // Deliberately not edited: a legendary dweller brings its own name, look and stats,
                 // and overwriting them produces something that looks legendary and is not.
