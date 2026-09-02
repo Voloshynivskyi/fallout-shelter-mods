@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.7.0";
+        public const string PluginVersion = "1.8.0";
 
         internal static ManualLogSource Log;
 
@@ -5937,7 +5937,29 @@ namespace VaultAdmin
                 catch { }
             }
 
-            Say(grown == 0 ? "There are no children." : "Grew " + grown + " child(ren) up.");
+            if (grown > 0) { Say("Grew " + grown + " child(ren) up."); return; }
+
+            // Nothing grew, and "there are no children" is a claim rather than an observation. The
+            // difference between a vault with no children in it and a vault whose children this
+            // cannot see is one line, and it was not being written.
+            int seen = 0;
+            int small = 0;
+
+            foreach (Dweller one in Everyone())
+            {
+                if (one == null) continue;
+                seen++;
+
+                try { if (one.IsChild) small++; }
+                catch { }
+            }
+
+            Log.LogWarning("Nothing grew: " + seen + " dweller(s) looked at, " + small +
+                           " of them children by the game's own reckoning.");
+
+            Say(small == 0
+                ? "No children among " + seen + " dwellers."
+                : small + " children found, but the game would not grow them.");
         }
 
         /// <summary>Every training slot finished, through the slot's own call.</summary>
@@ -6201,8 +6223,11 @@ namespace VaultAdmin
                     pool.Add(one);
                 }
 
-                List<Room> works = new List<Room>();
-                List<Room> teaches = new List<Room>();
+                // Six ranks, filled from the top. A dweller is worth most where something is
+                // produced and worth nothing at all in a lift, and everything between those is an
+                // order somebody has to decide -- so it is written down here rather than inferred.
+                List<Room>[] ranks = new List<Room>[6];
+                for (int i = 0; i < ranks.Length; i++) ranks[i] = new List<Room>();
 
                 Room[] all = Resources.FindObjectsOfTypeAll<Room>();
 
@@ -6213,9 +6238,12 @@ namespace VaultAdmin
                     if (!(RoomStat(room) is ESpecialStat)) continue;
                     if (RoomPlaces(room) <= 0) continue;
 
-                    if (Teaches(room)) teaches.Add(room);
-                    else works.Add(room);
+                    int rank = RankOf(room);
+                    if (rank > 0) ranks[rank - 1].Add(room);
                 }
+
+                List<Room> works = ranks[0];
+                List<Room> teaches = ranks[1];
 
                 if (!_reportedRooms)
                 {
@@ -6230,7 +6258,10 @@ namespace VaultAdmin
                 // swept and then laid out.
                 int lifted = ClearThePosts(pool);
 
-                if (works.Count == 0 && teaches.Count == 0)
+                int rooms = 0;
+                for (int i = 0; i < ranks.Length; i++) rooms += ranks[i].Count;
+
+                if (rooms == 0)
                 {
                     // Nothing matched, so the question was wrong. Rather than say so and stop, the
                     // first room in the vault is asked what it is made of -- names and values --
@@ -6242,14 +6273,25 @@ namespace VaultAdmin
                     return;
                 }
 
-                works.Sort(new ByPlaces());
+                // Within a rank, the biggest room picks first: a point of a stat is worth most
+                // where there are the most places for it to count.
+                for (int i = 0; i < ranks.Length; i++) ranks[i].Sort(new ByPlaces());
 
-                int posted = Staff(works, pool, assign, manager, true) +
-                             Staff(teaches, pool, assign, manager, false);
+                int posted = 0;
+
+                for (int i = 0; i < ranks.Length; i++)
+                {
+                    // The gyms take the lowest scorers; everywhere else takes the best. Training
+                    // raises the stat it teaches, so a dweller already at ten learns nothing there.
+                    bool best = i != 1;
+                    posted += Staff(ranks[i], pool, assign, manager, best);
+                }
 
                 Say("Took " + lifted + " off their posts and put " + posted + " back across " +
-                    works.Count + " working and " + teaches.Count + " training room(s); " +
-                    turnedAway + " were never eligible.");
+                    rooms + " room(s): " + ranks[0].Count + " producing, " + ranks[1].Count +
+                    " training, " + ranks[2].Count + " crafting, " + ranks[3].Count + " door, " +
+                    ranks[4].Count + " quarters, " + ranks[5].Count + " last. " + turnedAway +
+                    " were never eligible.");
             }
             catch (Exception e)
             {
@@ -6608,6 +6650,79 @@ namespace VaultAdmin
         /// both, whether the room produces any resource at all. A room that runs on a stat and
         /// makes nothing is a gym.
         /// </summary>
+        /// <summary>
+        /// How badly a room wants somebody, from 1 for the most to 6 for the least. Nought means
+        /// leave it alone entirely.
+        ///
+        /// Production first, since that is what a vault is for. Then the gyms, because a dweller
+        /// improved there is worth more everywhere else afterwards. Then the crafting rooms, which
+        /// make things but only when you ask them to. Then the door, which is worth staffing but
+        /// never at the cost of a factory. Then the living quarters, which produce nothing and are
+        /// where the people nobody else needs should go. And last the rooms that want a body
+        /// present and do nothing with it: the overseer's office, storage and its larger forms,
+        /// the barbershop.
+        ///
+        /// Lifts, the entrance corridor and anything else fall through and are not staffed at all.
+        /// A room that produces nothing and teaches nothing has no use for anybody, and it was
+        /// getting the lowest scorers only because a two-way sort had nowhere else to put it.
+        ///
+        /// The first three ranks are read off the game's own RoomClass, so a room from an update
+        /// or another mod lands in the right one. The last three are named, because the order
+        /// between them is a judgement and not a fact anybody can read.
+        /// </summary>
+        private static int RankOf(Room room)
+        {
+            string kind = TypeOf(room);
+
+            if (kind == "Entrance") return 4;
+            if (kind == "LivingQuarters") return 5;
+
+            if (kind == "BarberShop" || kind == "Overseer" || kind == "OverseerOffice" ||
+                kind.IndexOf("storage", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                kind.IndexOf("observ", StringComparison.OrdinalIgnoreCase) >= 0) return 6;
+
+            if (Teaches(room)) return 2;
+            if (Crafts(room)) return 3;
+            if (Produces(room)) return 1;
+
+            return 0;
+        }
+
+        /// <summary>The game's own name for what kind of room this is.</summary>
+        private static string TypeOf(Room room)
+        {
+            object kind = ReadObject(room, "RoomType");
+            return kind == null ? "" : kind.ToString();
+        }
+
+        /// <summary>Whether this room builds things to order.</summary>
+        private static bool Crafts(Room room)
+        {
+            object grouping = ReadObject(room, "RoomClass");
+
+            if (grouping != null &&
+                grouping.ToString().IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            string kind = TypeOf(room);
+            return kind.IndexOf("factory", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>Whether this room makes anything at all.</summary>
+        private static bool Produces(Room room)
+        {
+            object grouping = ReadObject(room, "RoomClass");
+
+            if (grouping != null &&
+                grouping.ToString().IndexOf("production", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            object made = ReadObject(room, "ProducedResource");
+            if (made == null) made = ReadObject(room, "m_producedResource");
+
+            return made != null && made.ToString() != "None" && made.ToString() != "0";
+        }
+
         private static bool Teaches(Room room)
         {
             // The game says so itself: RoomClass reads Production for a factory. Whatever it
@@ -7053,6 +7168,20 @@ namespace VaultAdmin
 
                 List<Dweller> living = ReadObject(vault, "Dwellers") as List<Dweller>;
                 if (living != null) all.AddRange(living);
+
+                // And whoever the dweller manager knows about. The two lists overlap almost
+                // entirely, and "almost" is where a child goes missing: the vault's own list is
+                // what the vault is showing, and a child not yet placed in a room is not on it.
+                DwellerManager manager = SafeDwellerManager();
+
+                if (manager != null && manager.Dwellers != null)
+                {
+                    for (int i = 0; i < manager.Dwellers.Count; i++)
+                    {
+                        Dweller one = manager.Dwellers[i];
+                        if (one != null && !all.Contains(one)) all.Add(one);
+                    }
+                }
             }
             catch (Exception e)
             {
