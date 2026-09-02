@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.10.0";
+        public const string PluginVersion = "1.10.1";
 
         internal static ManualLogSource Log;
 
@@ -11996,6 +11996,13 @@ namespace VaultAdmin
         /// <summary>
         /// The same for boxes, which the game carries with a call of their own.
         /// </summary>
+        // ShowBoxFlight is kept and no longer called. The flight was the second box: the count
+        // taken straight after the loop showed exactly what was asked for, and the extra arrived
+        // later -- when the particles land, which is when the game hands the box over. It was
+        // never decoration; it is the game's own way of giving a box, and asking for it after
+        // having already given one is asking twice.
+        //
+        // Adding them plainly is the half that can be counted, so that is the half that stays.
         private static bool _reportedFlight;
 
         /// <summary>How many lunchboxes the vault is holding, or -1 if it will not say.</summary>
@@ -12141,7 +12148,6 @@ namespace VaultAdmin
                                    "went from " + before + " to " + after + ", which is " +
                                    (after - before) + ".");
 
-                ShowBoxFlight(type, quantity);
                 Say("Granted " + quantity + " " + type + " box" + (quantity == 1 ? "" : "es") + ".");
             }
             catch (Exception e)
