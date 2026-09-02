@@ -41,6 +41,11 @@ namespace VaultAdmin
         public static readonly Color Card = new Color32(0x08, 0x51, 0x08, 0x5A);    // a row on it
         public static readonly Color Hole = new Color32(0x08, 0x51, 0x08, 0xE6);    // a recess
 
+        // Between the two: the plate you press. A row is the surface things sit on, so drawing a
+        // button as one leaves nothing to say it answers a press -- the die on it did all the
+        // work of looking pressable. The same green again, half a step deeper than a row.
+        public static readonly Color Press = new Color32(0x08, 0x51, 0x08, 0x96);
+
         // Border weights, so every edge in the panel is one of three thicknesses rather than
         // whatever each piece of code felt like.
         public const int EdgeWindow = 4;
@@ -647,6 +652,57 @@ namespace VaultAdmin
         }
 
         /// <summary>
+        /// A letter i in a ring: the mark for the band the panel answers in.
+        ///
+        /// The band appeared with the report already in it and nothing to say what it was, so it
+        /// read as text that had escaped from somewhere. A sign on the left of it says "this is
+        /// the panel talking" before a word of it is read. Drawn rather than taken from the atlas,
+        /// like every other mark here, because the atlas has no such thing.
+        /// </summary>
+        public static Texture2D Info(int size)
+        {
+            string key = "info" + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            Vector2 middle = new Vector2(w * 0.5f, w * 0.5f);
+
+            float ring = w * 0.40f;          // where the circle runs
+            float thick = w * 0.09f;         // the line it is drawn with
+            float dot = w * 0.062f;          // the tittle
+
+            Vector2 head = new Vector2(w * 0.5f, w * 0.695f);
+            Vector2 stemTop = new Vector2(w * 0.5f, w * 0.545f);
+            Vector2 stemEnd = new Vector2(w * 0.5f, w * 0.285f);
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+
+                    // The ring, as the distance to the circle rather than to its middle.
+                    float best = Mathf.Abs((p - middle).magnitude - ring) - thick * 0.5f;
+
+                    float tittle = (p - head).magnitude - dot;
+                    if (tittle < best) best = tittle;
+
+                    float stem = ToSegment(p, stemTop, stemEnd) - thick * 0.5f;
+                    if (stem < best) best = stem;
+
+                    float ink = Mathf.Clamp01(0.5f - best);
+                    px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
+        /// <summary>
         /// A paw print, for the button that makes an animal.
         ///
         /// The atlas has silhouettes, and every one of them is a picture inside a frame -- which on
@@ -739,6 +795,12 @@ namespace VaultAdmin
             return Frame(width, height, 8, EdgeCard, Bright, Card);
         }
 
+        /// <summary>The plate behind the die: a row's frame, on a surface that reads as a button.</summary>
+        public static Texture2D Roll(int width, int height)
+        {
+            return Frame(width, height, 8, EdgeCard, Bright, Press);
+        }
+
         /// <summary>A section header: solid, inverted against the rows beneath it.</summary>
         public static Texture2D Header(int width, int height)
         {
@@ -769,7 +831,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.2";
+        public const string PluginVersion = "1.4.3";
 
         internal static ManualLogSource Log;
 
@@ -2494,9 +2556,16 @@ namespace VaultAdmin
                 Plate(_nguiWindow.transform, "Answer", 0, -_windowHeight / 2 + 74,
                       _windowWidth - 28, 50, Skin.Row(_windowWidth - 28, 50), 1);
 
-                _statusLabel = MakeLabel(_nguiWindow.transform, "AnswerText", "",
-                                         0, -_windowHeight / 2 + 74, _windowWidth - 44, 46,
-                                         Skin.Bright, 5);
+                // A mark on the left, so the band is recognisable as the panel speaking before
+                // anything in it has been read.
+                int bandLeft = -(_windowWidth - 28) / 2;
+
+                Plate(_nguiWindow.transform, "AnswerMark", bandLeft + 30, -_windowHeight / 2 + 74,
+                      30, 30, Skin.Info(30), 5);
+
+                _statusLabel = MakeLeftLabel(_nguiWindow.transform, "AnswerText", "",
+                                             bandLeft + 52, -_windowHeight / 2 + 74,
+                                             _windowWidth - 28 - 52 - 14, 46, Skin.Bright, 5);
                 _statusLabel.fontSize = TextBody;
                 _statusLabel.maxLineCount = 3;
                 _statusLabel.overflowMethod = UILabel.Overflow.ShrinkContent;
@@ -11603,7 +11672,7 @@ namespace VaultAdmin
             // Lighter than the recess the figure stands in, because it is not a recess: it is a
             // thing you press, and the two should not look like the same kind of surface.
             UITexture rollPlate = Plate(parent, "RollPlate", pictureX, dieY, rollWidth, rollTall,
-                                        Skin.Row(rollWidth, rollTall), 3);
+                                        Skin.Roll(rollWidth, rollTall), 3);
 
             // The whole plate takes the press. A word and a picture that do the same thing should
             // not have a gap between them that does nothing.
