@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.1";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
 
@@ -5914,6 +5914,13 @@ namespace VaultAdmin
                     SayWhatTheRoomsAre(works, teaches, pool.Count);
                 }
 
+                // Every post cleared before any is filled. Staffing around whoever the game
+                // happened to put where is not staffing at all: the best welder in the vault
+                // cannot be moved into the workshop while somebody worse is standing in the last
+                // free place, and there is no order of rooms that gets round that. So the board is
+                // swept and then laid out.
+                int lifted = ClearThePosts(pool);
+
                 if (works.Count == 0 && teaches.Count == 0)
                 {
                     Trouble("No room in this vault runs on a stat; the log says what was seen.");
@@ -5925,9 +5932,9 @@ namespace VaultAdmin
                 int posted = Staff(works, pool, assign, manager, true) +
                              Staff(teaches, pool, assign, manager, false);
 
-                Say("Posted " + posted + " dweller(s) across " + works.Count + " working and " +
-                    teaches.Count + " training room(s); " + turnedAway +
-                    " were left where they were.");
+                Say("Took " + lifted + " off their posts and put " + posted + " back across " +
+                    works.Count + " working and " + teaches.Count + " training room(s); " +
+                    turnedAway + " were never eligible.");
             }
             catch (Exception e)
             {
@@ -6002,6 +6009,52 @@ namespace VaultAdmin
                 return !(said is bool) || (bool)said;
             }
             catch { return true; }
+        }
+
+        /// <summary>
+        /// Takes everyone in the pool off whatever they are doing.
+        ///
+        /// Without this the pass can only fill what happens to be free, and what happens to be
+        /// free is decided by whoever the game put where. The strongest dweller in the vault cannot
+        /// be moved into the power plant while somebody weaker is standing in its last place, and
+        /// no order of rooms gets round that -- the board has to be swept before it is laid out.
+        ///
+        /// Only the pool is cleared, which is to say only those this pass would place again.
+        /// Anybody the game refuses a post to keeps whatever it had given them.
+        /// </summary>
+        private int ClearThePosts(List<Dweller> pool)
+        {
+            int lifted = 0;
+
+            try
+            {
+                MethodInfo leave = typeof(Dweller).GetMethod(
+                    "UnassignFromWorkingRoom",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, Type.EmptyTypes, null);
+
+                if (leave == null)
+                {
+                    ReportOnce("unassign", "The game has no UnassignFromWorkingRoom; rooms will " +
+                                           "only be filled where they already have room.");
+                    return 0;
+                }
+
+                for (int i = 0; i < pool.Count; i++)
+                {
+                    try { leave.Invoke(pool[i], null); lifted++; }
+                    catch (Exception e)
+                    {
+                        ReportOnce("unassigncall", "The game refused to free a dweller: " + e);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("clearposts", "Could not clear the posts: " + e.Message);
+            }
+
+            return lifted;
         }
 
         /// <summary>Whether the game will accept this dweller in this particular room.</summary>
