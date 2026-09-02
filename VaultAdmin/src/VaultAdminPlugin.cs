@@ -670,7 +670,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.8";
+        public const string PluginVersion = "1.0.9";
 
         internal static ManualLogSource Log;
 
@@ -685,7 +685,6 @@ namespace VaultAdmin
         private static ConfigEntry<int> MaxDwellersWanted;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
-        private static ConfigEntry<float> HudButtonOffsetY;
         private static ConfigEntry<string> HudButtonSprite;
         private static ConfigEntry<string> HudButtonTint;
         private static ConfigEntry<string> HudButtonImage;
@@ -1011,11 +1010,6 @@ namespace VaultAdmin
                 "icons fill their square almost edge to edge, so a value under one only makes this " +
                 "look undersized beside them.");
 
-            HudButtonOffsetY = Config.Bind("Interface", "HudButtonOffsetY", 10f,
-                "The gap between the dwellers-list button and the panel button beneath it. The " +
-                "distance between their centres is worked out from how tall the two of them are; " +
-                "this is only the air in between.");
-
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
                 "interface's own units. Raise it if the two overlap.");
@@ -1115,9 +1109,15 @@ namespace VaultAdmin
             Bounds seen = DrawnBounds(anchor.parent, anchor);
             Bounds mine = DrawnBounds(ours.parent, ours);
 
-            float drop = seen.extents.y + mine.extents.y + HudButtonOffsetY.Value;
+            // Constants, not configuration. A config file is written once and then belongs to
+            // the player: changing a default does nothing for anybody who has already run the mod,
+            // so tuning where this sits by changing a default would have moved it for nobody.
+            const float nudgeAcross = -14f;
+            const float nudgeUp = 22f;
 
-            Vector3 place = seen.center + new Vector3(0f, -drop, 0f);
+            float drop = seen.extents.y + mine.extents.y - nudgeUp;
+
+            Vector3 place = seen.center + new Vector3(nudgeAcross, -drop, 0f);
             place -= (mine.center - ours.localPosition);
 
             Log.LogInfo("'" + anchor.name + "' draws at " + seen.center + " sized " + seen.size +
@@ -4246,7 +4246,27 @@ namespace VaultAdmin
             icon.atlas = atlas;
             icon.spriteName = chosen;
             icon.type = UIBasicSprite.Type.Simple;
-            FitSprite(icon, IconBox);
+
+            if (_wantWholeAnimal)
+            {
+                FillWithInk(icon, _wholeAnimalBox);
+
+                if (!_reportedAnimalSize)
+                {
+                    _reportedAnimalSize = true;
+
+                    UISpriteData shape = atlas.GetSprite(chosen);
+
+                    Log.LogInfo("The animal '" + chosen + "' is " +
+                                (shape == null ? "unmeasurable" :
+                                 shape.width + "x" + shape.height + " of ink with padding " +
+                                 shape.paddingLeft + "," + shape.paddingRight + "," +
+                                 shape.paddingTop + "," + shape.paddingBottom) +
+                                "; asked for " + _wholeAnimalBox +
+                                " and the widget came out " + icon.width + "x" + icon.height + ".");
+                }
+            }
+            else FitSprite(icon, IconBox);
         }
 
         private void ShowIcon(UISprite icon, CatalogueEntry entry)
@@ -4280,26 +4300,7 @@ namespace VaultAdmin
             icon.atlas = atlas;
             icon.spriteName = chosen;
             icon.type = UIBasicSprite.Type.Simple;
-            if (_wantWholeAnimal)
-            {
-                FillWithInk(icon, _wholeAnimalBox);
-
-                if (!_reportedAnimalSize)
-                {
-                    _reportedAnimalSize = true;
-
-                    UISpriteData shape = atlas.GetSprite(chosen);
-
-                    Log.LogInfo("The animal '" + chosen + "' is " +
-                                (shape == null ? "unmeasurable" :
-                                 shape.width + "x" + shape.height + " of ink with padding " +
-                                 shape.paddingLeft + "," + shape.paddingRight + "," +
-                                 shape.paddingTop + "," + shape.paddingBottom) +
-                                "; asked for " + _wholeAnimalBox +
-                                " and the widget came out " + icon.width + "x" + icon.height + ".");
-                }
-            }
-            else FitSprite(icon, IconBox);
+            FitSprite(icon, IconBox);
         }
 
         /// <summary>The full-body name that stands beside a head in the atlas.</summary>
