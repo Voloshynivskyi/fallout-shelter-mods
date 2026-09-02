@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.2.1";
 
         internal static ManualLogSource Log;
 
@@ -5655,7 +5655,11 @@ namespace VaultAdmin
         {
             try
             {
-                Type type = Type.GetType("SaveManager, Assembly-CSharp");
+                // Not Type.GetType: that wants the assembly spelled out and returns nothing
+                // when it is spelled differently, which is indistinguishable from the class not
+                // existing. SaveManager is in this game -- the log said so only because nobody
+                // had looked in the right place.
+                Type type = GameType("SaveManager");
                 if (type == null) return null;
 
                 const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
@@ -5672,19 +5676,62 @@ namespace VaultAdmin
 
                 if (manager == null)
                 {
-                    FieldInfo held = type.GetField("Instance", Statics);
-                    if (held != null) manager = held.GetValue(null);
+                    string[] kept = { "Instance", "instance", "s_instance", "m_instance" };
+
+                    for (int i = 0; i < kept.Length && manager == null; i++)
+                    {
+                        FieldInfo held = type.GetField(kept[i], Statics);
+                        if (held != null) manager = held.GetValue(null);
+                    }
                 }
 
-                if (manager == null) return null;
+                // A manager that keeps no singleton of its own is still somewhere in the scene.
+                if (manager == null && typeof(UnityEngine.Object).IsAssignableFrom(type))
+                    manager = UnityEngine.Object.FindObjectOfType(type);
+
+                if (manager == null)
+                {
+                    ReportOnce("saveslot", "Found SaveManager but no instance of it.");
+                    return null;
+                }
 
                 object slot = ReadObject(manager, "CurrentSaveSlot");
                 if (slot == null) slot = ReadObject(manager, "m_currentSaveSlot");
                 if (slot == null) slot = ReadObject(manager, "saveSlotNumber");
 
+                if (slot == null)
+                    ReportOnce("saveslot", "SaveManager holds no CurrentSaveSlot, " +
+                                           "m_currentSaveSlot or saveSlotNumber.");
+
                 return Text(slot);
             }
-            catch { return null; }
+            catch (Exception e)
+            {
+                ReportOnce("saveslot", "Could not ask which save is loaded: " + e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>A game class by name, looked for in every assembly that is loaded.</summary>
+        private static Type GameType(string name)
+        {
+            try
+            {
+                Assembly[] all = AppDomain.CurrentDomain.GetAssemblies();
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    try
+                    {
+                        Type found = all[i].GetType(name, false);
+                        if (found != null) return found;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         /// <summary>A value as text, or nothing when it is nothing or nonsense.</summary>
@@ -6621,6 +6668,13 @@ namespace VaultAdmin
                         if (one.IsChild) { turnedAway++; continue; }
                         if (one.IsRegisteredInWasteland) { turnedAway++; continue; }
 
+                        // And nobody still queued at the door. They are not in the vault yet --
+                        // the game says so itself -- and posting one to a room walks it inside
+                        // past the population limit. In a full vault that is not a tidy mistake:
+                        // it pushed the count past the cap, and the game then stops making
+                        // dwellers at all until the count comes back down.
+                        if (!IsInside(one)) { turnedAway++; continue; }
+
                         // And whatever else the game itself objects to. Listing the states by hand
                         // -- dead, pregnant, on a quest, a Mr Handy -- means naming each of them
                         // correctly and keeping the list right through every update. The game
@@ -6779,6 +6833,7 @@ namespace VaultAdmin
                 List<int> wants = new List<int>();
                 List<int> ranks = new List<int>();
                 int turnedAway = 0;
+                int roomless = 0;
 
                 for (int i = 0; i < manager.Dwellers.Count; i++)
                 {
@@ -6788,14 +6843,18 @@ namespace VaultAdmin
                     try
                     {
                         // Children have nothing that fits, and a dweller in the wasteland is
-                        // wearing their kit somewhere this panel cannot reach.
+                        // wearing their kit somewhere this panel cannot reach. Nor anyone still
+                        // queued at the door: they are not in the vault yet.
                         if (one.IsChild) { turnedAway++; continue; }
                         if (one.IsRegisteredInWasteland) { turnedAway++; continue; }
+                        if (!IsInside(one)) { turnedAway++; continue; }
                     }
                     catch { turnedAway++; continue; }
 
-                    Room room = ReadObject(one, "assignedRoom") as Room;
+                    Room room = RoomOf(one);
                     object stat = room == null ? null : RoomStat(room);
+
+                    if (room == null) roomless++;
 
                     if (!(stat is ESpecialStat)) continue;
 
@@ -6809,7 +6868,17 @@ namespace VaultAdmin
 
                 if (wearers.Count == 0)
                 {
-                    Trouble("Nobody is working in a room that runs on a stat.");
+                    // Which of the two it is matters: nobody assigned is something to go and fix
+                    // in the vault, and nobody's room being readable is something to fix here.
+                    if (roomless > 0 && !_saidWhatADwellerIs)
+                    {
+                        _saidWhatADwellerIs = true;
+                        SayWhatHoldsTheRoom(manager);
+                    }
+
+                    Trouble(roomless > 0
+                        ? "None of the " + roomless + " dweller(s) would say which room they are in."
+                        : "Nobody is working in a room that runs on a stat.");
                     return;
                 }
 
@@ -6856,6 +6925,79 @@ namespace VaultAdmin
                 Trouble("Could not dress the vault: " + e.Message);
             }
         }
+
+        /// <summary>
+        /// Whether this dweller is actually inside the vault.
+        ///
+        /// The queue at the door is dwellers the game has built and not yet let in, and IsInVault
+        /// is the game's own answer to that difference. Posting one to a room walks it inside --
+        /// which is how a vault at its limit ended up past it, with the game then refusing to make
+        /// any more dwellers until the count came back down.
+        /// </summary>
+        private static bool IsInside(Dweller who)
+        {
+            object inside = ReadObject(who, "IsInVault");
+            if (inside == null) inside = ReadObject(who, "isInVault");
+
+            // No such member: let everyone through rather than refuse a whole vault over a
+            // question that could not be asked.
+            if (!(inside is bool)) return true;
+
+            return (bool)inside;
+        }
+
+        /// <summary>The room a dweller is standing in, by whichever name this build gives it.</summary>
+        private static Room RoomOf(Dweller who)
+        {
+            string[] names = { "CurrentRoom", "m_currentRoom", "Room", "room", "m_room",
+                               "assignedRoom" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                Room found = ReadObject(who, names[i]) as Room;
+                if (found != null) return found;
+            }
+
+            return null;
+        }
+
+        /// <summary>Writes down what a dweller holds that could be a room, once.</summary>
+        private static void SayWhatHoldsTheRoom(DwellerManager manager)
+        {
+            try
+            {
+                if (manager.Dwellers == null || manager.Dwellers.Count == 0) return;
+
+                Dweller one = manager.Dwellers[0];
+                if (one == null) return;
+
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("A dweller (").Append(one.GetType().Name).Append(") holds:");
+
+                for (Type type = one.GetType(); type != null; type = type.BaseType)
+                {
+                    FieldInfo[] fields = type.GetFields(Flags);
+
+                    for (int i = 0; i < fields.Length; i++)
+                        if (typeof(Room).IsAssignableFrom(fields[i].FieldType))
+                            said.Append("  |  .").Append(fields[i].Name).Append(" (field)");
+
+                    PropertyInfo[] props = type.GetProperties(Flags);
+
+                    for (int i = 0; i < props.Length; i++)
+                        if (typeof(Room).IsAssignableFrom(props[i].PropertyType))
+                            said.Append("  |  .").Append(props[i].Name).Append(" (property)");
+                }
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
+        private static bool _saidWhatADwellerIs;
 
         /// <summary>Sort keys that put rank one first and an unranked room last.</summary>
         private static int[] RankKeys(List<int> ranks)
@@ -8220,15 +8362,36 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault == null) return -1;
 
-                MethodInfo sum = FindMethod(vault.GetType(), "GetMaxDwellers");
+                // The vault does not have it -- the log said so plainly -- so whoever does is
+                // asked instead. GetMaxDwellers and MaxDwellersInVault both exist in this build,
+                // and which object carries them is not a thing to guess at one name a day.
+                object[] askable = { vault, SafeDwellerManager() };
 
-                if (sum != null && sum.ReturnType != typeof(void))
+                for (int i = 0; i < askable.Length; i++)
                 {
-                    object many = sum.Invoke(vault, null);
-                    if (many != null) return Convert.ToInt32(many);
+                    if (askable[i] == null) continue;
+
+                    MethodInfo sum = FindMethod(askable[i].GetType(), "GetMaxDwellers");
+
+                    if (sum != null && sum.ReturnType != typeof(void))
+                    {
+                        object many = sum.Invoke(askable[i], null);
+                        if (many != null) return Convert.ToInt32(many);
+                    }
+
+                    object held = ReadObject(askable[i], "MaxDwellersInVault");
+                    if (held == null) held = ReadObject(askable[i], "m_MaxDwellerAllowed");
+
+                    if (held != null)
+                    {
+                        try { return Convert.ToInt32(held); }
+                        catch { }
+                    }
                 }
 
-                ReportOnce("capacity", "The vault has no GetMaxDwellers to ask.");
+                ReportOnce("capacity", "Nothing here knows what the rooms hold: neither the " +
+                                       "vault nor the dweller manager has GetMaxDwellers or " +
+                                       "MaxDwellersInVault.");
             }
             catch (Exception e)
             {
@@ -8306,9 +8469,17 @@ namespace VaultAdmin
                 int real = capped == null ? wanted : Convert.ToInt32(capped);
 
                 if (real > 0 && real < wanted)
+                {
+                    // And the field is corrected to match. Leaving it saying five hundred while
+                    // the vault takes two hundred is the interface disagreeing with the setting,
+                    // which is the fault this panel has just spent a day removing elsewhere.
+                    if (_populationInput != null) _populationInput.value = real.ToString();
+
+                    RememberNumber(MaxDwellersHere, MaxDwellersWanted, real);
+
                     Say("Asked for " + wanted + "; the game holds it at " + real + ".");
-                else
-                    Say("The vault will take " + wanted + " dwellers.");
+                }
+                else Say("The vault will take " + wanted + " dwellers.");
             }
             catch (Exception e)
             {
