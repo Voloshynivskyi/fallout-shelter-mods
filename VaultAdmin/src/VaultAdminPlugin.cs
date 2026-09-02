@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.3";
+        public const string PluginVersion = "1.1.4";
 
         internal static ManualLogSource Log;
 
@@ -6567,6 +6567,10 @@ namespace VaultAdmin
             _petPickIcon = iconGo.AddComponent<UISprite>();
             _petPickIcon.depth = 3;
 
+            // A little below the middle. A standing animal carries its weight low, so centring the
+            // picture leaves it looking as though it is hovering in the box.
+            iconGo.transform.localPosition = new Vector3(wellX, blockY - 7, 0f);
+
             // Named before the row is made: AddChoiceRow writes the caption into a label there and
             // then, and an empty caption stays empty. It is a rarity, the same word a dweller uses.
             _petGrade.Caption = "RARITY";
@@ -6642,8 +6646,12 @@ namespace VaultAdmin
             GameObject makePet = MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22,
                                             width, 44, true, CreatePetFromPanel);
 
-            AddDrawnMark(makePet.transform, "CreatePetMark", Skin.Paw(36),
-                         width / 2 - 34, 0, 36, Skin.Ink);
+            // The game's own, and the pair to the blank person on the other bench: both live in
+            // the Menu atlas and were drawn by the same hand, which a paw of mine was never going
+            // to match.
+            AddBareIcon(makePet.transform, "CreatePetMark",
+                        new[] { "Icon_Pet", "Icon_PetPlain", "PetCarrier" },
+                        "pet", width / 2 - 34, 0, 34, Skin.Ink);
 
             _cursorY -= 44 + RowGap;
 
@@ -9353,8 +9361,8 @@ namespace VaultAdmin
 
                 // A percentage of a wide plate is a long way. The same figure that reads as a
                 // nudge on a forty-unit button reads as a lurch on one four times that.
-                float up = gentle ? 1.012f : 1.04f;
-                float down = gentle ? 0.985f : 0.95f;
+                float up = gentle ? 1.006f : 1.04f;
+                float down = gentle ? 0.992f : 0.95f;
 
                 UIButtonScale grow = button.gameObject.AddComponent<UIButtonScale>();
                 grow.tweenTarget = button.transform;
