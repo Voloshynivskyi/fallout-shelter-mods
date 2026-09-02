@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.0.4";
 
         internal static ManualLogSource Log;
 
@@ -5618,6 +5618,14 @@ namespace VaultAdmin
         /// </summary>
         private void SetRushDanger(bool dangerous)
         {
+            // Nothing was ever taken away, so there is nothing to put back. Without this the put-back
+            // ran on every exit whatever had happened, and reaching GameParameters.Instance while the
+            // game was dismantling itself made it rebuild its parameter tables, which collided on a
+            // key it already had. Caught, so nothing broke -- but it is the mod reaching into a
+            // singleton during teardown for no reason at all, and the other three put-backs in
+            // PutTheVaultBack have always known to check first.
+            if (dangerous && _wasMinimumChance < 0f && _wasChancePerTier < 0f) return;
+
             try
             {
                 Vault vault = SafeVault();
@@ -8571,17 +8579,27 @@ namespace VaultAdmin
 
                     DwellerItem leftover = inventory.Items[last];
 
-                    // What arrived, whatever it is called. Matching against the item the figure
-                    // had been wearing looked careful and was wrong: the game does not hand back
-                    // what was worn -- the log caught it returning a .32 pistol where the bench had
-                    // put on a rusty tranquiliser -- so the check refused every time and the
-                    // weapons piled up again, which is the fault it was meant to prevent.
+                    // Only what this bench put there. Taking the end of the list on the grounds
+                    // that the newest row must be ours is the one thing the log has actually
+                    // disproved: the row at the end was a .32 pistol the player had granted
+                    // himself twenty minutes earlier, and "take whatever arrived" would have
+                    // deleted it three times over.
                     //
-                    // The window is one synchronous equip call, and what lands in it is the bench's
-                    // doing. The id is written down rather than tested, so a wrong one is visible
-                    // instead of silently kept.
+                    // So the count grows, the returned weapon is somewhere in the list, and it is
+                    // not at the end. Where it does land has never been measured. Until it is,
+                    // this refuses -- the weapons accumulating is a nuisance, and this code
+                    // deleting from the player's save is not.
                     string id = ReadAsText(leftover, "Id");
-                    Log.LogInfo("Taking back '" + id + "', left in storage by dressing the bench.");
+
+                    if (id != mintedId)
+                    {
+                        Log.LogWarning("Something else reached storage while the bench was " +
+                                       "dressing ('" + id + "', expected '" + mintedId +
+                                       "'); leaving it alone.");
+
+                        SayWhatStorageHolds(inventory, was, mintedId);
+                        break;
+                    }
 
                     int before = inventory.Items.Count;
 
@@ -8595,13 +8613,63 @@ namespace VaultAdmin
                 }
 
                 if (taken > 0)
-                    Trace("took back " + taken + " item(s) the dressing table left in storage");
+                    Log.LogInfo("Took back " + taken +
+                                " item(s) the dressing table left in storage.");
             }
             catch (Exception e)
             {
                 ReportOnce("putback", "Could not take back what the bench left in storage: " + e);
             }
         }
+
+        /// <summary>
+        /// Writes down what storage actually looks like the first time a take-back refuses.
+        ///
+        /// The whole method rests on one assumption -- that a returned item arrives at the end of
+        /// the list -- and nothing ever checked it. Three rounds of reasoning about why the weapons
+        /// multiplied were three guesses at a fact that can simply be read. This finds where the
+        /// returned item really went, so the next version tests rather than supposes.
+        /// </summary>
+        private static void SayWhatStorageHolds(VaultInventory inventory, int was, string looking)
+        {
+            if (_saidWhatStorageHolds) return;
+            _saidWhatStorageHolds = true;
+
+            try
+            {
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+
+                said.Append("Storage held ").Append(was).Append(" row(s) before dressing and ")
+                    .Append(inventory.Items.Count).Append(" after. Rows holding '")
+                    .Append(looking).Append("':");
+
+                bool any = false;
+
+                for (int i = 0; i < inventory.Items.Count; i++)
+                {
+                    if (ReadAsText(inventory.Items[i], "Id") != looking) continue;
+
+                    said.Append(" #").Append(i);
+                    any = true;
+                }
+
+                if (!any) said.Append(" none anywhere");
+
+                said.Append("  |  the last 10 rows:");
+
+                for (int i = Math.Max(0, inventory.Items.Count - 10); i < inventory.Items.Count; i++)
+                    said.Append("  #").Append(i).Append("=")
+                        .Append(ReadAsText(inventory.Items[i], "Id"));
+
+                Log.LogWarning(said.ToString());
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not look through storage: " + e.Message);
+            }
+        }
+
+        private static bool _saidWhatStorageHolds;
 
         private bool TookItBack(VaultInventory inventory, DwellerItem leftover)
         {
