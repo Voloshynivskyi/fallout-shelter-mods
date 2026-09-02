@@ -687,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.0.4";
 
         internal static ManualLogSource Log;
 
@@ -1186,7 +1186,14 @@ namespace VaultAdmin
                 if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0 &&
                     name.IndexOf("button", StringComparison.OrdinalIgnoreCase) < 0) continue;
 
-                if (!all[i].gameObject.activeInHierarchy) continue;
+                // Not required to be switched on. All this is asked for is where it sits, and a
+                // transform has a position whether or not anything is drawing it. Requiring it to
+                // be on is what sent the button back beside the camera every time, because the HUD
+                // is still assembling when the mod first looks.
+                //
+                // Its parent has to be on, though: an object under a hidden branch is a position
+                // nobody will ever see.
+                if (all[i].parent == null || !all[i].parent.gameObject.activeInHierarchy) continue;
                 if (all[i].GetComponentInChildren<Collider>(true) == null) continue;
 
                 if (cornerOnly && !InTheCorner(all[i])) continue;
@@ -1290,11 +1297,12 @@ namespace VaultAdmin
                 Transform existing = parent.Find(HudButtonName);
                 if (existing != null) { _hudButton = existing.gameObject; return; }
 
-                Transform found = FindDwellerListButton();
-                bool underTheList = found != null;
-                _buttonSettled = underTheList;
-
-                if (found == null) found = parent.Find(CameraButtonName);
+                // What to copy and where to put it are two questions, and answering them with
+                // one object was the mistake. The camera button is the one worth copying: it is
+                // switched on, it takes a press, and everything about it is known to work. The
+                // dwellers button is worth nothing but its position -- and a position is readable
+                // whether or not the object is switched on, which is what made this so hard to see.
+                Transform found = parent.Find(CameraButtonName);
 
                 if (found == null)
                 {
@@ -1304,15 +1312,20 @@ namespace VaultAdmin
                 }
 
                 GameObject source = found.gameObject;
-
-                // Beneath the dwellers list if that is what was found, beside the camera if it was
-                // not. A button that opens a panel about dwellers belongs under the button that
-                // opens the list of them, and nowhere near the screenshot key.
                 parent = source.transform.parent;
 
-                Vector3 place = underTheList
-                    ? source.transform.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f)
-                    : source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
+                Vector3 place = source.transform.localPosition +
+                                new Vector3(HudButtonOffsetX.Value, 0f, 0f);
+
+                Transform anchor = FindDwellerListButton();
+
+                if (anchor != null && anchor.parent != null)
+                {
+                    parent = anchor.parent;
+                    place = anchor.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f);
+                }
+
+                _buttonSettled = anchor != null;
 
                 GameObject clone = UnityEngine.Object.Instantiate(source);
                 clone.name = HudButtonName;
@@ -4209,7 +4222,7 @@ namespace VaultAdmin
         }
 
         private bool _wantWholeAnimal;
-        private int _wholeAnimalBox = 96;
+        private int _wholeAnimalBox = 168;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6201,11 +6214,11 @@ namespace VaultAdmin
             // two things you choose about it in rows beside it. Choosing a pet by a photograph of
             // its head was choosing a pet by its passport.
             const int pad = 8;
-            const int petBlock = 132;
+            const int petBlock = 210;
 
             int blockY = _cursorY - petBlock / 2;
 
-            int wellWidth = 116;
+            int wellWidth = 186;
             int wellHeight = petBlock - pad * 2;
 
             Plate(parent, "PetBlock", 0, blockY, width, petBlock, Skin.Row(width, petBlock), 1);
@@ -8130,11 +8143,11 @@ namespace VaultAdmin
             // adjusted until it looked about right. Half of a remainder is exactly the middle; a
             // number chosen by eye is exactly the middle only by accident.
             int wellFloor = middle - wellHeight / 2;
-            int dieY = (lineY - 1 + wellFloor) / 2;
+            int dieY = (lineY - 1 + wellFloor) / 2 + 7;
 
-            UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
-                                      Skin.Solid(), 3);
-            divider.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.55f);
+            // No rule across the middle. The two halves are told apart by the figure filling one
+            // of them, which is enough, and a line inside a small box is one more edge in an
+            // interface that already has a great many.
 
             GameObject die = new GameObject("RollLooks");
             die.layer = parent.gameObject.layer;
