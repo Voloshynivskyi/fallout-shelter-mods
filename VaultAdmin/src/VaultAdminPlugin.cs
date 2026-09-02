@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.1";
+        public const string PluginVersion = "1.4.2";
 
         internal static ManualLogSource Log;
 
@@ -7165,17 +7165,14 @@ namespace VaultAdmin
                     catch { turnedAway++; continue; }
 
                     Room room = RoomOf(one);
-                    object stat = room == null ? null : RoomStat(room);
 
-                    if (room == null) roomless++;
+                    if (room == null) { roomless++; continue; }
 
-                    if (!(stat is ESpecialStat)) continue;
-
-                    int at = Array.IndexOf(Specials, (ESpecialStat)stat);
-                    if (at < 0) continue;
+                    int want = WantedStat(room);
+                    if (want == Nowhere) continue;
 
                     wearers.Add(one);
-                    wants.Add(at);
+                    wants.Add(want);
                     ranks.Add(RankOf(room));
                 }
 
@@ -7473,7 +7470,43 @@ namespace VaultAdmin
             return found;
         }
 
-        /// <summary>Which outfit in the wardrobe adds most to one stat, or -1 if none adds any.</summary>
+        /// <summary>
+        /// What stat an outfit should be chosen for, in the room this dweller works in.
+        ///
+        /// Two rooms are not answered by their own stat. The door has none at all -- the game asks
+        /// nothing of a guard but that they be there -- so nothing in particular helps one, and the
+        /// right coat is simply the best one nobody else needs more. And the living quarters run on
+        /// charisma whatever else is true of them, because what happens in them is people getting
+        /// along with each other.
+        /// </summary>
+        private static int WantedStat(Room room)
+        {
+            string kind = TypeOf(room);
+
+            if (kind == "Entrance") return Anything;
+            if (kind == "LivingQuarters") return CharismaIndex();
+
+            object stat = RoomStat(room);
+            if (!(stat is ESpecialStat)) return Nowhere;
+
+            int at = Array.IndexOf(Specials, (ESpecialStat)stat);
+            return at < 0 ? Nowhere : at;
+        }
+
+        /// <summary>Where charisma sits in SPECIAL, asked rather than counted to on fingers.</summary>
+        private static int CharismaIndex()
+        {
+            for (int i = 0; i < Specials.Length; i++)
+                if (Specials[i].ToString().IndexOf("Charisma",
+                        StringComparison.OrdinalIgnoreCase) >= 0) return i;
+
+            return Anything;
+        }
+
+        private const int Anything = -1;
+        private const int Nowhere = -2;
+
+        /// <summary>Which outfit in the wardrobe suits one stat best, or -1 if none of them do.</summary>
         private int BestInWardrobe(List<DwellerItem> wardrobe, int stat)
         {
             int best = -1;
@@ -7485,11 +7518,13 @@ namespace VaultAdmin
                 int[] adds = StatsOfOutfit(ReadAsText(wardrobe[i], "Id"));
                 if (adds == null || stat >= adds.Length) continue;
 
-                int gives = adds[stat];
-                if (gives <= 0) continue;
-
                 int sum = 0;
                 for (int j = 0; j < adds.Length; j++) sum += adds[j];
+
+                // Nothing in particular is wanted at the door, so everything counts there: the
+                // guard takes whichever coat is worth the most altogether.
+                int gives = stat == Anything ? sum : adds[stat];
+                if (gives <= 0) continue;
 
                 // The wanted stat decides it; the rest of the coat only breaks a tie. Sorting on
                 // the total instead would put a +1-to-everything suit ahead of +3 to the one stat
