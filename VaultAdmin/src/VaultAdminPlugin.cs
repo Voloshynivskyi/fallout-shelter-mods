@@ -1086,6 +1086,24 @@ namespace VaultAdmin
                     if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0 &&
                         name.IndexOf("button", StringComparison.OrdinalIgnoreCase) < 0) continue;
 
+                    // Only one that is actually on screen. This HUD carries two dwellers buttons --
+                    // a handset one and a tablet one -- and whichever the layout is not using is
+                    // switched off. Copying that one put our button on a branch nothing draws and
+                    // nothing clicks, which is a button that is present and useless.
+                    if (!all[i].gameObject.activeInHierarchy)
+                    {
+                        Log.LogInfo("Skipping '" + name + "': it is switched off in this layout.");
+                        continue;
+                    }
+
+                    // And one that is a button. A label called Dweller Button Value is not.
+                    if (all[i].GetComponent<Collider>() == null &&
+                        all[i].GetComponentInChildren<Collider>(true) == null)
+                    {
+                        Log.LogInfo("Skipping '" + name + "': nothing on it takes a press.");
+                        continue;
+                    }
+
                     Log.LogInfo("Putting the panel button under '" + name + "'.");
                     return all[i];
                 }
