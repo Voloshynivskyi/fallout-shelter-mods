@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.4";
+        public const string PluginVersion = "1.2.5";
 
         internal static ManualLogSource Log;
 
@@ -5684,33 +5684,23 @@ namespace VaultAdmin
         /// </summary>
         private static string AskWhoThisVaultIs()
         {
-            System.Text.StringBuilder seen = new System.Text.StringBuilder();
-
             const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
-                                         BindingFlags.Static;
+                                         BindingFlags.Static | BindingFlags.DeclaredOnly;
 
-            string[] singletons = { "Instance", "instance", "s_instance", "m_instance" };
+            const BindingFlags Ones = BindingFlags.Public | BindingFlags.NonPublic |
+                                      BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
             try
             {
-                // The game's assembly and nothing else. The last sweep went through every loaded
-                // assembly and drowned in UnityEngine: "Profile" matches a hundred profiler
-                // classes, the listing filled with ProfilerRecorder and ProfilerMarker, and it
-                // never reported a single class belonging to the game. Whatever knows which vault
-                // this is, it is the game that knows it.
                 Assembly game = null;
                 Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
 
                 for (int a = 0; a < loaded.Length && game == null; a++)
-                {
-                    string called = loaded[a].GetName().Name;
-                    if (called == "Assembly-CSharp") game = loaded[a];
-                }
+                    if (loaded[a].GetName().Name == "Assembly-CSharp") game = loaded[a];
 
                 if (game == null)
                 {
-                    Log.LogWarning("Assembly-CSharp is not loaded, which cannot be true, so this " +
-                                   "is looking in the wrong place.");
+                    Log.LogWarning("Assembly-CSharp is not loaded, which cannot be true.");
                     return null;
                 }
 
@@ -5718,59 +5708,55 @@ namespace VaultAdmin
                 try { types = game.GetTypes(); }
                 catch { return null; }
 
+                // Every class in the game, and no filter on what the class is called.
+                //
+                // Filtering by class name has now failed four times, and the last attempt showed
+                // why: the list of classes it did ask -- Vault, VaultSave, VaultTecMgr, VaultHUD
+                // and forty more -- holds nothing that identifies a vault. So the class holding it
+                // is not called anything I would have thought of, and guessing the name of a
+                // container is a worse question than asking what is inside.
+                //
+                // The member name stays narrow, and that is what makes this safe: only members
+                // called after a save slot or a vault's name are read at all, so only a handful of
+                // getters run, rather than every getter in the game.
+                System.Text.StringBuilder found = new System.Text.StringBuilder();
+                string first = null;
+
                 for (int t = 0; t < types.Length; t++)
                 {
-                    string called = types[t].Name;
+                    MemberInfo[] named;
+                    try { named = Named(types[t], Statics, Ones); }
+                    catch { continue; }
 
-                    if (called.IndexOf("Save", StringComparison.OrdinalIgnoreCase) < 0 &&
-                        called.IndexOf("Vault", StringComparison.OrdinalIgnoreCase) < 0 &&
-                        called.IndexOf("Profile", StringComparison.OrdinalIgnoreCase) < 0)
-                        continue;
+                    if (named.Length == 0) continue;
 
-                    object held = null;
+                    // Only now is an instance worth looking for -- this class has something to say.
+                    object held = Singleton(types[t]);
 
-                    for (int i = 0; i < singletons.Length && held == null; i++)
+                    for (int i = 0; i < named.Length; i++)
                     {
-                        try
-                        {
-                            FieldInfo one = types[t].GetField(singletons[i], Statics);
-                            if (one != null) held = one.GetValue(null);
+                        bool isStatic = IsStatic(named[i]);
+                        if (!isStatic && held == null) continue;
 
-                            if (held == null)
-                            {
-                                PropertyInfo said = types[t].GetProperty(singletons[i], Statics);
-                                if (said != null && said.CanRead) held = said.GetValue(null, null);
-                            }
-                        }
-                        catch { }
-                    }
+                        string said = ValueOf(named[i], isStatic ? null : held);
+                        if (said == null) continue;
 
-                    if (held == null && typeof(UnityEngine.Object).IsAssignableFrom(types[t]))
-                    {
-                        try { held = UnityEngine.Object.FindObjectOfType(types[t]); }
-                        catch { }
-                    }
+                        if (found.Length < 700)
+                            found.Append("  ").Append(types[t].Name).Append(".")
+                                 .Append(named[i].Name).Append("='").Append(said).Append("'");
 
-                    if (seen.Length < 900)
-                        seen.Append(" ").Append(called).Append(held == null ? "" : "*");
-
-                    // By what a member is called, not by a list of names I thought of. Three
-                    // rounds of naming candidates have each been wrong the same way -- the member
-                    // is there, spelled slightly otherwise, on something I did not think to ask.
-                    string answer = Matching(types[t], null, Statics, called);
-                    if (answer != null) return answer;
-
-                    if (held != null)
-                    {
-                        answer = Matching(held.GetType(), held,
-                                          BindingFlags.Public | BindingFlags.NonPublic |
-                                          BindingFlags.Instance, called);
-                        if (answer != null) return answer;
+                        if (first == null) first = types[t].Name + ":" + said;
                     }
                 }
 
-                Log.LogWarning("Nothing in Assembly-CSharp would say which vault this is. " +
-                               "Asked (* = had an instance):" + seen);
+                if (first != null)
+                {
+                    Log.LogInfo("This vault answers to:" + found);
+                    return first;
+                }
+
+                Log.LogWarning("No member in the whole of Assembly-CSharp is called after a save " +
+                               "slot or a vault's name, so there is nothing here to key a vault by.");
             }
             catch (Exception e)
             {
@@ -5780,49 +5766,92 @@ namespace VaultAdmin
             return null;
         }
 
-        /// <summary>
-        /// Any member of this type whose name is about a save slot or a vault's name or number.
-        ///
-        /// Reading is limited to members that answer that description, because reading a property
-        /// runs somebody else's code and there is no reason to run all of it.
-        /// </summary>
-        private static string Matching(Type type, object on, BindingFlags flags, string called)
+        /// <summary>Every member of a type whose name is about a save slot or a vault's name.</summary>
+        private static MemberInfo[] Named(Type type, BindingFlags statics, BindingFlags ones)
+        {
+            List<MemberInfo> kept = new List<MemberInfo>();
+
+            FieldInfo[] fields = type.GetFields(statics);
+            for (int i = 0; i < fields.Length; i++)
+                if (Identifying(fields[i].Name)) kept.Add(fields[i]);
+
+            fields = type.GetFields(ones);
+            for (int i = 0; i < fields.Length; i++)
+                if (Identifying(fields[i].Name)) kept.Add(fields[i]);
+
+            PropertyInfo[] props = type.GetProperties(statics);
+            for (int i = 0; i < props.Length; i++)
+                if (props[i].CanRead && props[i].GetIndexParameters().Length == 0 &&
+                    Identifying(props[i].Name)) kept.Add(props[i]);
+
+            props = type.GetProperties(ones);
+            for (int i = 0; i < props.Length; i++)
+                if (props[i].CanRead && props[i].GetIndexParameters().Length == 0 &&
+                    Identifying(props[i].Name)) kept.Add(props[i]);
+
+            return kept.ToArray();
+        }
+
+        /// <summary>Whatever this class keeps of itself, or one of it in the scene.</summary>
+        private static object Singleton(Type type)
+        {
+            const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
+                                         BindingFlags.Static;
+
+            string[] kept = { "Instance", "instance", "s_instance", "m_instance" };
+
+            for (int i = 0; i < kept.Length; i++)
+            {
+                try
+                {
+                    FieldInfo one = type.GetField(kept[i], Statics);
+                    if (one != null)
+                    {
+                        object held = one.GetValue(null);
+                        if (held != null) return held;
+                    }
+
+                    PropertyInfo said = type.GetProperty(kept[i], Statics);
+                    if (said != null && said.CanRead)
+                    {
+                        object held = said.GetValue(null, null);
+                        if (held != null) return held;
+                    }
+                }
+                catch { }
+            }
+
+            try
+            {
+                if (typeof(UnityEngine.Object).IsAssignableFrom(type))
+                    return UnityEngine.Object.FindObjectOfType(type);
+            }
+            catch { }
+
+            return null;
+        }
+
+        private static bool IsStatic(MemberInfo one)
+        {
+            FieldInfo field = one as FieldInfo;
+            if (field != null) return field.IsStatic;
+
+            PropertyInfo prop = one as PropertyInfo;
+            if (prop == null) return false;
+
+            MethodInfo getter = prop.GetGetMethod(true);
+            return getter != null && getter.IsStatic;
+        }
+
+        private static string ValueOf(MemberInfo one, object on)
         {
             try
             {
-                FieldInfo[] fields = type.GetFields(flags);
+                FieldInfo field = one as FieldInfo;
+                if (field != null) return Text(field.GetValue(on));
 
-                for (int i = 0; i < fields.Length; i++)
-                {
-                    if (!Identifying(fields[i].Name)) continue;
-
-                    string said = Text(fields[i].GetValue(on));
-                    if (said == null) continue;
-
-                    Log.LogInfo("This vault is '" + said + "', which " + called + " keeps as " +
-                                fields[i].Name + ".");
-
-                    return called + ":" + said;
-                }
-
-                PropertyInfo[] props = type.GetProperties(flags);
-
-                for (int i = 0; i < props.Length; i++)
-                {
-                    if (!props[i].CanRead || !Identifying(props[i].Name)) continue;
-                    if (props[i].GetIndexParameters().Length > 0) continue;
-
-                    string said;
-                    try { said = Text(props[i].GetValue(on, null)); }
-                    catch { continue; }
-
-                    if (said == null) continue;
-
-                    Log.LogInfo("This vault is '" + said + "', which " + called + " keeps as " +
-                                props[i].Name + ".");
-
-                    return called + ":" + said;
-                }
+                PropertyInfo prop = one as PropertyInfo;
+                if (prop != null) return Text(prop.GetValue(on, null));
             }
             catch { }
 
