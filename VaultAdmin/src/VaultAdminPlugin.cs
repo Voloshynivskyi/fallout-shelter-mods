@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.3";
+        public const string PluginVersion = "1.5.0";
 
         internal static ManualLogSource Log;
 
@@ -5237,6 +5237,39 @@ namespace VaultAdmin
         /// original of anything, and restoring them into the new vault would write one player's
         /// numbers over another's.
         /// </summary>
+        /// <summary>
+        /// Lets go of everything belonging to a vault that is no longer loaded.
+        ///
+        /// Every one of these is a reference into a scene that has been torn down: two pooled
+        /// dwellers borrowed for the bench, a list of rooms, the widgets of the game's own HUD that
+        /// were hidden while the panel was open, the table of which stat each room type uses. Held
+        /// past the scene they came from they are at best useless and at worst something this mod
+        /// will try to touch on the next frame.
+        /// </summary>
+        private void LetTheOldVaultGo()
+        {
+            _knownVault = null;
+
+            _standIns.Clear();
+            _hidden.Clear();
+            _rushingRooms = null;
+            _previewDweller = null;
+            _hudButton = null;
+            _buttonSettled = false;
+
+            _statByType.Clear();
+            _roomInfoOwner = null;
+            _lookedForRoomInfo = false;
+            _roomInfo = null;
+
+            _lastBeat.Clear();
+            _posed = false;
+            _framedSize = -1f;
+            _texturedOnce = false;
+
+            Log.LogInfo("The vault closed; everything belonging to it has been let go.");
+        }
+
         private void CheckWhichVault()
         {
             try
@@ -6301,6 +6334,19 @@ namespace VaultAdmin
         /// </summary>
         private static bool Teaches(Room room)
         {
+            // The game says so itself: RoomClass reads Production for a factory. Whatever it
+            // reads for a gym it will not read Production, and a room added by a mod is sorted by
+            // the same word rather than by a list of names this code would have to keep.
+            object grouping = ReadObject(room, "RoomClass");
+
+            if (grouping != null)
+            {
+                string what = grouping.ToString();
+
+                if (what.IndexOf("training", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (what.IndexOf("production", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            }
+
             object flag = ReadObject(room, "IsTrainingRoom");
             if (flag == null) flag = ReadObject(room, "m_isTrainingRoom");
             if (flag is bool) return (bool)flag;
@@ -6349,26 +6395,119 @@ namespace VaultAdmin
             }
         }
 
-        /// <summary>Which stat a room runs on, asked for by each name it might have.</summary>
+        /// <summary>
+        /// Which stat a room runs on.
+        ///
+        /// Not a property of the room, which is why asking the room found nothing and reported
+        /// nought rooms in a vault of sixty. The save says as much: a room record carries its
+        /// type, its class and its level and nothing about SPECIAL -- because a geothermal plant
+        /// does not have Strength, the settings for geothermal plants do. So the room is asked for
+        /// its type and the game's own table is asked for that type's settings.
+        ///
+        /// The stat is then found on those settings by what it is rather than by what it is
+        /// called: whichever member holds an ESpecialStat is the one, whatever name it was given.
+        /// A name is a guess that has to be right; a type is a description that cannot be wrong --
+        /// which is also what makes a room added by an update or another mod answer correctly.
+        /// </summary>
         private static object RoomStat(Room room)
         {
-            object stat = ReadObject(room, "SpecialStat");
-            if (stat == null) stat = ReadObject(room, "m_specialStat");
+            object kind = ReadObject(room, "RoomType");
+            if (kind == null) return StatOn(room);
 
-            if (stat == null)
+            string key = kind.ToString();
+
+            object stat;
+            if (_statByType.TryGetValue(key, out stat)) return stat;
+
+            stat = StatOn(RoomSettings(kind));
+            if (stat == null) stat = StatOn(room);
+
+            _statByType[key] = stat;
+            return stat;
+        }
+
+        private static readonly Dictionary<string, object> _statByType =
+            new Dictionary<string, object>();
+
+        /// <summary>The game's own settings for a kind of room.</summary>
+        private static object RoomSettings(object kind)
+        {
+            try
             {
-                object parameters = ReadObject(room, "RoomParameters");
-                if (parameters == null) parameters = ReadObject(room, "m_roomParameters");
-                if (parameters == null) parameters = ReadObject(room, "Parameters");
-
-                if (parameters != null)
+                if (!_lookedForRoomInfo)
                 {
-                    stat = ReadObject(parameters, "SpecialStat");
-                    if (stat == null) stat = ReadObject(parameters, "m_specialStat");
+                    _lookedForRoomInfo = true;
+
+                    Type mgr = FindType("ParameterDataMgr");
+                    if (mgr == null)
+                    {
+                        Log.LogWarning("No ParameterDataMgr; rooms cannot be asked what they run on.");
+                        return null;
+                    }
+
+                    PropertyInfo instance = mgr.GetProperty("Instance",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+                    if (instance != null) _roomInfoOwner = instance.GetValue(null, null);
+
+                    if (_roomInfoOwner == null)
+                        _roomInfoOwner = UnityEngine.Object.FindAnyObjectByType(mgr);
+
+                    _roomInfo = mgr.GetMethod("GetRoomInfoForType",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                    Log.LogInfo(_roomInfo == null || _roomInfoOwner == null
+                        ? "ParameterDataMgr is here but GetRoomInfoForType is not reachable."
+                        : "Room settings come from ParameterDataMgr.GetRoomInfoForType.");
+                }
+
+                if (_roomInfo == null || _roomInfoOwner == null) return null;
+
+                return _roomInfo.Invoke(_roomInfoOwner, new[] { kind });
+            }
+            catch (Exception e)
+            {
+                ReportOnce("roominfo", "Could not read the room settings: " + e.Message);
+                return null;
+            }
+        }
+
+        private static MethodInfo _roomInfo;
+        private static object _roomInfoOwner;
+        private static bool _lookedForRoomInfo;
+
+        /// <summary>Whichever member of this object holds a SPECIAL stat, if any does.</summary>
+        private static object StatOn(object thing)
+        {
+            if (thing == null) return null;
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            try
+            {
+                FieldInfo[] fields = thing.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (fields[i].FieldType != typeof(ESpecialStat)) continue;
+
+                    object held = fields[i].GetValue(thing);
+                    if (held != null && held.ToString() != "None") return held;
+                }
+
+                PropertyInfo[] props = thing.GetType().GetProperties(Flags);
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].PropertyType != typeof(ESpecialStat)) continue;
+                    if (props[i].GetIndexParameters().Length > 0) continue;
+
+                    object held = props[i].GetValue(thing, null);
+                    if (held != null && held.ToString() != "None") return held;
                 }
             }
+            catch { }
 
-            return stat;
+            return null;
         }
 
         /// <summary>
@@ -6409,6 +6548,24 @@ namespace VaultAdmin
         /// <summary>How many people a room has room for.</summary>
         private static int RoomPlaces(Room room)
         {
+            // The figures for the level this room is at. Capacity grows as a room is upgraded and
+            // again as it is merged, so the number belongs to the level rather than to the room:
+            // CurrentLevelStats.m_maxDwellerCount, which is what the room itself printed when it
+            // was asked what it holds.
+            object level = ReadObject(room, "CurrentLevelStats");
+
+            if (level != null)
+            {
+                object many = ReadObject(level, "m_maxDwellerCount");
+                if (many == null) many = ReadObject(level, "MaxDwellerCount");
+
+                if (many != null)
+                {
+                    try { return Convert.ToInt32(many); }
+                    catch { }
+                }
+            }
+
             string[] names = { "MaxDwellers", "m_maxDwellers", "Capacity", "m_capacity",
                                "MaxWorkers", "m_maxWorkers" };
 
@@ -9940,6 +10097,18 @@ namespace VaultAdmin
         private void Update()
         {
             if (!Enabled.Value) return;
+
+            // Nothing that reaches into the game runs while there is no vault to reach into.
+            // Leaving one for the vault list tears down every room, every dweller and every widget
+            // this mod holds a reference to, and a per-frame pass over objects in the middle of
+            // being destroyed is the worst place to be standing when that happens.
+            bool inAVault = SafeVault() != null;
+
+            if (!inAVault)
+            {
+                if (_knownVault != null) LetTheOldVaultGo();
+                return;
+            }
 
             EnsureHudButton();
             UpdateCameraHold();
