@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.8";
+        public const string PluginVersion = "1.0.9";
 
         internal static ManualLogSource Log;
 
@@ -5540,10 +5540,15 @@ namespace VaultAdmin
 
                 if (string.IsNullOrEmpty(name) && !_reportedVaultName)
                 {
-                    // Without a name there is nothing to key a vault's settings by, and they
-                    // quietly fall back to the game-wide ones. Which member holds it is worth one
-                    // line rather than three more guesses.
+                    // Without a name there is nothing to key a vault's settings by, and they fall
+                    // back to the game-wide ones -- which is a thing to be told about rather than
+                    // to discover by watching one vault's switches turn up in another.
                     _reportedVaultName = true;
+
+                    Log.LogWarning("This vault will not say its name, so incidents, the pair, " +
+                                   "rushing and the population limit are being kept for the whole " +
+                                   "game rather than for this vault.");
+
                     SayWhatHoldsTheName(vault);
                 }
 
@@ -7845,17 +7850,14 @@ namespace VaultAdmin
         {
             if (target == null) return false;
 
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
-                                       BindingFlags.Instance;
-
-            PropertyInfo property = target.GetType().GetProperty(member, Flags);
+            PropertyInfo property = FindProperty(target.GetType(), member);
             if (property != null && property.CanWrite)
             {
                 property.SetValue(target, value, null);
                 return true;
             }
 
-            FieldInfo field = target.GetType().GetField(member, Flags);
+            FieldInfo field = FindField(target.GetType(), member);
             if (field == null) return false;
 
             field.SetValue(target, value);
@@ -11745,13 +11747,10 @@ namespace VaultAdmin
 
         private static string ReadMember(object target, string member)
         {
-            Type t = target.GetType();
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-
-            PropertyInfo prop = t.GetProperty(member, Flags);
+            PropertyInfo prop = FindProperty(target.GetType(), member);
             if (prop != null) return prop.GetValue(target, null) as string;
 
-            FieldInfo field = t.GetField(member, Flags);
+            FieldInfo field = FindField(target.GetType(), member);
             if (field != null) return field.GetValue(target) as string;
 
             return null;
@@ -12055,18 +12054,61 @@ namespace VaultAdmin
         }
 
         /// <summary>Reads a member without turning it into a string first.</summary>
+        /// <summary>
+        /// A property of that name, on this type or on any type it inherits from.
+        ///
+        /// GetProperty and GetField with NonPublic look at one class. A private field declared on
+        /// a base class is not found there -- and the answer, null, is the same answer as "there is
+        /// no such member". So a member that was merely inherited read as absent, every caller
+        /// quietly took its fallback path, and nothing said a word. It is why the vault would not
+        /// give its own name, and with no name to key them by every per-vault setting fell back to
+        /// the game-wide one.
+        /// </summary>
+        private static PropertyInfo FindProperty(Type type, string member)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            for (; type != null; type = type.BaseType)
+            {
+                try
+                {
+                    PropertyInfo found = type.GetProperty(member, Flags);
+                    if (found != null) return found;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        /// <summary>A field of that name, on this type or on any type it inherits from.</summary>
+        private static FieldInfo FindField(Type type, string member)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            for (; type != null; type = type.BaseType)
+            {
+                try
+                {
+                    FieldInfo found = type.GetField(member, Flags);
+                    if (found != null) return found;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
         private static object ReadObject(object target, string member)
         {
             if (target == null) return null;
 
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
-                                       BindingFlags.Instance;
-            Type type = target.GetType();
-
-            PropertyInfo property = type.GetProperty(member, Flags);
+            PropertyInfo property = FindProperty(target.GetType(), member);
             if (property != null && property.CanRead) return property.GetValue(target, null);
 
-            FieldInfo field = type.GetField(member, Flags);
+            FieldInfo field = FindField(target.GetType(), member);
             if (field != null) return field.GetValue(target);
 
             return null;
@@ -12333,13 +12375,12 @@ namespace VaultAdmin
         /// <summary>Reads any member, of any type, by name. The string-only helper cannot do enums.</summary>
         private static object ReadAny(object target, string member)
         {
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            Type t = target.GetType();
+            if (target == null) return null;
 
-            PropertyInfo prop = t.GetProperty(member, Flags);
+            PropertyInfo prop = FindProperty(target.GetType(), member);
             if (prop != null) return prop.GetValue(target, null);
 
-            FieldInfo field = t.GetField(member, Flags);
+            FieldInfo field = FindField(target.GetType(), member);
             if (field != null) return field.GetValue(target);
 
             return null;
