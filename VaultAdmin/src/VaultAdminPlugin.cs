@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.7";
+        public const string PluginVersion = "1.0.8";
 
         internal static ManualLogSource Log;
 
@@ -4385,8 +4385,12 @@ namespace VaultAdmin
                     ReportOnce("bonuswords", "Could not read the bonus wording: " + e.Message);
                 }
 
+                // A stand-in answers this one call and is not kept. The game's own wording is not
+                // available the moment the panel first opens, and remembering the stand-in meant a
+                // session that opened the panel early never saw the real sentence at all -- the
+                // same fault the bonus list had, one method further along.
                 if (string.IsNullOrEmpty(pattern))
-                    pattern = string.Join(" ", SplitWords(key)) + " +{0}";
+                    return string.Join(" ", SplitWords(key)) + " +" + amount;
 
                 _bonusWords[key] = pattern;
             }
@@ -7160,7 +7164,11 @@ namespace VaultAdmin
             stat = StatOn(RoomSettings(kind));
             if (stat == null) stat = StatOn(room);
 
-            _statByType[key] = stat;
+            // Only an answer is worth keeping. A room asked before its parameters had loaded was
+            // otherwise filed as having no stat for the rest of the session, and staffing skipped
+            // it every time after that.
+            if (stat != null) _statByType[key] = stat;
+
             return stat;
         }
 
@@ -7919,10 +7927,17 @@ namespace VaultAdmin
 
             // Only when the bench is the thing being looked at. Building the window used to make
             // one and throw it away in the same breath.
-            // The animal bench is one screenful. A bar down the side of a list that does not
-            // move is a control that says something untrue about the page.
+            //
+            // The bar used to be taken away on the animal bench, on the grounds that the bench was
+            // one screenful and a bar beside a list that cannot move says something untrue about
+            // the page. It is not one screenful any more -- the bonus grew a second row -- and a
+            // page that scrolls with no bar on it is the worse of the two lies, because the game's
+            // own wheel handling reaches the camera and there is then no visible way down.
+            //
+            // The bounds come from the widgets that are switched on, and the hidden bench is
+            // switched off, so the bar measures whichever bench is actually being looked at.
             if (_createView != null && _createView.verticalScrollBar != null)
-                _createView.verticalScrollBar.gameObject.SetActive(making != Making.Pet);
+                _createView.verticalScrollBar.gameObject.SetActive(true);
 
             if (making == Making.Dweller && _tab == Tab.Create && _panelOpen) RemakePreview();
             else DisposePreview();
@@ -10755,6 +10770,19 @@ namespace VaultAdmin
             if (_font != null) return;
 
             UILabel[] labels = Resources.FindObjectsOfTypeAll<UILabel>();
+
+            // The face most of the game's labels are set in -- not the first one that turns up.
+            //
+            // Taking the first was the last piece of the lottery this method used to be. The size
+            // came out of it years ago; the order did not. FindObjectsOfTypeAll returns whatever
+            // order the engine happens to be holding, and that is not the same twice, so the panel
+            // drew in one face on one launch and a different one on the next. Text of a different
+            // width wraps differently and lands somewhere else, which is most of why the window
+            // looked like it moved between runs. A majority does not depend on order.
+            List<object> faces = new List<object>();
+            List<int> counts = new List<int>();
+            List<bool> drawn = new List<bool>();
+
             for (int i = 0; i < labels.Length; i++)
             {
                 UILabel label = labels[i];
@@ -10762,20 +10790,52 @@ namespace VaultAdmin
 
                 object bitmap = ReadAny(label, "bitmapFont");
                 object dynamic = ReadAny(label, "trueTypeFont");
-                if (bitmap == null && dynamic == null) continue;
 
-                // The typeface only. Taking the size as well made the whole panel a lottery:
-                // this walks every label in memory and stops at the first one with a font, and
-                // what that label happens to be depends on what the game has loaded. One session
-                // it was a caption of size 20; the next it was 'AdditionalText' at 40, and every
-                // word in the panel came out half again as large.
-                _font = bitmap != null ? bitmap : dynamic;
-                Log.LogInfo("Borrowed a font from '" + label.name + "': " +
-                            _font.GetType().Name + ".");
+                object face = bitmap != null ? bitmap : dynamic;
+                if (face == null) continue;
+
+                int at = faces.IndexOf(face);
+
+                if (at < 0)
+                {
+                    faces.Add(face);
+                    counts.Add(1);
+                    drawn.Add(bitmap != null);
+                }
+                else counts[at]++;
+            }
+
+            if (faces.Count == 0)
+            {
+                Log.LogWarning("No font found on any label; the panel's text will not draw.");
                 return;
             }
 
-            Log.LogWarning("No font found on any label; the panel's text will not draw.");
+            // A bitmap face is the game's own and measures the same every time; a dynamic one is
+            // whatever Unity built for whoever asked. Bitmap first, then the commonest, then by
+            // name -- three rules, none of which can answer differently on a different launch.
+            int best = 0;
+
+            for (int i = 1; i < faces.Count; i++)
+            {
+                if (drawn[i] != drawn[best]) { if (drawn[i]) best = i; continue; }
+                if (counts[i] != counts[best]) { if (counts[i] > counts[best]) best = i; continue; }
+
+                if (string.CompareOrdinal(FaceName(faces[i]), FaceName(faces[best])) < 0) best = i;
+            }
+
+            _font = faces[best];
+
+            Log.LogInfo("Borrowed the font '" + FaceName(_font) + "' (" + _font.GetType().Name +
+                        "), which " + counts[best] + " of " + labels.Length +
+                        " labels in memory are set in.");
+        }
+
+        /// <summary>What a borrowed typeface is called, so one can be preferred over another.</summary>
+        private static string FaceName(object face)
+        {
+            UnityEngine.Object named = face as UnityEngine.Object;
+            return named != null ? named.name : face.GetType().Name;
         }
 
         /// <summary>A drawn texture, positioned in the window's own space.</summary>
