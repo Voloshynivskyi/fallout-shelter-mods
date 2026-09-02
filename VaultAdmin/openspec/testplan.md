@@ -392,3 +392,162 @@ names every candidate it considered, with whether each was switched on and click
 **Expect** no atlas dumps, no lists of animation clips, and no line saying a plate is drawn at one
 size and shown at another. Those are diagnostics; in a shipped build they should have nothing to
 say.
+
+---
+
+# Release 1.0.0 — the whole panel, end to end
+
+Every capability, and every way through it. Written to be walked start to finish in one sitting.
+
+**Before starting.** Use a scratch vault for everything marked *destructive*; several of these
+cannot be undone. Switch `TraceActions = true` for the run, so a fault has a witness. Note which
+save slot the vault is — the panel keys its settings by it.
+
+Mark each line PASS, FAIL or N/A. A FAIL wants four things: what was pressed, what happened, what
+the band said, and what the log said.
+
+## A. Starting up
+
+- [ ] A1. `Enabled = false`: the game runs, no button, no panel, nothing in the log past the load line.
+- [ ] A2. `Enabled = true`: the button appears **under the dwellers button, top left**, and does not
+      move afterwards. No slide, no jump.
+- [ ] A3. `F8` opens and closes the panel. With `ShowHudButton = false` the button is gone and the
+      key still works.
+- [ ] A4. A nonsense `ToggleKey` falls back to F8 and says so once in the log.
+- [ ] A5. At the main menu with no vault: no panel, no grey window, nothing drawn.
+
+## B. The panel itself
+
+- [ ] B1. All four tabs open: RESOURCES, ITEMS, WORKSHOP, OVERRIDES.
+- [ ] B2. Every page scrolls, and the bar is there on every page that overflows — the animal bench
+      included.
+- [ ] B3. CLOSE closes it; the button comes back.
+- [ ] B4. Leaving to the main menu closes the panel. No grey window, no "no vault loaded".
+- [ ] B5. Re-entering a vault: the button is there, the panel opens fresh.
+- [ ] B6. The answer band sits above CLOSE with an **i** in a ring at its left, on every page.
+
+## C. RESOURCES
+
+- [ ] C1. Caps, food, water, power, stimpaks, RadAway, Quantum — for each, the +N button raises the
+      count, the flight plays **once**, and the band says `Gave N <NAME>` in player words.
+- [ ] C2. Fill-to-cap fills it and says how much went in.
+- [ ] C3. Fill-to-cap on something already full says so — it does not sit silent.
+- [ ] C4. Lunchbox, Mr Handy, pet carrier: +1 gives **exactly one**. Count before and after.
+- [ ] C5. The counters follow the vault as it changes without the panel.
+
+## D. ITEMS
+
+- [ ] D1. Every family lists: WEAPON, OUTFIT, JUNK, PET, DWELLER. Icons draw for all of them,
+      **pets included, on the very first open**, without paging.
+- [ ] D2. Search narrows the list; clearing it restores it.
+- [ ] D3. Sort by RARITY and by each SPECIAL stat reorders the list.
+- [ ] D4. The row button says **GIVE** on weapons, outfits, junk and pets, and **INVITE** on dwellers.
+- [ ] D5. Give a weapon, an outfit and a piece of junk: each arrives, and the band names it the way
+      a player would — not `032Pistol_Rusty`.
+- [ ] D6. Give a pet: it arrives, with its picture.
+- [ ] D7. Invite a rolled dweller of each rarity: each arrives at the door.
+- [ ] D8. Invite a named dweller: arrives with their own look and stats.
+- [ ] D9. **Storage full**: giving a weapon refuses **in red** and adds nothing. The row does not
+      claim success.
+- [ ] D10. Storage full: a pet refuses in red the same way.
+
+## E. WORKSHOP — dwellers
+
+- [ ] E1. The figure appears, stands, and **keeps idling** — it does not freeze after one movement.
+- [ ] E2. The gender switch changes the figure and the appearance lists.
+- [ ] E3. Every picker steps: hair, face, hair colour, skin, headgear, outfit, weapon. No slot is
+      ever empty.
+- [ ] E4. The die re-rolls the whole look and the figure follows.
+- [ ] E5. Name, rarity, level and all seven SPECIAL fields accept values.
+- [ ] E6. CREATE DWELLER: the band says `CREATED <NAME>` with rarity and level, the log carries the
+      full description, and the dweller waits at the door **looking as the figure did**.
+- [ ] E7. Create several in a row, changing weapons between them. **Storage does not grow** with
+      weapons nobody granted.
+- [ ] E8. Leaving the bench puts the stand-in away; nobody is left standing in the vault.
+
+## F. WORKSHOP — animals
+
+- [ ] F1. The animal's picture shows **on the first open**, before touching an arrow.
+- [ ] F2. Breed arrows step through, picture and name following.
+- [ ] F3. The grade row steps.
+- [ ] F4. The bonus row: arrows change the bonus, the sentence reads as the game words it — not
+      `ADD MAX …` — and the tally `n/N` sits by the arrows.
+- [ ] F5. Typing a value updates the sentence; MAX fills in the strongest the game gives.
+- [ ] F6. The plate behind the die reads as a **button**, distinct from the well behind the figure.
+- [ ] F7. CREATE PET: arrives with its picture, its name and the bonus chosen.
+- [ ] F8. Storage full: refuses in red, and says so.
+
+## G. OVERRIDES — the actions
+
+*All destructive. Scratch vault.*
+
+- [ ] G1. FILL FOOD, WATER, POWER — all three to their caps.
+- [ ] G2. HEAL EVERYONE — **one press** gives an irradiated dweller full health, not two.
+- [ ] G3. REVIVE THE DEAD — a dead dweller stands up at full health.
+- [ ] G4. MAKE EVERYONE HAPPY — everyone at 100%.
+- [ ] G5. FINISH ALL TRAINING — asks first; YES finishes it, NO cancels, and NO is red.
+- [ ] G6. UNLOCK EVERY RECIPE — asks first; every weapon and outfit becomes craftable.
+- [ ] G7. LEVEL EVERYONE — asks first; everyone reaches 50.
+- [ ] G8. MAX SPECIAL FOR EVERYONE — asks first; ten in every stat.
+- [ ] G9. DELIVER EVERY BABY — asks first; every pregnancy ends.
+- [ ] G10. GROW THE CHILDREN — asks first; **children become adults and the three-hour task
+      clears**. *(Never yet confirmed working.)*
+- [ ] G11. On every confirmation, NO leaves the row alone and does nothing.
+- [ ] G12. A confirmation left alone for six seconds disarms itself.
+
+## H. OVERRIDES — staffing and dressing
+
+- [ ] H1. BEST DWELLER IN EVERY ROOM asks first. The band answers in two short readable lines, and
+      the caption beside it does not move.
+- [ ] H2. The log's rank line shows a **non-zero door**, and somebody is standing at the vault door.
+- [ ] H3. Production rooms hold the highest in their stat; gyms hold the **lowest**.
+- [ ] H4. Nobody in the wasteland, dead, a child, or **queued at the door** was moved. The
+      population count is unchanged by the pass.
+- [ ] H5. Put 2–3 outfits in storage. DRESS EVERYONE FOR THE JOB asks first, then dresses as many as
+      the wardrobe allows — **not one and then stopping**.
+- [ ] H6. Storage loses exactly what went onto people. Nothing duplicated, nothing vanished.
+- [ ] H7. The guard on the door wears the best coat outright; the living quarters wear charisma.
+- [ ] H8. Run DRESS **twice**. The total number of outfits, worn plus stored, is unchanged.
+- [ ] H9. **Leave to the menu and come back.** Everyone is still dressed.
+
+## I. OVERRIDES — the standing rules
+
+- [ ] I1. NO INCIDENTS on: no fires, pests or raiders. The switch reads ON.
+- [ ] I2. NO BOTTLE AND CAPPY on: the pair stay away. The switch reads ON.
+- [ ] I3. RUSH NEVER FAILS on: rushing never fails, however often it is tried.
+- [ ] I4. Each switch survives leaving to the menu and coming back.
+- [ ] I5. Each switch survives a full restart of the game.
+
+## J. Per vault, which is the whole point of them
+
+- [ ] J1. In **vault A**: all three switches on, limit 150.
+- [ ] J2. In **vault B**: all three read **OFF**, and the limit is B's own rather than 150.
+- [ ] J3. In B turn one on and set 180. Back in A: still 150, still its own three on.
+- [ ] J4. The config file holds `slotVaultN=…` pairs, one per vault.
+- [ ] J5. The log says `a vault opened: slotVaultN` — never `unnamed`.
+
+## K. The population limit
+
+- [ ] K1. The field opens showing **what the vault takes now**, not what was last typed.
+- [ ] K2. SET applies it; the cursor still works afterwards and a second SET works.
+- [ ] K3. SET above the game's own ceiling reports the number actually given, and the field corrects
+      itself to it.
+- [ ] K4. RESET (red) reports what the quarters hold.
+- [ ] K5. **Build another living quarters**: the limit rises on its own within a few seconds, and the
+      field follows.
+- [ ] K6. Leave and come back: still following the rooms, not back to a fixed number.
+
+## L. Putting it back
+
+- [ ] L1. `Enabled = false` while the game runs: panel and button go, incidents come back, the pair
+      come back, the rush chance is what it was.
+- [ ] L2. Quit and reload with the mod installed: everything granted and created is still there.
+- [ ] L3. **Remove the DLL entirely** and load the same save. It loads, and everything the panel
+      granted or created is still there and behaves normally.
+
+## M. The log
+
+- [ ] M1. With `TraceActions = true`, every action leaves a line, and every vault opening and
+      closing is marked.
+- [ ] M2. With it false, those lines are gone.
+- [ ] M3. No exception and no `Could not …` line across the whole run.
