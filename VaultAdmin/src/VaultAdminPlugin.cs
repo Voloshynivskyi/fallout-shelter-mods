@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.9.1";
+        public const string PluginVersion = "1.10.0";
 
         internal static ManualLogSource Log;
 
@@ -5003,9 +5003,6 @@ namespace VaultAdmin
             // different sections halfway down.
             AddHeader(parent, "THE VAULT", width);
 
-            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
-                     "best where it works, worst where it trains", AssignTheBest,
-                     Skin.Ranked(38), true);
             AddPower(parent, width, "FILL FOOD, WATER, POWER",
                      "the three, to their caps", FillTheEssentials,
                      new[] { "Icon_FoodWater", "Icon_foodPlain", "Icon_WaterPlain" });
@@ -5037,6 +5034,15 @@ namespace VaultAdmin
             AddPower(parent, width, "GROW THE CHILDREN",
                      "every child grows up now", GrowTheChildren,
                      new[] { "Icon_ChildrenGrowthColorGreen" }, true);
+
+            // On its own, between the deeds and the rules. It is neither: everything above
+            // happens to the vault once, everything below is a standing order, and this moves a
+            // hundred people about and then is done.
+            AddHeader(parent, "ASSIGNMENT", width);
+
+            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
+                     "best where it works, worst where it trains", AssignTheBest,
+                     Skin.Ranked(38), true);
 
             // The switches, and the one number that behaves like one: a population limit is a rule
             // the vault keeps, not a thing you do to it once.
@@ -5903,6 +5909,111 @@ namespace VaultAdmin
         }
 
         /// <summary>Every child grown, through the call the game makes when one comes of age.</summary>
+        /// <summary>
+        /// Makes one child grow up, by whichever way this build offers.
+        ///
+        /// OnGrowUp alone left the three-hour task running and the child a child: it is the thing
+        /// that happens when growing up finishes, not the thing that finishes it. So the timer is
+        /// looked for first and run out, and only then is the finishing called.
+        /// </summary>
+        private bool GrowThisOne(object child)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            Type type = child.GetType();
+
+            // Anything on the component that counts down. Setting it past its end is what the
+            // three hours were for, and it is what OnGrowUp was waiting on.
+            string[] timers = { "m_growUpTime", "GrowUpTime", "m_timeToGrow", "TimeToGrow",
+                                "m_remainingTime", "RemainingTime", "m_growTime" };
+
+            for (int i = 0; i < timers.Length; i++)
+            {
+                object now = ReadObject(child, timers[i]);
+                if (now == null) continue;
+
+                try { WriteMember(child, timers[i], 0f); }
+                catch { }
+            }
+
+            // Then whichever method finishes it. Named ones first, then anything that mentions
+            // growing, because a build that renamed it still says what it does.
+            string[] named = { "GrowUp", "OnGrowUp", "FinishGrowUp", "ForceGrowUp", "MakeAdult" };
+
+            for (int i = 0; i < named.Length; i++)
+                if (Ran(child, type.GetMethod(named[i], Flags))) return true;
+
+            MethodInfo[] all = type.GetMethods(Flags);
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].Name.IndexOf("grow", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (all[i].Name.StartsWith("get_") || all[i].Name.StartsWith("set_")) continue;
+
+                if (Ran(child, all[i])) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Calls a method that takes nothing, or one bool, and says whether it went.</summary>
+        private static bool Ran(object on, MethodInfo one)
+        {
+            if (one == null) return false;
+
+            try
+            {
+                ParameterInfo[] args = one.GetParameters();
+
+                if (args.Length == 0) { one.Invoke(on, null); return true; }
+
+                if (args.Length == 1 && args[0].ParameterType == typeof(bool))
+                {
+                    one.Invoke(on, new object[] { true });
+                    return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        /// <summary>Writes down what a child is made of, once, when none of them will grow.</summary>
+        private static void SayWhatAChildIs(object child)
+        {
+            try
+            {
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("A child (").Append(child.GetType().Name).Append(") holds:");
+
+                FieldInfo[] fields = child.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    string got;
+                    try { got = SafeText(fields[i].GetValue(child)); }
+                    catch { got = "<threw>"; }
+
+                    said.Append("  |  .").Append(fields[i].Name).Append("=").Append(Short(got));
+                }
+
+                said.Append("  |  methods:");
+
+                MethodInfo[] all = child.GetType().GetMethods(Flags);
+                for (int i = 0; i < all.Length; i++)
+                    if (all[i].DeclaringType == child.GetType())
+                        said.Append(" ").Append(all[i].Name);
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
+        private static bool _reportedChild;
+
         private void GrowTheChildren()
         {
             int grown = 0;
@@ -5913,25 +6024,18 @@ namespace VaultAdmin
 
                 try
                 {
-                    Component child = one.GetComponentInChildren(
-                        typeof(MonoBehaviour), true) as Component;
+                    // The game hands it over by name: Dweller.DwellerChildComponent. Hunting for
+                    // it among every MonoBehaviour on the object was a way of not asking.
+                    object child = ReadObject(one, "DwellerChildComponent");
+                    if (child == null) continue;
 
-                    MonoBehaviour[] parts = one.GetComponentsInChildren<MonoBehaviour>(true);
-
-                    for (int i = 0; i < parts.Length; i++)
+                    if (!_reportedChild)
                     {
-                        if (parts[i] == null || parts[i].GetType().Name != "DwellerChild") continue;
-
-                        MethodInfo grow = parts[i].GetType().GetMethod(
-                            "OnGrowUp",
-                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                        if (grow == null) continue;
-
-                        grow.Invoke(parts[i], new object[] { true });
-                        grown++;
-                        break;
+                        _reportedChild = true;
+                        SayWhatAChildIs(child);
                     }
+
+                    if (GrowThisOne(child)) grown++;
                 }
                 catch { }
             }
