@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.2";
+        public const string PluginVersion = "1.2.3";
 
         internal static ManualLogSource Log;
 
@@ -5692,6 +5692,8 @@ namespace VaultAdmin
             const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
                                          BindingFlags.Static;
 
+            System.Text.StringBuilder seen = new System.Text.StringBuilder();
+
             try
             {
                 Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
@@ -5730,14 +5732,39 @@ namespace VaultAdmin
                             catch { }
                         }
 
+                        // A class worth asking, whether or not it answered. Written down so a
+                        // sweep that finds nothing still says what it looked at -- the last one
+                        // reported failure and left me no wiser about why.
+                        if (seen.Length < 700)
+                            seen.Append(" ").Append(called).Append(held == null ? "" : "*");
+
+                        // In the scene, for a manager that keeps no singleton of its own. Narrow:
+                        // only the handful of names worth the search.
+                        if (held == null && Likely(called) &&
+                            typeof(UnityEngine.Object).IsAssignableFrom(types[t]))
+                        {
+                            try { held = UnityEngine.Object.FindObjectOfType(types[t]); }
+                            catch { }
+                        }
+
                         for (int w = 0; w < wanted.Length; w++)
                         {
                             string answer = null;
 
                             try
                             {
+                                // A field, and then a property. Only fields were being asked for,
+                                // and get_CurrentSaveSlot is a property -- so the one member most
+                                // likely to hold the answer was the one member never read.
                                 FieldInfo flat = types[t].GetField(wanted[w], Statics);
                                 if (flat != null) answer = Text(flat.GetValue(null));
+
+                                if (answer == null)
+                                {
+                                    PropertyInfo said = types[t].GetProperty(wanted[w], Statics);
+                                    if (said != null && said.CanRead)
+                                        answer = Text(said.GetValue(null, null));
+                                }
 
                                 if (answer == null && held != null)
                                     answer = Text(ReadObject(held, wanted[w]));
@@ -5755,7 +5782,7 @@ namespace VaultAdmin
                 }
 
                 Log.LogWarning("No class that mentions saving, profiles or vaults would say " +
-                               "which vault this is.");
+                               "which vault this is. Asked (* = had an instance):" + seen);
             }
             catch (Exception e)
             {
@@ -5763,6 +5790,14 @@ namespace VaultAdmin
             }
 
             return null;
+        }
+
+        /// <summary>Whether a class is worth hunting for in the scene, rather than merely asking.</summary>
+        private static bool Likely(string called)
+        {
+            return called == "SaveManager" || called == "PlayerProfileHandler" ||
+                   called == "CustomPlayerProfile" || called == "VaultTecMgr" ||
+                   called == "VaultGUIManager";
         }
 
         /// <summary>Which save slot is loaded, as the game itself has it.</summary>
