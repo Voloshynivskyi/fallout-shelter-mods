@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.2";
+        public const string PluginVersion = "1.3.3";
 
         internal static ManualLogSource Log;
 
@@ -6109,11 +6109,88 @@ namespace VaultAdmin
                 }
 
                 Log.LogWarning(said.ToString());
+
+                // And where the per-type settings live. The save calls a room by its type --
+                // Geothermal, WaterPlant, Cafeteria -- so the stat it runs on is a property of
+                // that type rather than of this particular room, and something in the game holds
+                // the table.
+                SayWhereRoomDataLives();
             }
             catch (Exception e)
             {
                 Log.LogWarning("Could not look at a room: " + e.Message);
             }
+        }
+
+        /// <summary>Writes down what holds the per-room-type settings, and how to ask it.</summary>
+        private static void SayWhereRoomDataLives()
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.Static;
+
+            string[] holders = { "ParameterDataMgr", "RoomParameters", "GameParameters" };
+
+            for (int h = 0; h < holders.Length; h++)
+            {
+                try
+                {
+                    Type type = FindType(holders[h]);
+                    if (type == null) { Log.LogWarning("No type called " + holders[h] + "."); continue; }
+
+                    System.Text.StringBuilder said = new System.Text.StringBuilder();
+                    said.Append(type.Name).Append(" offers:");
+
+                    MethodInfo[] all = type.GetMethods(Flags);
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        string name = all[i].Name;
+
+                        if (name.IndexOf("room", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            name.IndexOf("special", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            name.IndexOf("stat", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                        said.Append(" ").Append(name).Append("(");
+
+                        ParameterInfo[] args = all[i].GetParameters();
+                        for (int a = 0; a < args.Length; a++)
+                            said.Append(a > 0 ? "," : "").Append(args[a].ParameterType.Name);
+
+                        said.Append(")");
+                    }
+
+                    PropertyInfo[] props = type.GetProperties(Flags);
+                    for (int i = 0; i < props.Length; i++)
+                        said.Append("  .").Append(props[i].Name);
+
+                    Log.LogWarning(said.ToString());
+                }
+                catch (Exception e)
+                {
+                    Log.LogWarning("Could not look at " + holders[h] + ": " + e.Message);
+                }
+            }
+        }
+
+        /// <summary>A type by its short name, from whichever assembly the game keeps it in.</summary>
+        private static Type FindType(string name)
+        {
+            try
+            {
+                Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
+
+                for (int i = 0; i < loaded.Length; i++)
+                {
+                    Type[] inside;
+                    try { inside = loaded[i].GetTypes(); }
+                    catch { continue; }
+
+                    for (int t = 0; t < inside.Length; t++)
+                        if (inside[t].Name == name) return inside[t];
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         private static string Short(string what)
