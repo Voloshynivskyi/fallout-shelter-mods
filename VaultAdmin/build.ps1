@@ -86,7 +86,10 @@ Copy-Item $outDll (Join-Path $stage "BepInEx\plugins") -Force
 
 # The button icon travels with the DLL: the plugin looks for it beside itself.
 $assets = Join-Path $PSScriptRoot "assets"
-if (Test-Path $assets) { Get-ChildItem $assets -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage "BepInEx\plugins") -Force } }
+# Pictures, not the scripts that made them. make-button-icon.py was going out with the release
+# and landing in the player's plugins folder, which is a tool for drawing the button, not part of
+# the mod.
+if (Test-Path $assets) { Get-ChildItem $assets -File | Where-Object { $_.Extension -ne ".py" } | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage "BepInEx\plugins") -Force } }
 foreach ($doc in @("README.md", "CHANGELOG.md", "LICENSE")) {
     $p = Join-Path $PSScriptRoot $doc
     if (Test-Path $p) { Copy-Item $p $stage -Force }
@@ -107,7 +110,7 @@ if ($Install) {
     $plugins = Join-Path $GamePath "BepInEx\plugins"
     if (-not (Test-Path $plugins)) { New-Item -ItemType Directory -Path $plugins | Out-Null }
     Copy-Item $outDll $plugins -Force
-    if (Test-Path $assets) { Get-ChildItem $assets -File | ForEach-Object { Copy-Item $_.FullName $plugins -Force } }
+    if (Test-Path $assets) { Get-ChildItem $assets -File | Where-Object { $_.Extension -ne ".py" } | ForEach-Object { Copy-Item $_.FullName $plugins -Force } }
 
     # Verify the artefact rather than trusting the copy: a success line has been wrong here before.
     $landed = Get-Item (Join-Path $plugins "$modName.dll")

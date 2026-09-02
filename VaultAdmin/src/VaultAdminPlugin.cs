@@ -839,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.0.0";
 
         internal static ManualLogSource Log;
 

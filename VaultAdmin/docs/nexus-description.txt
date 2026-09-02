@@ -1,0 +1,85 @@
+[size=5]Vault Admin[/size]
+
+A debug and creative panel for Fallout Shelter, built out of the game's own widgets so it looks
+like it belongs there. Four pages: your resources, everything the game can give you, a bench for
+building dwellers and animals, and a page of vault-wide overrides.
+
+No Harmony patches. Everything goes through the game's own methods.
+
+[size=4]What it does[/size]
+
+[b]RESOURCES[/b] — every resource the vault holds, with the game's icons and its own caps. Give a
+set amount or fill to the cap. Lunchboxes, Mr Handys and pet carriers are offered separately,
+because the game hands those over by a different route.
+
+[b]ITEMS[/b] — every weapon, outfit and piece of junk in the game, each with its real name and the
+game's own description; every pet, one row per animal per grade; rolled dwellers of each rarity;
+and the named dwellers the game ships, each with their own portrait. Searchable, and sortable by
+rarity or by any single SPECIAL stat.
+
+[b]WORKSHOP[/b] — build a dweller from a name, a gender, a rarity, a level, seven SPECIAL values,
+an appearance and a set of gear, with a live figure of that dweller standing beside the fields as
+you change them. A second bench does the same for animals, including which bonus they carry and how
+strong it is.
+
+[b]OVERRIDES[/b] — full health, full happiness, revive the dead, level 50, ten in every stat,
+finish every pregnancy, grow every child, finish every training, unlock every recipe, and the three
+resources to their caps. Anything that cannot be undone asks before it does it.
+
+[b]Staff the whole vault by ability.[/b] Every post is cleared and the vault laid out from empty,
+in seven ranks: production first, then the clinic and laboratory, the gyms, the crafting rooms, the
+vault door, the living quarters, and last the rooms that want a body and do nothing with it.
+Training rooms take your [i]worst[/i] at that stat, since a dweller already at ten learns nothing in
+a gym. Children, the dead, anyone in the wasteland and anyone still queued at the door are left
+alone.
+
+[b]Dress everyone for the job they are doing.[/b] Which stat matters to a dweller is a property of
+the room they stand in, so each one is given the outfit in your storage that adds most to the stat
+their room runs on. The vault door takes the best coat outright and the living quarters take
+charisma.
+
+[b]Standing rules, kept per vault[/b] — incidents off, Bottle and Cappy away, rushing that never
+fails, and a population limit. Turning incidents off in the vault you are experimenting with does
+not turn them off in the one you are playing properly. The limit's RESET hands it back to your
+rooms, so building another living quarters raises it on its own.
+
+[size=4]Requirements[/size]
+
+[list]
+[*]Fallout Shelter 2.6.0 on PC (Steam)
+[*]BepInEx 5.4.x, Unity Mono, x64
+[/list]
+
+[size=4]Installation[/size]
+
+Extract into the game folder, so the DLL lands in [b]BepInEx\plugins[/b].
+
+Then open [b]BepInEx\config\ovolo.falloutshelter.vaultadmin.cfg[/b] and set [b]Enabled = true[/b].
+The mod ships switched off on purpose: nothing is read, drawn or bound until you turn it on.
+
+Open the panel with the button in the top left, under the dwellers button, or with [b]F8[/b].
+
+[size=4]What it leaves behind[/size]
+
+It writes to your save the way the game does. Anything you grant or create is yours and stays,
+including after the mod is removed — those are real items and real dwellers made through the game's
+own calls.
+
+The standing rules are held in memory while the mod runs and put back the way they were found when
+you switch it off. Your own settings live in the config file and nowhere else.
+
+Removing the DLL removes the mod. Your save keeps everything it was given.
+
+[size=4]A word of warning[/size]
+
+This is a creative and debug tool. It will hand you two hundred of anything and level your whole
+vault in one press, and it does not ask whether you wanted the game to still be a game afterwards.
+Several of its actions cannot be undone; those ask first. Back up your save before the first run —
+they live in [b]%LocalAppData%\FalloutShelter[/b].
+
+[size=4]Compatibility[/size]
+
+No Harmony patches, so it does not fight other mods for the same methods. It reads and writes the
+vault through the game's own calls, which means another mod changing the same value — a population
+limit, most likely — is the two of you writing to one place. Set the limit in one mod or the other,
+not both.
