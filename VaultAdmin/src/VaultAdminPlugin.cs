@@ -256,8 +256,13 @@ namespace VaultAdmin
             float cx = w * 0.5f;
             float cy = w * 0.5f;
 
-            float half = w * 0.44f;    // half the width of the top rhombus
-            float rise = w * 0.46f;    // the length of a vertical edge
+            // A cube alone on a dark recess is a shape; a cube on a ground of its own is a button.
+            // The disc is what tells the eye there is something here to press.
+            float ground = w * 0.48f;
+            float rim = Mathf.Max(1.2f, 1.6f * Scale);
+
+            float half = w * 0.31f;    // half the width of the top rhombus
+            float rise = w * 0.33f;    // the length of a vertical edge
 
             // The six corners of the silhouette, and the one in the middle where all three faces
             // meet -- the near vertical edge, pointing at the viewer.
@@ -300,13 +305,27 @@ namespace VaultAdmin
                     Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
                     Color paint;
 
+                    // The ground first, so everything else is drawn on top of it.
+                    float outward = Vector2.Distance(p, new Vector2(cx, cy));
+
+                    paint = Clear;
+
+                    if (outward <= ground + 0.5f)
+                    {
+                        float onRim = Mathf.Clamp01(outward - (ground - rim) + 0.5f);
+                        float inside = Mathf.Clamp01(ground - outward + 0.5f);
+
+                        paint = Color.Lerp(Hole, Bright, onRim);
+                        paint.a *= inside;
+                    }
+
                     int which = 0;
 
                     if (InQuad(p, back, right, near, left)) which = 1;
                     else if (InQuad(p, right, rightLow, nearLow, near)) which = 2;
                     else if (InQuad(p, near, nearLow, leftLow, left)) which = 3;
 
-                    paint = which == 0 ? Clear : solid;
+                    if (which != 0) paint = solid;
 
                     if (which != 0)
                     {
@@ -331,8 +350,7 @@ namespace VaultAdmin
                     }
 
                     float onEdge = Mathf.Clamp01(stroke - nearest + 0.5f);
-                    if (onEdge > 0f)
-                        paint = Color.Lerp(paint, edge, onEdge * (paint.a > 0f ? 1f : 0.9f));
+                    if (onEdge > 0f) paint = Color.Lerp(paint, edge, onEdge);
 
                     px[y * w + x] = paint;
                 }
@@ -364,7 +382,7 @@ namespace VaultAdmin
             float t = (u.x * q.y - u.y * q.x) / denom;
 
             int[] mask = PipMask(pips);
-            float radius = 0.15f;
+            float radius = 0.115f;
             float best = 0f;
 
             for (int cell = 0; cell < 9; cell++)
@@ -669,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
 
@@ -4586,12 +4604,6 @@ namespace VaultAdmin
 
             AddHeader(parent, "PEACE AND QUIET", width);
 
-            AddHeader(parent, "ASSIGNMENT", width);
-
-            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
-                     "best where it works, worst where it trains", AssignTheBest,
-                     Skin.Ranked(38));
-
             AddHeader(parent, "THE VAULT", width);
 
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
@@ -4604,6 +4616,14 @@ namespace VaultAdmin
             _bottleSwitch = AddPower(parent, width, "NO BOTTLE AND CAPPY",
                                      "the pair stay away", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
+
+            // Last, and on its own. Everything above changes a rule; this moves fifty people about
+            // and is the only thing on the page you would want to think before pressing.
+            AddHeader(parent, "ASSIGNMENT", width);
+
+            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
+                     "best where it works, worst where it trains", AssignTheBest,
+                     Skin.Ranked(38));
 
             EndScroll(view, width);
             RefreshPowerSwitches();
@@ -7951,7 +7971,7 @@ namespace VaultAdmin
             // below the die and either side of both is the same number.
             const int pad = 8;
             const int dieRoom = 50;
-            const int rollHeight = dieRoom - 6;
+            const int rollHeight = dieRoom - 14;
 
             int wellWidth = PreviewWidth + pad * 2;
             int wellHeight = PreviewHeight + dieRoom + pad * 3 + 2;
@@ -8003,7 +8023,7 @@ namespace VaultAdmin
             // The line sits lower and the die rides higher in what is left, so the lower half
             // is the die rather than the die and a gap under it.
             int lineY = pictureY - PreviewHeight / 2 - pad - 4;
-            int dieY = lineY - 2 - pad + 4 - dieRoom / 2;
+            int dieY = lineY - 2 - pad + 10 - dieRoom / 2;
 
             UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
                                       Skin.Solid(), 3);
@@ -8138,7 +8158,7 @@ namespace VaultAdmin
             choice.Detail = effect;
 
             UILabel grade = MakeLeftLabel(parent, "SlotRarity_" + choice.Caption, "",
-                                          lineLeft, middle - 20, lineWidth, 22, Skin.Bright, 3);
+                                          lineLeft, middle - 25, lineWidth, 22, Skin.Bright, 3);
             grade.fontSize = TextNote;
             grade.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.7f);
             grade.maxLineCount = 1;
