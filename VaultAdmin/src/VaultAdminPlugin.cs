@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.3";
+        public const string PluginVersion = "1.3.4";
 
         internal static ManualLogSource Log;
 
@@ -8814,6 +8814,9 @@ namespace VaultAdmin
                 int rooms = 0;
                 string how = null;
 
+                System.Text.StringBuilder kinds = new System.Text.StringBuilder();
+                List<string> already = new List<string>();
+
                 string[] names = { "MaxDwellerCount", "m_maxDwellerCount", "Capacity",
                                    "m_capacity" };
 
@@ -8824,6 +8827,12 @@ namespace VaultAdmin
 
                     string kind = TypeOf(room);
                     if (kind == null) continue;
+
+                    if (!already.Contains(kind))
+                    {
+                        already.Add(kind);
+                        if (kinds.Length < 600) kinds.Append(" ").Append(kind);
+                    }
 
                     if (kind.IndexOf("LivingQuarter", StringComparison.OrdinalIgnoreCase) < 0)
                         continue;
@@ -8860,8 +8869,28 @@ namespace VaultAdmin
 
                 if (rooms == 0)
                 {
-                    ReportOnce("quarters", "No living quarters in this vault would say how many " +
-                                           "they sleep.");
+                    // Which of the two happened is the whole question, and the message did not
+                    // say: no room matched the name, or rooms matched and carried no number. The
+                    // dump above only fires on a match, and it did not fire -- so the names the
+                    // pass actually saw are what is missing here.
+                    ReportOnce("quarters", "No living quarters answered. The rooms in this vault " +
+                                           "are:" + kinds);
+
+                    // And one room, whatever it is, listed in full -- so a run that matches
+                    // nothing still comes back with the shape of a room rather than only a
+                    // complaint about not finding one.
+                    if (!_saidWhatQuartersHold)
+                    {
+                        for (int i = 0; i < all.Length; i++)
+                        {
+                            if (all[i] == null || !all[i].gameObject.activeInHierarchy) continue;
+
+                            _saidWhatQuartersHold = true;
+                            SayWhatQuartersHold(all[i]);
+                            break;
+                        }
+                    }
+
                     return -1;
                 }
 
