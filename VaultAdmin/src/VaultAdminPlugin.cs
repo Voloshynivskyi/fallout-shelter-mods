@@ -839,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.7";
+        public const string PluginVersion = "1.4.8";
 
         internal static ManualLogSource Log;
 
@@ -4036,6 +4036,15 @@ namespace VaultAdmin
             return row;
         }
 
+        /// <summary>Changes the word on a button that was built once and is reused.</summary>
+        private static void Word(GameObject button, string say)
+        {
+            if (button == null) return;
+
+            UILabel word = button.GetComponentInChildren<UILabel>();
+            if (word != null && word.text != say) word.text = say;
+        }
+
         /// <summary>
         /// What a named dweller is called.
         ///
@@ -4285,6 +4294,10 @@ namespace VaultAdmin
         /// <summary>Writes this page of the list into rows that already exist.</summary>
         private void FillRows()
         {
+            // A dweller is not given. Nothing changes hands and nothing lands in storage: somebody
+            // turns up at the door and waits to be let in, which the game itself calls an invite.
+            string word = _grantFamily == Family.Dweller ? "INVITE" : "GIVE";
+
             for (int i = 0; i < _itemRows.Count; i++)
             {
                 ItemRow row = _itemRows[i];
@@ -4293,6 +4306,8 @@ namespace VaultAdmin
                 bool used = i < _shown.Count;
                 row.Root.SetActive(used);
                 if (!used) continue;
+
+                Word(row.Give, word);
 
                 object thing = _shown[i];
 
@@ -6533,11 +6548,11 @@ namespace VaultAdmin
 
             _statusLabel.text = message;
 
-            // A refusal is quieter, not a different colour. There are three greens in this
-            // interface and an amber warning belongs to some other program.
-            _statusLabel.color = went
-                ? Skin.Bright
-                : new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.55f);
+            // A refusal is red. It was written quieter instead -- the same green at half
+            // weight -- on the reasoning that this panel has three greens and nothing else; and a
+            // dimmer version of the colour that means "done" is not a good way of saying "did
+            // not". The panel already refuses in red on the button that cancels, so it has a red.
+            _statusLabel.color = went ? Skin.Bright : Skin.Danger;
 
             _statusUntil = Time.time + 9f;
         }
