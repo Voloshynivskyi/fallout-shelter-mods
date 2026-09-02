@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.10";
+        public const string PluginVersion = "1.0.11";
 
         internal static ManualLogSource Log;
 
@@ -6409,9 +6409,20 @@ namespace VaultAdmin
                     int granted = _grantsMade - _grantsAtLastCount;
 
                     if (grew > granted)
+                    {
                         Log.LogWarning("The armoury grew by " + grew + " weapon(s) in the last " +
                                        "second and a half; this panel granted " + granted +
                                        " of them. It now holds " + weapons + ".");
+
+                        // Measured here, because here is where the growth is real.
+                        //
+                        // PutStorageBack counts across one equip call and its count does not move
+                        // inside it -- the log shows six weapons appearing and not one refusal, so
+                        // that method never even reaches its guard. The game is adding these a
+                        // frame or more after the call returns, which means the whole idea of a
+                        // window around the equip was wrong. This says what arrived and where.
+                        SayWhatStorageHolds(inventory, -1, null);
+                    }
                 }
 
                 _lastWeaponCount = weapons;
@@ -8758,25 +8769,42 @@ namespace VaultAdmin
             {
                 System.Text.StringBuilder said = new System.Text.StringBuilder();
 
-                said.Append("Storage held ").Append(was).Append(" row(s) before dressing and ")
-                    .Append(inventory.Items.Count).Append(" after. Rows holding '")
-                    .Append(looking).Append("':");
+                said.Append("Storage holds ").Append(inventory.Items.Count).Append(" row(s)");
 
-                bool any = false;
+                if (was >= 0) said.Append(", against ").Append(was).Append(" before dressing");
 
-                for (int i = 0; i < inventory.Items.Count; i++)
+                said.Append(".");
+
+                if (!string.IsNullOrEmpty(looking))
                 {
-                    if (ReadAsText(inventory.Items[i], "Id") != looking) continue;
+                    said.Append(" Rows holding '").Append(looking).Append("':");
 
-                    said.Append(" #").Append(i);
-                    any = true;
+                    bool any = false;
+
+                    for (int i = 0; i < inventory.Items.Count; i++)
+                    {
+                        if (ReadAsText(inventory.Items[i], "Id") != looking) continue;
+
+                        said.Append(" #").Append(i);
+                        any = true;
+                    }
+
+                    if (!any) said.Append(" none anywhere");
                 }
 
-                if (!any) said.Append(" none anywhere");
+                // What the bench has been putting on the figure. If the newcomers are these, the
+                // dressing is the source and the only question left is where they land.
+                if (_benchWore.Count > 0)
+                {
+                    said.Append("  |  the bench lately wore:");
 
-                said.Append("  |  the last 10 rows:");
+                    for (int i = 0; i < _benchWore.Count; i++)
+                        said.Append(" ").Append(_benchWore[i]);
+                }
 
-                for (int i = Math.Max(0, inventory.Items.Count - 10); i < inventory.Items.Count; i++)
+                said.Append("  |  the last 12 rows:");
+
+                for (int i = Math.Max(0, inventory.Items.Count - 12); i < inventory.Items.Count; i++)
                     said.Append("  #").Append(i).Append("=")
                         .Append(ReadAsText(inventory.Items[i], "Id"));
 
@@ -8789,6 +8817,7 @@ namespace VaultAdmin
         }
 
         private static bool _saidWhatStorageHolds;
+        private static readonly List<string> _benchWore = new List<string>();
 
         private bool TookItBack(VaultInventory inventory, DwellerItem leftover)
         {
@@ -8965,6 +8994,14 @@ namespace VaultAdmin
                 // worn to the vault -- and on the bench, what was being worn never came from there.
                 int was = dweller == _previewDweller ? CountStorage() : -1;
                 string mintedId = worn == null ? null : ReadAsText(worn, "Id");
+
+                // A short memory of what the bench has been dressing the figure in, so the watcher
+                // can say whether the weapons turning up in storage are these ones.
+                if (dweller == _previewDweller && type == EItemType.Weapon)
+                {
+                    _benchWore.Add(entry.Id);
+                    while (_benchWore.Count > 8) _benchWore.RemoveAt(0);
+                }
 
                 if (type == EItemType.Outfit) dweller.EquipOutfit(item, false);
                 else dweller.EquipWeapon(item);
