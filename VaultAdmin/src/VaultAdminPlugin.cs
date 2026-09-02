@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.5";
+        public const string PluginVersion = "1.3.6";
 
         internal static ManualLogSource Log;
 
@@ -7083,6 +7083,8 @@ namespace VaultAdmin
 
                 if (_catalogue == null) BuildCatalogue();
 
+                _leftInStorage = 0;
+
                 string plain = string.IsNullOrEmpty(_defaultOutfitId) ? "jumpsuit" : _defaultOutfitId;
 
                 // Who can be dressed, and what each of them is working on. Read before anybody is
@@ -7145,7 +7147,7 @@ namespace VaultAdmin
                 // of it is handed out.
                 int undressed = Undress(wearers, plain);
 
-                List<string> wardrobe = Wardrobe(inventory);
+                List<DwellerItem> wardrobe = Wardrobe(inventory);
 
                 if (wardrobe.Count == 0)
                 {
@@ -7175,11 +7177,15 @@ namespace VaultAdmin
                     // behind them.
                     if (best < 0) continue;
 
-                    string id = wardrobe[best];
+                    DwellerItem coat = wardrobe[best];
                     wardrobe.RemoveAt(best);
 
-                    if (Wear(wearers[who], id)) dressed++;
+                    if (Wear(wearers[who], coat, inventory)) dressed++;
                 }
+
+                if (_leftInStorage > 0)
+                    Log.LogInfo("The game left " + _leftInStorage + " worn outfit(s) in storage; " +
+                                "this panel took those rows out itself.");
 
                 Say("Dressed " + dressed + " of " + wearers.Count + " working dweller(s) — " +
                     wardrobe.Count + " outfit(s) left in storage, " + turnedAway +
@@ -7324,10 +7330,18 @@ namespace VaultAdmin
             return changed;
         }
 
-        /// <summary>Every outfit in storage, one entry per copy, by id.</summary>
-        private List<string> Wardrobe(VaultInventory inventory)
+        /// <summary>
+        /// Every outfit in storage -- the things themselves, not a list of their names.
+        ///
+        /// It used to collect ids and then hand a dweller a brand new DwellerItem built from one.
+        /// The game equipped it quite happily, so everybody ended up dressed and the wardrobe was
+        /// still sitting in storage: fourteen coats out of two. Building an item from an id is how
+        /// the bench makes clothes for a picture; taking one out of storage is a different act and
+        /// wants the storage's own object.
+        /// </summary>
+        private List<DwellerItem> Wardrobe(VaultInventory inventory)
         {
-            List<string> found = new List<string>();
+            List<DwellerItem> found = new List<DwellerItem>();
 
             for (int i = 0; i < inventory.Items.Count; i++)
             {
@@ -7346,21 +7360,9 @@ namespace VaultAdmin
                     string id = ReadAsText(held, "Id");
                     if (string.IsNullOrEmpty(id) || id == _defaultOutfitId) continue;
 
-                    // A row may stand for several copies. One entry per copy, so handing one out
-                    // does not hand out all of them.
-                    int copies = 1;
-
-                    object many = ReadObject(held, "Count");
-                    if (many == null) many = ReadObject(held, "Amount");
-                    if (many == null) many = ReadObject(held, "Quantity");
-
-                    if (many != null)
-                    {
-                        try { copies = Math.Max(1, Convert.ToInt32(many)); }
-                        catch { copies = 1; }
-                    }
-
-                    for (int c = 0; c < copies; c++) found.Add(id);
+                    // One row is one item -- the storage dump showed five Shovels as five rows,
+                    // not as one row saying five -- so a row is a thing that can be handed over.
+                    found.Add(held);
                 }
                 catch { }
             }
@@ -7369,7 +7371,7 @@ namespace VaultAdmin
         }
 
         /// <summary>Which outfit in the wardrobe adds most to one stat, or -1 if none adds any.</summary>
-        private int BestInWardrobe(List<string> wardrobe, int stat)
+        private int BestInWardrobe(List<DwellerItem> wardrobe, int stat)
         {
             int best = -1;
             int most = 0;
@@ -7377,7 +7379,7 @@ namespace VaultAdmin
 
             for (int i = 0; i < wardrobe.Count; i++)
             {
-                int[] adds = StatsOfOutfit(wardrobe[i]);
+                int[] adds = StatsOfOutfit(ReadAsText(wardrobe[i], "Id"));
                 if (adds == null || stat >= adds.Length) continue;
 
                 int gives = adds[stat];
@@ -7424,20 +7426,51 @@ namespace VaultAdmin
 
         private readonly Dictionary<string, int[]> _outfitStats = new Dictionary<string, int[]>();
 
-        /// <summary>Puts one outfit on one dweller.</summary>
-        private bool Wear(Dweller who, string id)
+        /// <summary>
+        /// Puts one outfit from storage on one dweller, and sees that storage loses it.
+        ///
+        /// The game is given the storage's own item, so ordinarily it takes it from there itself.
+        /// Ordinarily is not good enough for something that would otherwise mint clothes: the row
+        /// is looked for afterwards, and taken out only if the game left it behind. Compared by
+        /// reference, so this can only ever remove the exact object that was handed over.
+        /// </summary>
+        private bool Wear(Dweller who, DwellerItem coat, VaultInventory inventory)
         {
             try
             {
-                who.EquipOutfit(new DwellerItem(EItemType.Outfit, id), false);
-                return true;
+                who.EquipOutfit(coat, false);
             }
             catch (Exception e)
             {
                 ReportOnce("wear", "Could not dress a dweller: " + e.Message);
                 return false;
             }
+
+            try
+            {
+                int at = -1;
+
+                for (int i = 0; i < inventory.Items.Count && at < 0; i++)
+                    if (ReferenceEquals(inventory.Items[i], coat)) at = i;
+
+                if (at < 0) return true;   // the game took it, which is the usual way of it
+
+                if (!TookItBack(inventory, coat) && at < inventory.Items.Count &&
+                    ReferenceEquals(inventory.Items[at], coat))
+                    inventory.Items.RemoveAt(at);
+
+                _leftInStorage++;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("wearback", "Dressed a dweller but could not clear the row: " +
+                                       e.Message);
+            }
+
+            return true;
         }
+
+        private int _leftInStorage;
 
         /// <summary>
         /// Writes down what this pass believes about the vault, once.
