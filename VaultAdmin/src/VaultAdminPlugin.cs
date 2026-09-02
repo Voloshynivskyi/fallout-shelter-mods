@@ -256,11 +256,6 @@ namespace VaultAdmin
             float cx = w * 0.5f;
             float cy = w * 0.5f;
 
-            // A cube alone on a dark recess is a shape; a cube on a ground of its own is a button.
-            // The disc is what tells the eye there is something here to press.
-            float ground = w * 0.48f;
-            float rim = Mathf.Max(1.2f, 1.6f * Scale);
-
             float half = w * 0.31f;    // half the width of the top rhombus
             float rise = w * 0.33f;    // the length of a vertical edge
 
@@ -305,19 +300,7 @@ namespace VaultAdmin
                     Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
                     Color paint;
 
-                    // The ground first, so everything else is drawn on top of it.
-                    float outward = Vector2.Distance(p, new Vector2(cx, cy));
-
                     paint = Clear;
-
-                    if (outward <= ground + 0.5f)
-                    {
-                        float onRim = Mathf.Clamp01(outward - (ground - rim) + 0.5f);
-                        float inside = Mathf.Clamp01(ground - outward + 0.5f);
-
-                        paint = Color.Lerp(Hole, Bright, onRim);
-                        paint.a *= inside;
-                    }
 
                     int which = 0;
 
@@ -687,7 +670,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.7";
+        public const string PluginVersion = "1.0.8";
 
         internal static ManualLogSource Log;
 
@@ -1102,8 +1085,11 @@ namespace VaultAdmin
             try
             {
                 _hudButton.transform.SetParent(list.parent, false);
-                _hudButton.transform.localPosition =
-                    list.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f);
+
+                // The same placement the first attempt uses. There were two copies of this, and
+                // only one of them learned to measure -- so the button that arrived late was still
+                // being dropped ten units under the anchor's origin and landing on top of it.
+                _hudButton.transform.localPosition = Underneath(list, _hudButton.transform);
 
                 _buttonSettled = true;
                 Log.LogInfo("Moved the panel button under '" + PathOf(list) + "'.");
@@ -1113,6 +1099,32 @@ namespace VaultAdmin
                 ReportOnce("buttonmove", "Could not move the panel button: " + e.Message);
                 _buttonSettled = true;
             }
+        }
+
+        /// <summary>
+        /// Where a button goes if it is to sit under another one.
+        ///
+        /// Measured from what each of them actually draws rather than from where its transform
+        /// happens to sit: two buttons written by different hands put their origins in different
+        /// places, and one of them here puts it in a corner. The anchor's lower edge, our own upper
+        /// edge, and the gap between -- then the offset between our picture and our own origin
+        /// taken back out, which is the half that kept being missed.
+        /// </summary>
+        private Vector3 Underneath(Transform anchor, Transform ours)
+        {
+            Bounds seen = DrawnBounds(anchor.parent, anchor);
+            Bounds mine = DrawnBounds(ours.parent, ours);
+
+            float drop = seen.extents.y + mine.extents.y + HudButtonOffsetY.Value;
+
+            Vector3 place = seen.center + new Vector3(0f, -drop, 0f);
+            place -= (mine.center - ours.localPosition);
+
+            Log.LogInfo("'" + anchor.name + "' draws at " + seen.center + " sized " + seen.size +
+                        "; ours draws at " + mine.center + " sized " + mine.size +
+                        "; placing at " + place + ".");
+
+            return place;
         }
 
         private bool _buttonSettled;
@@ -1372,24 +1384,7 @@ namespace VaultAdmin
                     // two units put ours on top of the one it was meant to sit under, because how
                     // far below "below" is depends on how tall they both are -- and neither of
                     // them told anybody that until they were asked.
-                    // Where the anchor is *drawn*, not where its transform happens to sit. Two
-                    // buttons built by different hands anchor their sprites differently, so one
-                    // origin is the middle of the picture and the other is a corner of it -- which
-                    // is why ours kept landing up and to the left of where it was aimed.
-                    Bounds seen = DrawnBounds(parent, anchor);
-                    Bounds ours = DrawnBounds(source.transform.parent, source.transform);
-
-                    float drop = seen.extents.y + ours.extents.y + HudButtonOffsetY.Value;
-
-                    place = seen.center + new Vector3(0f, -drop, 0f);
-
-                    // And our own picture is not centred on our transform either, so the offset
-                    // between the two has to come back out.
-                    place -= (ours.center - source.transform.localPosition);
-
-                    Log.LogInfo("Anchor '" + anchor.name + "' is drawn at " + seen.center +
-                                " sized " + seen.size + "; ours is drawn at " + ours.center +
-                                " sized " + ours.size + "; placing at " + place + ".");
+                    place = Underneath(anchor, source.transform);
                 }
 
                 _buttonSettled = anchor != null;
@@ -4285,7 +4280,25 @@ namespace VaultAdmin
             icon.atlas = atlas;
             icon.spriteName = chosen;
             icon.type = UIBasicSprite.Type.Simple;
-            if (_wantWholeAnimal) FillWithInk(icon, _wholeAnimalBox);
+            if (_wantWholeAnimal)
+            {
+                FillWithInk(icon, _wholeAnimalBox);
+
+                if (!_reportedAnimalSize)
+                {
+                    _reportedAnimalSize = true;
+
+                    UISpriteData shape = atlas.GetSprite(chosen);
+
+                    Log.LogInfo("The animal '" + chosen + "' is " +
+                                (shape == null ? "unmeasurable" :
+                                 shape.width + "x" + shape.height + " of ink with padding " +
+                                 shape.paddingLeft + "," + shape.paddingRight + "," +
+                                 shape.paddingTop + "," + shape.paddingBottom) +
+                                "; asked for " + _wholeAnimalBox +
+                                " and the widget came out " + icon.width + "x" + icon.height + ".");
+                }
+            }
             else FitSprite(icon, IconBox);
         }
 
@@ -4344,7 +4357,8 @@ namespace VaultAdmin
         }
 
         private bool _wantWholeAnimal;
-        private int _wholeAnimalBox = 104;
+        private static bool _reportedAnimalSize;
+        private int _wholeAnimalBox = 190;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6336,11 +6350,11 @@ namespace VaultAdmin
             // two things you choose about it in rows beside it. Choosing a pet by a photograph of
             // its head was choosing a pet by its passport.
             const int pad = 8;
-            const int petBlock = 128;
+            const int petBlock = 210;
 
             int blockY = _cursorY - petBlock / 2;
 
-            int wellWidth = 100;
+            int wellWidth = 150;
             int wellHeight = petBlock - pad * 2;
 
             Plate(parent, "PetBlock", 0, blockY, width, petBlock, Skin.Row(width, petBlock), 1);
@@ -6439,8 +6453,12 @@ namespace VaultAdmin
 
             _cursorY -= 44 + RowGap;
 
-            MakeLabel(parent, "PetNote", "Goes straight into the vault's storage.",
-                      0, _cursorY - 13, width, 26, Skin.Rim, 3);
+            // Bright enough to read. Skin.Rim is the darkest of the three greens and it was
+            // being asked to carry text on a dark plate, which is a sentence nobody can see.
+            UILabel petNote = MakeLabel(parent, "PetNote", "Goes straight into the vault's storage.",
+                                        0, _cursorY - 13, width, 26, Skin.Bright, 3);
+            petNote.fontSize = TextNote;
+            petNote.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
             _cursorY -= 26 + RowGap;
 
             RefreshPetPick();
@@ -8276,6 +8294,13 @@ namespace VaultAdmin
             // of them, which is enough, and a line inside a small box is one more edge in an
             // interface that already has a great many.
 
+            // A plate the shape of the box it sits in, rather than a disc: the panel is made of
+            // rounded rectangles and one circle in the middle of it was the only round thing
+            // anywhere. Slightly narrower than the figure's recess above it, so the two read as a
+            // pair rather than as one shape interrupted.
+            Plate(parent, "RollPlate", pictureX, dieY, wellWidth - pad * 4, rollHeight + 10,
+                  Skin.Well(wellWidth - pad * 4, rollHeight + 10), 3);
+
             GameObject die = new GameObject("RollLooks");
             die.layer = parent.gameObject.layer;
             die.transform.SetParent(parent, false);
@@ -8286,7 +8311,7 @@ namespace VaultAdmin
             _dieFace.mainTexture = Skin.Die(rollHeight, 6);
             _dieFace.width = rollHeight;
             _dieFace.height = rollHeight;
-            _dieFace.depth = 5;
+            _dieFace.depth = 7;
 
             Shader flat = Shader.Find("Unlit/Transparent Colored");
             if (flat != null) _dieFace.shader = flat;
@@ -8540,6 +8565,15 @@ namespace VaultAdmin
                         new[] { "Silhouette_Dweller", "Icon_dwellerPlain", "Icon_dweller" },
                         "silhouette dweller", width / 2 - 32, 0, 30, Skin.Ink);
             _cursorY -= 44 + RowGap;
+
+            // Where the person goes. An animal appears in storage and a dweller does not, and the
+            // pet bench said so while this one left the player to find out.
+            UILabel dwellerNote = MakeLabel(parent, "DwellerNote",
+                                            "Waits at the vault door, like any other newcomer.",
+                                            0, _cursorY - 13, width, 26, Skin.Bright, 3);
+            dwellerNote.fontSize = TextNote;
+            dwellerNote.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+            _cursorY -= 26 + RowGap;
         }
 
         /// <summary>A label, a value, and a pair of arrows — the game's own way of offering a choice.</summary>
