@@ -28,6 +28,8 @@ REQUIRED = [
     ("WORKSHOP", "the workshop tab"),
     ("OVERRIDES", "the overrides tab"),
     ("BEST DWELLER IN EVERY ROOM", "staffing the vault by ability"),
+    ("DRESS EVERYONE FOR THE JOB", "handing out the wardrobe by the stat each room runs on"),
+    ("RESET", "putting the population limit back to what the rooms hold"),
     ("TryAssignDweller", "the game's own way of assigning a dweller"),
     ("GetRoomInfoForType", "reading which stat a room runs on"),
     ("VaultAdmin_Preview", "the camera that films the figure on the bench"),

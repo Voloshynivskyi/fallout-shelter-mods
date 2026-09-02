@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.2.0";
 
         internal static ManualLogSource Log;
 
@@ -5172,6 +5172,10 @@ namespace VaultAdmin
                      "best where it works, worst where it trains", AssignTheBest,
                      Skin.Ranked(38), true);
 
+            AddPower(parent, width, "DRESS EVERYONE FOR THE JOB",
+                     "the best outfit for the stat each room runs on", DressTheVault,
+                     new[] { "Icon_OutfitPlain", "Icon_Outfit", "Icon_outfitPlain" }, true);
+
             // The switches, and the one number that behaves like one: a population limit is a rule
             // the vault keeps, not a thing you do to it once.
             AddHeader(parent, "RULES", width);
@@ -6719,6 +6723,284 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 Trouble("Could not assign the dwellers: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts the best outfit in storage on the dweller who gains most by wearing it.
+        ///
+        /// The same shape as staffing, and for the same reason. Which stat matters to a dweller is
+        /// not a property of the dweller: it is a property of the room they stand in, so an outfit
+        /// is worth nothing until you know where its wearer works. And as with posts, dressing
+        /// around what people already have on is not dressing at all -- the +5 Agility coat cannot
+        /// reach the diner while somebody in the storeroom is wearing it. So everyone is put back
+        /// into the vault suit first, which returns their outfits to storage, and the wardrobe is
+        /// handed out from there.
+        ///
+        /// The order is the order staffing uses, because it is the same judgement: a point of a
+        /// stat is worth most where something is produced, and worth nothing in a lift. Within a
+        /// room, whoever is dressed first makes no difference -- an outfit adds what it adds to
+        /// whoever wears it -- so the rooms are what get sorted, not the people in them.
+        ///
+        /// Training rooms are the one place this differs from staffing. A gym takes the worst at a
+        /// stat on purpose, but there is no reason to dress them badly on purpose: an outfit that
+        /// raises the stat being trained raises what the training is worth, so gyms are dressed
+        /// like anywhere else.
+        ///
+        /// Whoever is not in a room is left in the vault suit. Every room has been offered the
+        /// wardrobe and none of them wanted these, and an outfit on a dweller who is not working
+        /// is an outfit not on one who is.
+        /// </summary>
+        private void DressTheVault()
+        {
+            Trace("dressing the vault");
+
+            try
+            {
+                DwellerManager manager = SafeDwellerManager();
+                Vault vault = SafeVault();
+                VaultInventory inventory = vault == null ? null : vault.Inventory;
+
+                if (manager == null || manager.Dwellers == null || inventory == null ||
+                    inventory.Items == null)
+                {
+                    Trouble("The vault is not loaded.");
+                    return;
+                }
+
+                if (_catalogue == null) BuildCatalogue();
+
+                string plain = string.IsNullOrEmpty(_defaultOutfitId) ? "jumpsuit" : _defaultOutfitId;
+
+                // Who can be dressed, and what each of them is working on. Read before anybody is
+                // undressed: taking an outfit off does not move anyone, but it is the sort of thing
+                // that would be easy to make true later and hard to notice.
+                List<Dweller> wearers = new List<Dweller>();
+                List<int> wants = new List<int>();
+                List<int> ranks = new List<int>();
+                int turnedAway = 0;
+
+                for (int i = 0; i < manager.Dwellers.Count; i++)
+                {
+                    Dweller one = manager.Dwellers[i];
+                    if (one == null) continue;
+
+                    try
+                    {
+                        // Children have nothing that fits, and a dweller in the wasteland is
+                        // wearing their kit somewhere this panel cannot reach.
+                        if (one.IsChild) { turnedAway++; continue; }
+                        if (one.IsRegisteredInWasteland) { turnedAway++; continue; }
+                    }
+                    catch { turnedAway++; continue; }
+
+                    Room room = ReadObject(one, "assignedRoom") as Room;
+                    object stat = room == null ? null : RoomStat(room);
+
+                    if (!(stat is ESpecialStat)) continue;
+
+                    int at = Array.IndexOf(Specials, (ESpecialStat)stat);
+                    if (at < 0) continue;
+
+                    wearers.Add(one);
+                    wants.Add(at);
+                    ranks.Add(RankOf(room));
+                }
+
+                if (wearers.Count == 0)
+                {
+                    Trouble("Nobody is working in a room that runs on a stat.");
+                    return;
+                }
+
+                // Back into the vault suit, all of them, so the wardrobe is in one place before any
+                // of it is handed out.
+                int undressed = Undress(wearers, plain);
+
+                List<string> wardrobe = Wardrobe(inventory);
+
+                if (wardrobe.Count == 0)
+                {
+                    Say("Storage holds no outfits; " + undressed + " went back to the vault suit.");
+                    return;
+                }
+
+                // Best rank first, and an unranked room last rather than never: a room the ranking
+                // does not recognise still has somebody standing in it doing a job.
+                int[] order = new int[wearers.Count];
+                for (int i = 0; i < order.Length; i++) order[i] = i;
+
+                Array.Sort(RankKeys(ranks), order);
+
+                int dressed = 0;
+
+                for (int i = 0; i < order.Length; i++)
+                {
+                    int who = order[i];
+                    int best = BestInWardrobe(wardrobe, wants[who]);
+
+                    if (best < 0) break;   // nothing left that helps anybody
+
+                    string id = wardrobe[best];
+                    wardrobe.RemoveAt(best);
+
+                    if (Wear(wearers[who], id)) dressed++;
+                }
+
+                Say("Dressed " + dressed + " of " + wearers.Count + " working dweller(s) — " +
+                    wardrobe.Count + " outfit(s) left in storage, " + turnedAway +
+                    " were never eligible.");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not dress the vault: " + e.Message);
+            }
+        }
+
+        /// <summary>Sort keys that put rank one first and an unranked room last.</summary>
+        private static int[] RankKeys(List<int> ranks)
+        {
+            int[] keys = new int[ranks.Count];
+
+            for (int i = 0; i < keys.Length; i++)
+                keys[i] = ranks[i] > 0 ? ranks[i] : 99;
+
+            return keys;
+        }
+
+        /// <summary>Puts everyone back in the vault suit, which returns what they wore to storage.</summary>
+        private int Undress(List<Dweller> wearers, string plain)
+        {
+            int changed = 0;
+
+            for (int i = 0; i < wearers.Count; i++)
+            {
+                try
+                {
+                    DwellerItem worn = wearers[i].EquippedOutfit;
+                    if (worn != null && ReadAsText(worn, "Id") == plain) continue;
+
+                    wearers[i].EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
+                    changed++;
+                }
+                catch { }
+            }
+
+            return changed;
+        }
+
+        /// <summary>Every outfit in storage, one entry per copy, by id.</summary>
+        private List<string> Wardrobe(VaultInventory inventory)
+        {
+            List<string> found = new List<string>();
+
+            for (int i = 0; i < inventory.Items.Count; i++)
+            {
+                try
+                {
+                    DwellerItem held = inventory.Items[i];
+                    if (held == null) continue;
+
+                    object kind = ReadObject(held, "ItemType");
+                    if (kind == null) kind = ReadObject(held, "Type");
+                    if (kind == null) kind = ReadObject(held, "m_type");
+                    if (kind == null) kind = ReadObject(held, "m_itemType");
+
+                    if (kind == null || kind.ToString() != EItemType.Outfit.ToString()) continue;
+
+                    string id = ReadAsText(held, "Id");
+                    if (string.IsNullOrEmpty(id) || id == _defaultOutfitId) continue;
+
+                    // A row may stand for several copies. One entry per copy, so handing one out
+                    // does not hand out all of them.
+                    int copies = 1;
+
+                    object many = ReadObject(held, "Count");
+                    if (many == null) many = ReadObject(held, "Amount");
+                    if (many == null) many = ReadObject(held, "Quantity");
+
+                    if (many != null)
+                    {
+                        try { copies = Math.Max(1, Convert.ToInt32(many)); }
+                        catch { copies = 1; }
+                    }
+
+                    for (int c = 0; c < copies; c++) found.Add(id);
+                }
+                catch { }
+            }
+
+            return found;
+        }
+
+        /// <summary>Which outfit in the wardrobe adds most to one stat, or -1 if none adds any.</summary>
+        private int BestInWardrobe(List<string> wardrobe, int stat)
+        {
+            int best = -1;
+            int most = 0;
+            int total = 0;
+
+            for (int i = 0; i < wardrobe.Count; i++)
+            {
+                int[] adds = StatsOfOutfit(wardrobe[i]);
+                if (adds == null || stat >= adds.Length) continue;
+
+                int gives = adds[stat];
+                if (gives <= 0) continue;
+
+                int sum = 0;
+                for (int j = 0; j < adds.Length; j++) sum += adds[j];
+
+                // The wanted stat decides it; the rest of the coat only breaks a tie. Sorting on
+                // the total instead would put a +1-to-everything suit ahead of +3 to the one stat
+                // the room actually runs on.
+                if (gives > most || (gives == most && sum > total))
+                {
+                    best = i;
+                    most = gives;
+                    total = sum;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>What an outfit adds, out of the catalogue this panel already built.</summary>
+        private int[] StatsOfOutfit(string id)
+        {
+            if (_catalogue == null) return null;
+
+            int[] known;
+            if (_outfitStats.TryGetValue(id, out known)) return known;
+
+            for (int i = 0; i < _catalogue.Count; i++)
+            {
+                if (_catalogue[i].Type != EItemType.Outfit || _catalogue[i].Id != id) continue;
+
+                _outfitStats[id] = _catalogue[i].Stats7;
+                return _catalogue[i].Stats7;
+            }
+
+            // Not in the catalogue: the vault suit, a costume, something an update added. Filed as
+            // nothing so the search is not repeated for every dweller in the vault.
+            _outfitStats[id] = null;
+            return null;
+        }
+
+        private readonly Dictionary<string, int[]> _outfitStats = new Dictionary<string, int[]>();
+
+        /// <summary>Puts one outfit on one dweller.</summary>
+        private bool Wear(Dweller who, string id)
+        {
+            try
+            {
+                who.EquipOutfit(new DwellerItem(EItemType.Outfit, id), false);
+                return true;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("wear", "Could not dress a dweller: " + e.Message);
+                return false;
             }
         }
 
