@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.1";
+        public const string PluginVersion = "1.5.2";
 
         internal static ManualLogSource Log;
 
@@ -9632,7 +9632,12 @@ namespace VaultAdmin
 
             float[] amounts = AmountsFor(resource);
 
-            int count = amounts.Length + 1;
+            // Quantum has no MAX. Its cap is in the thousands and a vault filled to it is a vault
+            // with nothing left to want; a thousand at a time is a generous hand, and the row is
+            // three buttons rather than four because the fourth was an offer nobody should take.
+            bool offerTheCap = resource != EResource.NukaColaQuantum;
+
+            int count = amounts.Length + (offerTheCap ? 1 : 0);
             int buttonWidth = (span - (count - 1) * 4) / count;
             int x = left + buttonWidth / 2;
 
@@ -9645,8 +9650,9 @@ namespace VaultAdmin
                 x += buttonWidth + 4;
             }
 
-            MakeButton(parent, "Fill_" + resource, "MAX", x, bottom, buttonWidth, 28, false,
-                       delegate { FillToCap(captured); });
+            if (offerTheCap)
+                MakeButton(parent, "Fill_" + resource, "MAX", x, bottom, buttonWidth, 28, false,
+                           delegate { FillToCap(captured); });
 
             _cursorY -= ResourceCell + RowGap;
         }
