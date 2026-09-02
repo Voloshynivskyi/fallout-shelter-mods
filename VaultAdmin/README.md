@@ -39,18 +39,46 @@ route than the resource counters.
 **GRANT** — every weapon, outfit and piece of junk in the game, each with its real name and the
 game's own description of what it does; every pet record, one row per animal per grade; rolled
 dwellers of each rarity; and the named dwellers, each with the portrait the game draws for them.
-Searchable, sortable by rarity or by any single SPECIAL stat. The row you press says GIVEN back to
-you, so you know which of two hundred rows just fired.
+Searchable, sortable by rarity or by any single SPECIAL stat. Dwellers are invited rather than
+given, since nothing changes hands: they arrive at the door and wait to be let in. Every grant
+answers in the band along the bottom of the panel — in the words a player uses rather than the
+names in the game's tables — and a refusal, a full store most often, answers there in red rather
+than passing in silence.
 
 **CREATE** — a bench with a live, idling figure of the dweller you are describing, and a second one
 for animals. Everything is applied through the game's own customisation calls, so what you see is
 what arrives at the vault door.
 
-**POWERS** — vault-wide switches and one-off actions: full health, full happiness, level 50, ten in
-every stat, finish every pregnancy, grow every child, finish every training, the three resources to
-their caps, a population limit of your choosing, unlock every recipe, and switches for incidents,
-the wandering pair, and rush failures. The switches persist and are re-asserted on a slow beat, and
-they are put back the way they were found when the mod is disabled.
+**OVERRIDES** — vault-wide actions, a staffing pass, and standing rules.
+
+The actions: full health, full happiness, revive the dead, level 50, ten in every stat, finish every
+pregnancy, grow every child, finish every training, unlock every recipe, and the three resources to
+their caps. Anything that cannot be undone asks first — `DO IT` steps aside and `YES` and a red `NO`
+take its place.
+
+**Staffing** puts the best dweller in every room. Seven ranks, in this order: production, then the
+clinic and the laboratory, then the gyms, the crafting rooms, the vault door, the living quarters,
+and last the rooms that want a body and do nothing with it. Every post is cleared first, because the
+best welder in the vault cannot be moved into the workshop while somebody worse is standing in its
+last free place. Training rooms take the *lowest* scorers, since a dweller already at ten learns
+nothing in a gym. Children, the dead, anyone in the wasteland and anyone still queued at the door
+are left alone.
+
+**Dressing** hands out the wardrobe on the same terms. Which stat matters to a dweller is a property
+of the room they stand in, not of the dweller, so each one is given the outfit in storage that adds
+most to the stat their room runs on. Everyone goes back into the vault suit first and their clothes
+return to storage, because a coat cannot reach the diner while somebody in the storeroom is wearing
+it. The vault door takes the best coat outright — a guard is asked for nothing in particular — and
+the living quarters take charisma.
+
+**The rules** are kept **per vault**, keyed by the save slot: incidents off, the wandering pair away,
+rushing never failing, and a population limit. Turning incidents off in the vault you are
+experimenting with does not turn them off in the one you are playing properly. The limit's `RESET`
+hands it back to the rooms: it follows what the living quarters hold, so building another one raises
+it on its own.
+
+The switches are re-asserted on a slow beat and put back the way they were found when the mod is
+disabled.
 
 ## Configuration
 
@@ -73,7 +101,18 @@ the game had when the mod is disabled.
 | `IncidentsOff` | `false` | Keeps fires, infestations and raiders from starting |
 | `BottleAndCappyOff` | `false` | Keeps Bottle and Cappy from wandering the vault |
 | `RushAlwaysWorks` | `false` | Rushing never fails. Sets the vault's minimum failure chance and the per-tier rise to nothing, and clears what has accumulated |
-| `MaxDwellers` | `0` | How many dwellers the vault will take. Zero leaves the game's own limit alone |
+| `MaxDwellers` | `0` | How many dwellers the vault will take, for a vault that has never been told otherwise. Zero leaves the game's own limit alone |
+
+The four `…PerVault` entries below are written by the panel and read back by it. Each holds one
+`slot=value` pair per vault, keyed by the save the vault was loaded from, and each takes precedence
+over the game-wide setting above. There is no need to edit them by hand.
+
+| Setting | Default | Description |
+|---|---|---|
+| `IncidentsOffPerVault` | *(empty)* | Incidents, per vault |
+| `BottleAndCappyOffPerVault` | *(empty)* | The pair, per vault |
+| `RushAlwaysWorksPerVault` | *(empty)* | Rushing, per vault |
+| `MaxDwellersPerVault` | *(empty)* | The population limit, per vault. `-1` means "follow the living quarters" |
 
 ### Interface
 
@@ -93,6 +132,7 @@ the DLL.
 
 | Setting | Default | Description |
 |---|---|---|
+| `TraceActions` | `false` | Writes a line for everything the panel does and every time a vault opens or closes. Worth switching on only when something is being hunted: the last line before a crash is the only witness there is |
 | `WriteIconReport` | `false` | Writes every catalogue entry, every atlas sprite name and the appearance catalogue to `VaultAdmin-icons.txt` |
 | `PreviewWholeSheet` | `false` | Draws the stand-in's whole texture sheet rather than the framed figure |
 

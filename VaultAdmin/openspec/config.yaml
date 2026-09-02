@@ -36,13 +36,43 @@ context: |
     A pooled dweller arrives with no pieces and no outfit, and carries a visibility detector that
     stops the game when something looks at it.
 
+  Where the game keeps things, each found the hard way
+    Which vault is loaded: PersistenceManager.CurrentSaveSlot, a string like "Vault1". Not on
+    SaveManager, and not on anything named after a vault. The Vault object itself carries no name
+    and no number at all -- it lists MaxDwellers, RoomCount and CellsPerRow and nothing that
+    identifies it. Four rounds of guessing at class names went past this; a sweep for the member
+    name found it in one.
+    The room a dweller works in: Dweller.WorkingRoom. Not CurrentRoom, not assignedRoom -- and
+    both of those read null, which is also what a dweller in no room reads as, so neither guess
+    announced itself as wrong.
+    How many a living quarters sleeps: m_addedPopulation, on the room. It is not how many can work
+    in it, and it is not in the room's settings: it is a value on the room, already accounting for
+    how wide it has been merged and how far it has been upgraded. Nothing anywhere in the game
+    holds the vault's total as one number -- it has to be summed.
+    EquipOutfit's second argument decides whether the game does its own bookkeeping. False is for
+    a figure that is only a picture; on a real dweller it means the coat taken off ceases to exist
+    and the coat put on never reaches the save.
+    Whether a dweller is inside: Dweller.IsInVault. The queue at the door is dwellers the game has
+    built and not let in, and assigning one to a room walks it inside past the population limit.
+    ClampedMaxDwellers is what the game reads through; writing MaxDwellers above it changes
+    nothing a player can see.
+
+  How to find the next one
+    Guessing a member name has been wrong every time it was tried, and each wrong guess reads as
+    null, which is indistinguishable from the answer being no. Dump what the object actually holds
+    -- fields, properties, values -- and read it. Every hard problem in this project was solved
+    that way, and every long detour was an attempt to avoid it.
+    When several things answer, log all of them and choose. Taking the first match made the font a
+    lottery once and gave every vault the same key once.
+
   Danger
     This mod writes to the player's save. Writing an id or enum value the base game does not know
     is how a save stops loading. Every value the panel offers must come from the game's own tables;
     offer a picker over what exists, never a free-text id.
 
   What is already known about this game
-    Saves: base64 -> AES-256-CBC -> JSON. scratchpad/fslib.py has load(), save(), the key and IV.
+    Saves: base64 -> AES-256-CBC -> JSON. The helper that read them (scratchpad/fslib.py) has not
+    survived; a save cannot currently be read outside the game.
     Saves live in %LocalAppData%\FalloutShelter\.
     Lunchboxes are not a resource: they are LunchBoxesByType plus LunchBoxesCount.
     Legacy UnityEngine.Input throws; the game uses the new Input System.

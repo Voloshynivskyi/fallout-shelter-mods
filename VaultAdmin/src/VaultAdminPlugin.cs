@@ -839,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.8";
+        public const string PluginVersion = "1.0.0";
 
         internal static ManualLogSource Log;
 
@@ -6993,14 +6993,6 @@ namespace VaultAdmin
                                        "second and a half; this panel granted " + granted +
                                        " of them. It now holds " + weapons + ".");
 
-                        // Measured here, because here is where the growth is real.
-                        //
-                        // PutStorageBack counts across one equip call and its count does not move
-                        // inside it -- the log shows six weapons appearing and not one refusal, so
-                        // that method never even reaches its guard. The game is adding these a
-                        // frame or more after the call returns, which means the whole idea of a
-                        // window around the equip was wrong. This says what arrived and where.
-                        SayWhatStorageHolds(inventory, -1, null);
                     }
                 }
 
@@ -7704,8 +7696,6 @@ namespace VaultAdmin
         /// </summary>
         private bool Wear(Dweller who, DwellerItem coat, VaultInventory inventory)
         {
-            SayWhatEquipTakes();
-
             try
             {
                 // True, where it used to be false, and the false is why a vault full of dressed
@@ -9008,12 +8998,6 @@ namespace VaultAdmin
                     }
                 }
 
-                // Neither of the two obvious owners has it, so the game is asked which class
-                // does -- the same sweep that found PersistenceManager after four rounds of
-                // guessing at names, pointed at a different question.
-                int swept = SweepForCapacity();
-                if (swept > 0) return swept;
-
                 // Nothing in the game will say it in one number, so it is counted. This is what
                 // was asked for in the first place -- what the living quarters hold -- and the
                 // rooms answer it one at a time even when nothing answers it all at once.
@@ -9023,96 +9007,6 @@ namespace VaultAdmin
             catch (Exception e)
             {
                 ReportOnce("capacity", "Could not ask the vault what it holds: " + e.Message);
-            }
-
-            return -1;
-        }
-
-        /// <summary>
-        /// Asks the whole of the game which class knows how many the rooms hold.
-        ///
-        /// GetMaxDwellers and MaxDwellersInVault are both in this build and neither is on Vault or
-        /// on DwellerManager. Guessing a third owner would be the fourth time that has gone wrong
-        /// this week; sweeping for the member and writing down where it was found is what ended
-        /// the same argument about the vault's own key.
-        /// </summary>
-        private int SweepForCapacity()
-        {
-            const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
-                                         BindingFlags.Static | BindingFlags.DeclaredOnly;
-
-            const BindingFlags Ones = BindingFlags.Public | BindingFlags.NonPublic |
-                                      BindingFlags.Instance | BindingFlags.DeclaredOnly;
-
-            try
-            {
-                Assembly game = null;
-                Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
-
-                for (int a = 0; a < loaded.Length && game == null; a++)
-                    if (loaded[a].GetName().Name == "Assembly-CSharp") game = loaded[a];
-
-                if (game == null) return -1;
-
-                Type[] types;
-                try { types = game.GetTypes(); }
-                catch { return -1; }
-
-                for (int t = 0; t < types.Length; t++)
-                {
-                    if (types[t].IsEnum) continue;
-
-                    MethodInfo how = null;
-                    PropertyInfo held = null;
-
-                    try
-                    {
-                        how = types[t].GetMethod("GetMaxDwellers", Statics | Ones, null,
-                                                 Type.EmptyTypes, null);
-
-                        if (how == null)
-                        {
-                            held = types[t].GetProperty("MaxDwellersInVault", Statics | Ones);
-
-                            if (held == null)
-                                held = types[t].GetProperty("MaxDwellerCount", Statics | Ones);
-
-                            if (held != null && !held.CanRead) held = null;
-                            if (held != null && held.GetIndexParameters().Length > 0) held = null;
-                        }
-                    }
-                    catch { }
-
-                    if (how == null && held == null) continue;
-
-                    bool needsOne = how != null ? !how.IsStatic
-                                                : !held.GetGetMethod(true).IsStatic;
-
-                    object on = needsOne ? Singleton(types[t]) : null;
-                    if (needsOne && on == null) continue;
-
-                    try
-                    {
-                        object many = how != null ? how.Invoke(on, null) : held.GetValue(on, null);
-                        if (many == null) continue;
-
-                        int number = Convert.ToInt32(many);
-                        if (number <= 0) continue;
-
-                        Log.LogInfo("The rooms hold " + number + ", which " + types[t].Name +
-                                    " keeps as " + (how != null ? "GetMaxDwellers()"
-                                                                : held.Name) + ".");
-
-                        return number;
-                    }
-                    catch { }
-                }
-
-                ReportOnce("capacity", "Nothing in the game would say how many the rooms hold.");
-            }
-            catch (Exception e)
-            {
-                ReportOnce("capacity", "Could not ask what the rooms hold: " + e.Message);
             }
 
             return -1;
@@ -10311,7 +10205,6 @@ namespace VaultAdmin
                                        "dressing ('" + id + "', expected '" + mintedId +
                                        "'); leaving it alone.");
 
-                        SayWhatStorageHolds(inventory, was, mintedId);
                         break;
                     }
 
@@ -10334,129 +10227,6 @@ namespace VaultAdmin
             {
                 ReportOnce("putback", "Could not take back what the bench left in storage: " + e);
             }
-        }
-
-        /// <summary>
-        /// Writes down what storage actually looks like the first time a take-back refuses.
-        ///
-        /// The whole method rests on one assumption -- that a returned item arrives at the end of
-        /// the list -- and nothing ever checked it. Three rounds of reasoning about why the weapons
-        /// multiplied were three guesses at a fact that can simply be read. This finds where the
-        /// returned item really went, so the next version tests rather than supposes.
-        /// </summary>
-        private static void SayWhatStorageHolds(VaultInventory inventory, int was, string looking)
-        {
-            if (_saidWhatStorageHolds) return;
-            _saidWhatStorageHolds = true;
-
-            try
-            {
-                System.Text.StringBuilder said = new System.Text.StringBuilder();
-
-                said.Append("Storage holds ").Append(inventory.Items.Count).Append(" row(s)");
-
-                if (was >= 0) said.Append(", against ").Append(was).Append(" before dressing");
-
-                said.Append(".");
-
-                if (!string.IsNullOrEmpty(looking))
-                {
-                    said.Append(" Rows holding '").Append(looking).Append("':");
-
-                    bool any = false;
-
-                    for (int i = 0; i < inventory.Items.Count; i++)
-                    {
-                        if (ReadAsText(inventory.Items[i], "Id") != looking) continue;
-
-                        said.Append(" #").Append(i);
-                        any = true;
-                    }
-
-                    if (!any) said.Append(" none anywhere");
-                }
-
-                // What the bench has been putting on the figure. If the newcomers are these, the
-                // dressing is the source and the only question left is where they land.
-                if (_benchWore.Count > 0)
-                {
-                    said.Append("  |  the bench lately wore:");
-
-                    for (int i = 0; i < _benchWore.Count; i++)
-                        said.Append(" ").Append(_benchWore[i]);
-                }
-
-                said.Append("  |  the last 12 rows:");
-
-                for (int i = Math.Max(0, inventory.Items.Count - 12); i < inventory.Items.Count; i++)
-                    said.Append("  #").Append(i).Append("=")
-                        .Append(ReadAsText(inventory.Items[i], "Id"));
-
-                Log.LogWarning(said.ToString());
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning("Could not look through storage: " + e.Message);
-            }
-        }
-
-        private static bool _saidWhatStorageHolds;
-        private static readonly List<string> _benchWore = new List<string>();
-
-        /// <summary>
-        /// Writes down what EquipOutfit's second argument is called, once.
-        ///
-        /// It was being passed false because the bench passes false, and the bench is drawing a
-        /// picture. Two faults came out of that one borrowed line -- clothes destroyed on removal
-        /// and clothes not saved on wearing -- and neither would have happened if the argument had
-        /// been read rather than copied. The game names its own parameters; it has settled this
-        /// kind of question twice before.
-        /// </summary>
-        private static void SayWhatEquipTakes()
-        {
-            if (_saidWhatEquipTakes) return;
-            _saidWhatEquipTakes = true;
-
-            try
-            {
-                MethodInfo how = FindMethod2(typeof(Dweller), "EquipOutfit");
-                if (how == null) return;
-
-                ParameterInfo[] takes = how.GetParameters();
-
-                System.Text.StringBuilder said = new System.Text.StringBuilder();
-                said.Append("Dweller.EquipOutfit takes:");
-
-                for (int i = 0; i < takes.Length; i++)
-                    said.Append(" ").Append(takes[i].ParameterType.Name).Append(" ")
-                        .Append(takes[i].Name);
-
-                Log.LogInfo(said.ToString());
-            }
-            catch { }
-        }
-
-        private static bool _saidWhatEquipTakes;
-
-        /// <summary>A method by name whatever it takes, for reading its parameters.</summary>
-        private static MethodInfo FindMethod2(Type type, string member)
-        {
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
-                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
-
-            for (; type != null; type = type.BaseType)
-            {
-                try
-                {
-                    MethodInfo[] all = type.GetMethods(Flags);
-
-                    for (int i = 0; i < all.Length; i++)
-                        if (all[i].Name == member) return all[i];
-                }
-                catch { }
-            }
-
-            return null;
         }
 
         /// <summary>Whether storage is already holding this exact item.</summary>
@@ -10689,14 +10459,6 @@ namespace VaultAdmin
                 // worn to the vault -- and on the bench, what was being worn never came from there.
                 int was = dweller == _previewDweller ? CountStorage() : -1;
                 string mintedId = worn == null ? null : ReadAsText(worn, "Id");
-
-                // A short memory of what the bench has been dressing the figure in, so the watcher
-                // can say whether the weapons turning up in storage are these ones.
-                if (dweller == _previewDweller && type == EItemType.Weapon)
-                {
-                    _benchWore.Add(entry.Id);
-                    while (_benchWore.Count > 8) _benchWore.RemoveAt(0);
-                }
 
                 if (type == EItemType.Outfit) dweller.EquipOutfit(item, false);
                 else dweller.EquipWeapon(item);

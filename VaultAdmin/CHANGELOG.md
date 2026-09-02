@@ -29,11 +29,41 @@ fabricated for a picture and never came from storage, so every re-dress left a r
 on every gender change, every visit, every creation. The bench now leaves the storage as it found
 it, and only takes back an item it can prove it minted.
 
+### Staffing and dressing
+
+**Staffing the whole vault by ability.** Every post is cleared and the vault laid out from empty,
+because the arithmetic of free places is otherwise decided by an assignment nobody chose. Seven
+ranks: production, then the clinic and the laboratory, then the gyms, the crafting rooms, the door,
+the living quarters, and last the rooms that want a body and do nothing with it. Training rooms take
+the *lowest* scorers, since a dweller already at ten learns nothing in a gym. Which stat a room runs
+on, how many places it has and whether it produces anything are all asked of the room itself, so a
+room from an update or another mod is ranked by the same questions as the rooms that shipped.
+
+Nobody still queued at the door is offered a post. They are not in the vault yet, and posting one
+walks it inside past the population limit -- which in a full vault stops the game making dwellers at
+all until the count comes back down.
+
+**Dressing everyone for the job they are doing.** The same problem one layer along: which stat
+matters to a dweller is a property of the room they stand in, not of the dweller, so an outfit is
+worth nothing until you know where its wearer works. Everyone goes back into the vault suit first
+and their clothes return to storage -- a coat cannot reach the diner while somebody in the storeroom
+is wearing it. The vault door takes the best coat outright, since a guard is asked for nothing in
+particular, and the living quarters take charisma.
+
 ### The overrides
 
 Vault-wide actions and standing rules, **kept per vault** rather than once for the whole game:
 turning incidents off in the vault you are experimenting with should not turn them off in the one
-you are playing properly.
+you are playing properly. A vault is keyed by the save it was loaded from --
+`PersistenceManager.CurrentSaveSlot` -- which took four rounds of guessing to find, because the
+class holding it is named after neither saves nor vaults, and the vault object itself carries no
+name or number at all.
+
+**The population limit hands itself back.** `RESET` does not write a number: it writes "follow the
+rooms", and the standing rule counts what the living quarters hold as it goes. Building another one
+raises the limit on its own, and a reload does not undo it. What a living quarters sleeps is neither
+how many can work in it nor anything fixed per room type -- it is `m_addedPopulation`, a figure on
+the room that already accounts for how wide it has been merged and how far it has been upgraded.
 
 **What cannot be undone asks first.** Level everyone, ten in every stat, every pregnancy, every
 child grown, every training finished, every recipe opened, and the staffing pass: `DO IT` steps
@@ -49,6 +79,17 @@ the *lowest* scorers, since a dweller already at ten learns nothing in a gym. Wh
 is left alone. Which stat a room runs on, how many places it has and whether it produces anything
 are all asked of the room itself, so a room from an update or another mod is ranked by the same
 questions as the rooms that shipped.
+
+### Saying so
+
+Every action answers, in a band along the bottom of the panel that sits outside the scrolling and in
+the same place whatever page is open. In the words a player uses -- CAPS, not the enum's name for
+them; the name of a gun, not `032Pistol_Rusty` -- and a refusal answers in red. A full store used to
+hand out nothing and report success, because the refusal was a log line, and a row marks itself
+given unless it hears otherwise.
+
+Dwellers are invited rather than given. Nothing changes hands: somebody turns up at the door and
+waits to be let in.
 
 ### The rest
 
