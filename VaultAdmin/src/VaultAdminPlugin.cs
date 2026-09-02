@@ -651,17 +651,23 @@ namespace VaultAdmin
             int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
             Color[] px = new Color[w * w];
 
-            // The pad, and four toes above it on an arc.
-            Vector2 pad = new Vector2(w * 0.5f, w * 0.36f);
-            float padWide = w * 0.20f;
-            float padTall = w * 0.16f;
+            // A pad with a dent in the top of it, and four toes on an arc above -- the outer two
+            // lower than the inner two, the way a paw actually sits. They were a row of circles
+            // touching each other and an ellipse touching those, which is a shape with no gaps in
+            // it and therefore no toes.
+            Vector2 pad = new Vector2(w * 0.5f, w * 0.31f);
+            float padWide = w * 0.215f;
+            float padTall = w * 0.165f;
+
+            Vector2 dent = new Vector2(w * 0.5f, w * 0.50f);
+            float dentR = w * 0.085f;
 
             Vector2[] toes =
             {
-                new Vector2(w * 0.22f, w * 0.60f), new Vector2(w * 0.40f, w * 0.74f),
-                new Vector2(w * 0.60f, w * 0.74f), new Vector2(w * 0.78f, w * 0.60f)
+                new Vector2(w * 0.185f, w * 0.575f), new Vector2(w * 0.375f, w * 0.735f),
+                new Vector2(w * 0.625f, w * 0.735f), new Vector2(w * 0.815f, w * 0.575f)
             };
-            float toe = w * 0.105f;
+            float toe = w * 0.088f;
 
             for (int y = 0; y < w; y++)
             {
@@ -672,6 +678,10 @@ namespace VaultAdmin
                     float dx = (p.x - pad.x) / padWide;
                     float dy = (p.y - pad.y) / padTall;
                     float ink = Mathf.Clamp01((1f - Mathf.Sqrt(dx * dx + dy * dy)) * w * 0.30f);
+
+                    // The dent, taken back out of the top of the pad.
+                    float notch = Mathf.Clamp01(dentR - Vector2.Distance(p, dent) + 0.5f);
+                    ink = Mathf.Min(ink, 1f - notch);
 
                     for (int i = 0; i < toes.Length; i++)
                     {
@@ -723,7 +733,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Log;
 
@@ -1183,6 +1193,79 @@ namespace VaultAdmin
         private bool _buttonSettled;
         private int _lookedForList;
         private int _lookedTimes;
+
+        /// <summary>
+        /// Puts the season pass button away while the panel is up, and brings it back after.
+        ///
+        /// Found by what it is called rather than by a path, because the path is the thing I do not
+        /// know -- and written down the first time so a wrong guess is one line to correct rather
+        /// than a hunt. Only things that take a press are considered: a season pass has a great
+        /// many pieces and hiding its background would be hiding half the corner.
+        ///
+        /// What was hidden is remembered, and only what this hid is put back. Anything the game
+        /// switched off for its own reasons stays off.
+        /// </summary>
+        private void HideTheSeasonPass(bool away)
+        {
+            try
+            {
+                if (!away)
+                {
+                    for (int i = 0; i < _hidden.Count; i++)
+                        if (_hidden[i] != null) _hidden[i].SetActive(true);
+
+                    _hidden.Clear();
+                    return;
+                }
+
+                GameObject hud = GameObject.Find(HudPanelPath);
+                if (hud == null) return;
+
+                Transform[] all = hud.GetComponentsInChildren<Transform>(true);
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (!all[i].gameObject.activeInHierarchy) continue;
+                    if (!LooksLikeTheSeasonPass(all[i].name)) continue;
+                    if (all[i].GetComponentInChildren<Collider>(true) == null) continue;
+
+                    // Not a piece of something already being hidden.
+                    bool inside = false;
+                    for (int h = 0; h < _hidden.Count && !inside; h++)
+                        if (_hidden[h] != null && all[i].IsChildOf(_hidden[h].transform)) inside = true;
+
+                    if (inside) continue;
+
+                    all[i].gameObject.SetActive(false);
+                    _hidden.Add(all[i].gameObject);
+
+                    if (said.Length > 0) said.Append(", ");
+                    said.Append(all[i].name);
+                }
+
+                if (!_reportedHiding)
+                {
+                    _reportedHiding = true;
+                    Log.LogInfo("Put away while the panel is open: " +
+                                (said.Length == 0 ? "nothing matched" : said.ToString()));
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("hideseason", "Could not put the season pass away: " + e.Message);
+            }
+        }
+
+        private static bool LooksLikeTheSeasonPass(string name)
+        {
+            return name.IndexOf("season", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   name.IndexOf("battlepass", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   name.IndexOf("battle pass", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private readonly List<GameObject> _hidden = new List<GameObject>();
+        private static bool _reportedHiding;
 
         private Transform FindDwellerListButton()
         {
@@ -2126,6 +2209,8 @@ namespace VaultAdmin
             // Out of the way while the panel is up. It is the way in, and once you are in it is a
             // button that does the same thing as the one marked CLOSE.
             if (_hudButton != null) _hudButton.SetActive(!_panelOpen);
+
+            HideTheSeasonPass(_panelOpen);
         }
             catch (Exception e)
             {
@@ -8405,7 +8490,7 @@ namespace VaultAdmin
             rollPress.tweenTarget = rollPlate.gameObject;
             rollPress.onClick.Add(new EventDelegate(RollTheLooks));
 
-            Respond(rollPress, rollPlate);
+            Respond(rollPress, rollPlate, true);
 
             // The word before the picture. A die alone is a die; a die after the word RANDOM is a
             // button that rolls one, which is the thing this actually does.
@@ -9224,6 +9309,11 @@ namespace VaultAdmin
         /// </summary>
         private static void Respond(UIButton button, UIWidget face)
         {
+            Respond(button, face, false);
+        }
+
+        private static void Respond(UIButton button, UIWidget face, bool gentle)
+        {
             if (button == null) return;
 
             try
@@ -9237,10 +9327,15 @@ namespace VaultAdmin
                 button.hover = resting * 1.18f;
                 button.pressed = resting * 0.82f;
 
+                // A percentage of a wide plate is a long way. The same figure that reads as a
+                // nudge on a forty-unit button reads as a lurch on one four times that.
+                float up = gentle ? 1.012f : 1.04f;
+                float down = gentle ? 0.985f : 0.95f;
+
                 UIButtonScale grow = button.gameObject.AddComponent<UIButtonScale>();
                 grow.tweenTarget = button.transform;
-                grow.hover = new Vector3(1.04f, 1.04f, 1f);
-                grow.pressed = new Vector3(0.95f, 0.95f, 1f);
+                grow.hover = new Vector3(up, up, 1f);
+                grow.pressed = new Vector3(down, down, 1f);
                 grow.duration = 0.10f;
             }
             catch (Exception e)
