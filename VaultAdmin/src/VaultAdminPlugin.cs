@@ -48,6 +48,12 @@ namespace VaultAdmin
         public const int EdgeCard = 2;
         public static readonly Color Clear = new Color(0f, 0f, 0f, 0f);
 
+        // The game's own pair for a warning, taken off its own buttons: a red that is nearly
+        // brown, ringed and lettered in a yellow that is nearly gold. Green is the colour of
+        // everything else in this panel, which is exactly why refusing should not be green.
+        public static readonly Color Danger = new Color32(0xC5, 0x35, 0x08, 0xFF);   // C53508
+        public static readonly Color Warn = new Color32(0xE3, 0xCD, 0x1C, 0xFF);     // E3CD1C
+
         private static readonly Dictionary<string, Texture2D> _cache = new Dictionary<string, Texture2D>();
 
         /// <summary>
@@ -163,6 +169,12 @@ namespace VaultAdmin
         public static Texture2D SolidOutlined(int width, int height)
         {
             return Frame(width, height, 10, EdgeButton, Ink, Bright);
+        }
+
+        /// <summary>The button that refuses: red, ringed and lettered in the warning yellow.</summary>
+        public static Texture2D DangerButton(int width, int height)
+        {
+            return Frame(width, height, 8, EdgeButton, Warn, Danger);
         }
 
         /// <summary>A flat square, meant to be tinted by the widget that draws it.</summary>
@@ -757,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.11";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Log;
 
@@ -5337,9 +5349,9 @@ namespace VaultAdmin
                                        right - button + half / 2, middle, half, 40, true,
                                        delegate { Confirmed(power); });
 
-                power.No = MakeButton(parent, "PowerNo_" + name, "NO",
-                                      right - half / 2, middle, half, 40, false,
-                                      delegate { Disarm(power, true); });
+                power.No = MakeDangerButton(parent, "PowerNo_" + name, "NO",
+                                            right - half / 2, middle, half, 40,
+                                            delegate { Disarm(power, true); });
 
                 power.Yes.SetActive(false);
                 power.No.SetActive(false);
@@ -5369,8 +5381,12 @@ namespace VaultAdmin
             {
                 if (PowerFor(IncidentsOffHere, IncidentsOff) && IncidentsOn()) SetIncidents(false);
 
-                if (PowerFor(BottleAndCappyOffHere, BottleAndCappyOff) && !BottleAndCappyLocked())
-                    SetBottleAndCappy(true);
+                bool pairAway = PowerFor(BottleAndCappyOffHere, BottleAndCappyOff);
+
+                // Both ways. Holding it only in the direction of "away" meant a vault that had
+                // never asked for it inherited the lock from one that had, because the manager
+                // carries it and nothing put it back.
+                if (pairAway != BottleAndCappyLocked()) SetBottleAndCappy(pairAway);
 
                 if (PowerFor(RushAlwaysWorksHere, RushAlwaysWorks))
                 {
@@ -5531,6 +5547,13 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault == null || !vault.Loaded) return null;
 
+                // The slot it was loaded from, before anything else. A vault's name is a thing a
+                // player types: it can be left blank, and two vaults can carry the same one. The
+                // slot is the game's own answer to which vault this is, it is what the file on
+                // disk is called, and it is there whether the vault feels like naming itself.
+                string slot = SaveSlot();
+                if (!string.IsNullOrEmpty(slot)) return "slot" + slot;
+
                 string name = ReadAsText(vault, "VaultName");
                 if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "m_vaultName");
                 if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "Name");
@@ -5582,10 +5605,17 @@ namespace VaultAdmin
 
         private void RememberPower(ConfigEntry<string> store, ConfigEntry<bool> fallback, bool on)
         {
-            if (fallback != null) fallback.Value = on;
-
             string key = VaultKey();
-            if (key == null || store == null) return;
+
+            // The game-wide entry is what a vault that has never been told otherwise starts from.
+            // It is not a copy of the last thing anybody did anywhere -- and writing it here is
+            // exactly how one vault's choice arrived in another: the other had no answer of its
+            // own, so it read this one and showed it as though it were its own.
+            if (key == null || store == null)
+            {
+                if (fallback != null) fallback.Value = on;
+                return;
+            }
 
             store.Value = Write(store.Value, key, on ? "true" : "false");
         }
@@ -5604,12 +5634,62 @@ namespace VaultAdmin
 
         private void RememberNumber(ConfigEntry<string> store, ConfigEntry<int> fallback, int many)
         {
-            if (fallback != null) fallback.Value = many;
-
             string key = VaultKey();
-            if (key == null || store == null) return;
+
+            // The same, for the one setting that is a number rather than a switch.
+            if (key == null || store == null)
+            {
+                if (fallback != null) fallback.Value = many;
+                return;
+            }
 
             store.Value = Write(store.Value, key, many.ToString());
+        }
+
+        /// <summary>Which save slot is loaded, as the game itself has it.</summary>
+        private static string SaveSlot()
+        {
+            try
+            {
+                Type type = Type.GetType("SaveManager, Assembly-CSharp");
+                if (type == null) return null;
+
+                const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
+                                             BindingFlags.Static;
+
+                // Static or on an instance, whichever this build keeps it as.
+                PropertyInfo flat = type.GetProperty("CurrentSaveSlot", Statics);
+                if (flat != null && flat.CanRead) return Text(flat.GetValue(null, null));
+
+                object manager = null;
+
+                PropertyInfo one = type.GetProperty("Instance", Statics);
+                if (one != null) manager = one.GetValue(null, null);
+
+                if (manager == null)
+                {
+                    FieldInfo held = type.GetField("Instance", Statics);
+                    if (held != null) manager = held.GetValue(null);
+                }
+
+                if (manager == null) return null;
+
+                object slot = ReadObject(manager, "CurrentSaveSlot");
+                if (slot == null) slot = ReadObject(manager, "m_currentSaveSlot");
+                if (slot == null) slot = ReadObject(manager, "saveSlotNumber");
+
+                return Text(slot);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>A value as text, or nothing when it is nothing or nonsense.</summary>
+        private static string Text(object value)
+        {
+            if (value == null) return null;
+
+            string said = value.ToString().Trim();
+            return said.Length == 0 || said == "-1" ? null : said;
         }
 
         /// <summary>What was written for one vault in a "name=value;name=value" line.</summary>
@@ -5860,9 +5940,10 @@ namespace VaultAdmin
             // The field holds three digits and the button one short word; both had been sized
             // for a great deal more than they carry, and the words to their left paid for it.
             int button = 62;
+            int reset = 66;
             int field = 60;
             int left = -width / 2 + 32 + box;
-            int textWidth = width - button - field - box - 74;
+            int textWidth = width - button - reset - field - box - 80;
 
             UILabel title = MakeLeftLabel(parent, "PowerName_" + name, name,
                                           left, middle + 13, textWidth, 22, Skin.Bright, 3);
@@ -5877,6 +5958,13 @@ namespace VaultAdmin
             _populationInput = AddInput(parent, "PowerField_" + name,
                                         width / 2 - button - field / 2 - 16, middle, field,
                                         figure, true);
+
+            // What the rooms actually hold. A typed limit is a number somebody chose and then had
+            // no way back from -- the vault kept it across restarts and there was nothing to say
+            // what it had been before. This asks the vault.
+            MakeButton(parent, "PowerReset_" + name, "RESET",
+                       width / 2 - button - field - reset / 2 - 22, middle, reset, 40, false,
+                       ResetPopulation);
 
             Power power = new Power();
             power.Note = note;
@@ -6014,8 +6102,15 @@ namespace VaultAdmin
             // Each switch is a claim, and ON means the claim holds. 'No incidents' being on is
             // the opposite of the flag the game keeps, which is what made the old labels read
             // backwards.
-            Switch(_incidentSwitch, !IncidentsOn());
-            Switch(_bottleSwitch, BottleAndCappyLocked());
+            // What this vault was told, not what the game happens to be doing this instant.
+            //
+            // Two of these read the live state and one read the setting, so the row could say one
+            // thing while the setting said another -- and the live state is not always the vault's
+            // to keep. The pair's lock lives on a manager that is built afresh, so it read as OFF
+            // in a vault that had switched it on and stayed on in a vault that never had. The
+            // standing rules below hold the game to the setting; the switch reports the setting.
+            Switch(_incidentSwitch, PowerFor(IncidentsOffHere, IncidentsOff));
+            Switch(_bottleSwitch, PowerFor(BottleAndCappyOffHere, BottleAndCappyOff));
             Switch(_rushSwitch, PowerFor(RushAlwaysWorksHere, RushAlwaysWorks));
         }
 
@@ -6084,18 +6179,20 @@ namespace VaultAdmin
 
         private void ToggleBottleAndCappy()
         {
-            bool wanted = !BottleAndCappyLocked();
+            // The same, and this one needed it most: the lock is kept on a manager that does not
+            // survive a vault, so the live answer was whatever the last load happened to leave.
+            bool away = !PowerFor(BottleAndCappyOffHere, BottleAndCappyOff);
 
-            if (!SetBottleAndCappy(wanted))
+            RememberPower(BottleAndCappyOffHere, BottleAndCappyOff, away);
+            RefreshPowerSwitches();
+
+            if (!SetBottleAndCappy(away))
             {
                 Trouble("That pair cannot be locked from here.");
                 return;
             }
 
-            RememberPower(BottleAndCappyOffHere, BottleAndCappyOff, wanted);
-            RefreshPowerSwitches();
-
-            Say(wanted ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
+            Say(away ? "Bottle and Cappy will stay away." : "Bottle and Cappy may wander again.");
         }
 
         /// <summary>Every child grown, through the call the game makes when one comes of age.</summary>
@@ -7513,18 +7610,21 @@ namespace VaultAdmin
 
         private void ToggleIncidents()
         {
-            bool wanted = !IncidentsOn();
+            // From the setting, not from the game. Reading the live state meant a switch that had
+            // been turned on, and then quietly undone by the game, answered the next press by
+            // turning on again -- so it took two presses to do anything, and only sometimes.
+            bool off = !PowerFor(IncidentsOffHere, IncidentsOff);
 
-            if (!SetIncidents(wanted))
+            RememberPower(IncidentsOffHere, IncidentsOff, off);
+            RefreshPowerSwitches();
+
+            if (!SetIncidents(!off))
             {
                 Trouble("The emergency state cannot be switched here.");
                 return;
             }
 
-            RememberPower(IncidentsOffHere, IncidentsOff, !wanted);
-            RefreshPowerSwitches();
-
-            Say(wanted ? "Incidents are on again." : "Incidents are off, and will stay off.");
+            Say(off ? "Incidents are off, and will stay off." : "Incidents are on again.");
         }
 
         /// <summary>Everyone the vault knows about, dead ones included.</summary>
@@ -7824,6 +7924,69 @@ namespace VaultAdmin
             Say(wanted ? "Rushing cannot fail." : "Rushing can fail again.");
         }
 
+        /// <summary>
+        /// What the vault would hold if nobody had raised it -- the game's own sum.
+        ///
+        /// Counting living quarters by hand would be a second opinion on a question the vault
+        /// already answers, and a second opinion that goes wrong the moment a room is added by an
+        /// update or another mod. GetMaxDwellers is the game's arithmetic, whatever it is built of.
+        /// </summary>
+        private int RealCapacity()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+                if (vault == null) return -1;
+
+                MethodInfo sum = FindMethod(vault.GetType(), "GetMaxDwellers");
+
+                if (sum != null && sum.ReturnType != typeof(void))
+                {
+                    object many = sum.Invoke(vault, null);
+                    if (many != null) return Convert.ToInt32(many);
+                }
+
+                ReportOnce("capacity", "The vault has no GetMaxDwellers to ask.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("capacity", "Could not ask the vault what it holds: " + e.Message);
+            }
+
+            return -1;
+        }
+
+        /// <summary>Hands the limit back to the living quarters.</summary>
+        private void ResetPopulation()
+        {
+            try
+            {
+                int real = RealCapacity();
+
+                if (real <= 0)
+                {
+                    Trouble("The vault will not say what its rooms hold.");
+                    return;
+                }
+
+                Vault vault = SafeVault();
+                if (vault != null) WriteMember(vault, "MaxDwellers", real);
+
+                if (_populationInput != null) _populationInput.value = real.ToString();
+
+                // Nought means "leave it alone" to the standing rule, which is what a reset is:
+                // the vault goes back to being governed by its rooms rather than by a number.
+                RememberNumber(MaxDwellersHere, MaxDwellersWanted, 0);
+                _wasMaxDwellers = -1;
+
+                Say("Back to what the rooms hold: " + real + ".");
+            }
+            catch (Exception e)
+            {
+                Trouble("Could not put the limit back: " + e.Message);
+            }
+        }
+
         private void RaisePopulation()
         {
             try
@@ -7853,7 +8016,17 @@ namespace VaultAdmin
 
                 // Written down, so the vault is still this size after a restart.
                 RememberNumber(MaxDwellersHere, MaxDwellersWanted, wanted);
-                Say("The vault will take " + wanted + " dwellers.");
+
+                // The game keeps a ceiling of its own and reads through it: ClampedMaxDwellers is
+                // what it actually uses. Asking for five hundred and being quietly given two
+                // hundred is worth a word, since the field will go on saying five hundred.
+                object capped = ReadObject(vault, "ClampedMaxDwellers");
+                int real = capped == null ? wanted : Convert.ToInt32(capped);
+
+                if (real > 0 && real < wanted)
+                    Say("Asked for " + wanted + "; the game holds it at " + real + ".");
+                else
+                    Say("The vault will take " + wanted + " dwellers.");
             }
             catch (Exception e)
             {
@@ -11098,6 +11271,29 @@ namespace VaultAdmin
             return go;
         }
 
+        /// <summary>
+        /// The same button, in the colours of refusing.
+        ///
+        /// Built and then repainted rather than built differently: everything about a button --
+        /// its collider, its tween, the way it answers a press -- is the same whatever colour it
+        /// is, and only the face and the word are not. Respond tints from the widget's own colour,
+        /// which stays white, so the hover and the press follow the new face on their own.
+        /// </summary>
+        private GameObject MakeDangerButton(Transform parent, string name, string text,
+                                            int x, int y, int width, int height,
+                                            EventDelegate.Callback onClick)
+        {
+            GameObject go = MakeButton(parent, name, text, x, y, width, height, false, onClick);
+
+            UITexture face = go.GetComponent<UITexture>();
+            if (face != null) face.mainTexture = Skin.DangerButton(width, height);
+
+            UILabel word = go.GetComponentInChildren<UILabel>();
+            if (word != null) word.color = Skin.Warn;
+
+            return go;
+        }
+
         private void Update()
         {
             if (!Enabled.Value) return;
@@ -12116,6 +12312,25 @@ namespace VaultAdmin
                 try
                 {
                     PropertyInfo found = type.GetProperty(member, Flags);
+                    if (found != null) return found;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        /// <summary>A method of that name taking nothing, on this type or one it inherits from.</summary>
+        private static MethodInfo FindMethod(Type type, string member)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            for (; type != null; type = type.BaseType)
+            {
+                try
+                {
+                    MethodInfo found = type.GetMethod(member, Flags, null, Type.EmptyTypes, null);
                     if (found != null) return found;
                 }
                 catch { }
