@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.1.3";
 
         internal static ManualLogSource Log;
 
@@ -6539,7 +6539,7 @@ namespace VaultAdmin
         /// <summary>A pet built to order: which one, called what, carrying which bonus.</summary>
         private void BuildPetSection(Transform parent, int width)
         {
-            AddHeader(parent, "PET", width);
+            AddHeader(parent, "SPECIES", width);
 
             // The same shape as the dweller's bench: the animal in a box down the left, and the
             // two things you choose about it in rows beside it. Choosing a pet by a photograph of
@@ -8691,7 +8691,7 @@ namespace VaultAdmin
 
             _cursorY -= RowHeight + RowGap;
 
-            AddHeader(parent, "LOOKS", width);
+            AddHeader(parent, "APPEARANCE", width);
             BuildLooksBlock(parent, width);
 
             _hair.OnChange = delegate { LookChanged(_hair); };
