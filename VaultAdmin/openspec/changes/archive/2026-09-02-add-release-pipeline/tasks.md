@@ -19,9 +19,7 @@
 - [x] 3.2 Searches UTF-16 at both alignments and latin-1 for each marker
 - [x] 3.3 The absent-control is a marker that could plausibly be found
 - [x] 3.4 A missing marker fails the check and names which
-- [ ] 3.5 The marker list covers the features that shipped
-      *(it stops at pre-1.0: nothing in it would notice if the overrides page, the preview camera or
-      the storage guard failed to ship)*
+- [x] 3.5 The marker list covers the features that shipped
 
 ## 4. Writing it down
 
@@ -31,4 +29,4 @@
 
 ## 5. Close out
 
-- [ ] 5.1 After 3.5: archive
+- [x] 5.1 After 3.5: archive

@@ -757,13 +757,14 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.11.0";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
 
         private static ConfigEntry<bool> Enabled;
         private static ConfigEntry<string> ToggleKey;
         private static ConfigEntry<bool> WriteIconReport;
+        private static ConfigEntry<bool> TraceActions;
         private static ConfigEntry<bool> PreviewWholeSheet;
 
         private static ConfigEntry<bool> IncidentsOff;
@@ -1080,6 +1081,11 @@ namespace VaultAdmin
                 "the corner of it the game's own call selects. On, the figure is whole; off, it is " +
                 "cropped the way the game crops it for its own panels.");
 
+            TraceActions = Config.Bind("Diagnostics", "TraceActions", false,
+                "Writes a line to the log for everything this panel does and for every time a " +
+                "vault opens or closes. Off in a release; on when something is being hunted, " +
+                "because the last line before a crash is the only witness there is.");
+
             WriteIconReport = Config.Bind("Diagnostics", "WriteIconReport", false,
                 "Writes VaultAdmin-icons.txt beside the plugin, listing every picture the item " +
                 "lists ask for and every picture the game's atlases hold. Only useful when an icon " +
@@ -1236,6 +1242,7 @@ namespace VaultAdmin
         }
 
         private bool _buttonSettled;
+        private bool _wasInAVault;
         private int _lookedForList;
         private int _lookedTimes;
 
@@ -2234,6 +2241,7 @@ namespace VaultAdmin
             try
             {
                 _panelOpen = !_panelOpen;
+            Trace(_panelOpen ? "panel opened" : "panel closed");
                 if (!_panelOpen) HoldCamera(false);
                 if (!_panelOpen) DisposePreview();
 
@@ -3472,7 +3480,9 @@ namespace VaultAdmin
             {
                 _tab = tab;
 
-                foreach (KeyValuePair<Tab, GameObject> entry in _tabPages)
+                Trace("page: " + tab);
+
+            foreach (KeyValuePair<Tab, GameObject> entry in _tabPages)
                 {
                     if (entry.Value != null) entry.Value.SetActive(entry.Key == tab);
                 }
@@ -4581,6 +4591,8 @@ namespace VaultAdmin
         {
             if (rowIndex < 0 || rowIndex >= _shown.Count) return;
 
+            Trace("give: row " + rowIndex + " of " + _grantFamily);
+
             int before = _troubles;
             HandOver(rowIndex);
             if (_troubles == before) ConfirmRow(rowIndex);
@@ -5018,9 +5030,9 @@ namespace VaultAdmin
 
             AddPower(parent, width, "FINISH ALL TRAINING",
                      "every training done", FinishAllTraining,
-                     new[] { "Icon_TrainingPlain", "Icon_Training" });
+                     new[] { "Icon_TrainingPlain", "Icon_Training" }, true);
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
-                     "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
+                     "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38), true);
 
             AddPower(parent, width, "LEVEL EVERYONE",
                      "everyone to level 50", LevelEveryone,
@@ -5191,6 +5203,8 @@ namespace VaultAdmin
                 // A power that cannot be undone asks first. Everything else simply happens: a
                 // question in front of a harmless action is a question people learn to click
                 // through, and then it is not there when it matters.
+                Trace("power pressed: " + name + (grave ? " (asking first)" : ""));
+
                 if (grave) { Arm(power); return; }
 
                 // Cleared even when the action throws. Left set, the next power's answer was
@@ -5768,6 +5782,8 @@ namespace VaultAdmin
         {
             if (power == null || power.Deed == null) return;
 
+            Trace("power confirmed");
+
             EventDelegate.Callback deed = power.Deed;
             Disarm(power, false);
 
@@ -6285,6 +6301,8 @@ namespace VaultAdmin
         /// </summary>
         private void AssignTheBest()
         {
+            Trace("staffing the vault");
+
             try
             {
                 DwellerManager manager = SafeDwellerManager();
@@ -7727,6 +7745,7 @@ namespace VaultAdmin
 
         private void ShowMaking(Making making)
         {
+            Trace("bench: " + making);
             _making = making;
             if (_makingLabel != null) _makingLabel.text = making.ToString().ToUpper();
 
@@ -8835,6 +8854,8 @@ namespace VaultAdmin
         private void DisposePreview()
         {
             if (_previewDweller == null) return;
+
+            Trace("preview: putting the stand-in away");
 
             try
             {
@@ -10759,8 +10780,20 @@ namespace VaultAdmin
 
             if (!inAVault)
             {
+                if (_wasInAVault)
+                {
+                    _wasInAVault = false;
+                    Trace("the vault closed; back at the menu");
+                }
+
                 if (_knownVault != null) LetTheOldVaultGo();
                 return;
+            }
+
+            if (!_wasInAVault)
+            {
+                _wasInAVault = true;
+                Trace("a vault opened: " + (VaultKey() ?? "unnamed"));
             }
 
             EnsureHudButton();
@@ -11975,6 +12008,8 @@ namespace VaultAdmin
 
         private void GrantItem(CatalogueEntry entry)
         {
+            Trace("granting item " + (entry == null ? "?" : entry.Id));
+
             try
             {
                 Vault vault = SafeVault();
@@ -12185,6 +12220,8 @@ namespace VaultAdmin
 
         private void GrantBoxes(ELunchBoxType type, int quantity)
         {
+            Trace("granting " + quantity + " " + type + " box(es)");
+
             try
             {
                 Vault vault = SafeVault();
@@ -12541,6 +12578,8 @@ namespace VaultAdmin
         /// </summary>
         private void CreateDweller(bool customise)
         {
+            Trace(customise ? "creating a dweller from the bench" : "creating a rolled dweller");
+
             try
             {
                 DwellerManager manager = SafeDwellerManager();
@@ -13113,6 +13152,25 @@ namespace VaultAdmin
         {
             try { return DwellerManager.Instance; }
             catch (Exception e) { ReportOnce("dwellers", "Could not reach the dwellers: " + e.Message); return null; }
+        }
+
+        /// <summary>
+        /// One line for one thing that happened, when the trace is switched on.
+        ///
+        /// Not ReportOnce: this is the opposite of once. When a game is crashing and the log is
+        /// the only witness, what matters is the last line before it stopped -- so everything gets
+        /// a line, in order, with the time on it. Off in a release, because a log nobody is reading
+        /// is a file that only grows.
+        /// </summary>
+        private static void Trace(string what)
+        {
+            if (TraceActions == null || !TraceActions.Value) return;
+
+            try
+            {
+                Log.LogInfo("[trace " + Time.realtimeSinceStartup.ToString("0.00") + "] " + what);
+            }
+            catch { }
         }
 
         private static void ReportOnce(string key, string message)

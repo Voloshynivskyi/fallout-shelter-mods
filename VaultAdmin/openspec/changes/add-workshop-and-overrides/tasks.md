@@ -44,17 +44,17 @@
 
 ## 6. Batch for a launch
 
-- [ ] 6.1 **[launch]** The staffing pass finds the assignment call and posts dwellers
-- [ ] 6.2 **[launch]** The panel button attaches under the dwellers list and opens the panel
-- [ ] 6.3 **[launch]** Leaving the vault and returning leaves exactly one panel button
-- [ ] 6.4 **[launch]** Dressing the figure repeatedly leaves the vault's weapon count unchanged
-- [ ] 6.5 **[launch]** A created dweller matches the figure that was shown
+- [x] 6.1 **[launch]** The staffing pass finds the assignment call and posts dwellers
+- [x] 6.2 **[launch]** The panel button attaches under the dwellers list and opens the panel
+- [x] 6.3 **[launch]** Leaving the vault and returning leaves exactly one panel button
+- [x] 6.4 **[launch]** Dressing the figure repeatedly leaves the vault's weapon count unchanged
+- [x] 6.5 **[launch]** A created dweller matches the figure that was shown
 - [x] 6.6 Append to `openspec/testplan.md`
 
 ## 7. Close out
 
-- [ ] 7.1 CHANGELOG
-- [ ] 7.2 After the batch passes: archive
+- [x] 7.1 CHANGELOG
+- [x] 7.2 After the batch passes: archive
 
 ## Carried in
 

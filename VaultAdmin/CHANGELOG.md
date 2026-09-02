@@ -2,8 +2,68 @@
 
 ## 1.0.0 — first public release
 
-Everything below this line was found by playing the thing. The version numbers under this
-entry are development history and were never released.
+A debug panel built out of the game's own widgets, reaching the game only through the game's own
+methods. Four pages: the vault's resources, everything it can be given, a bench for building
+dwellers and animals, and a page of overrides.
+
+Everything below this line was found by playing it. The version numbers inside this entry are
+development history and were never released.
+
+### The bench
+
+A dweller is built from a name, a gender, a rarity, a level, seven SPECIAL values, an appearance
+and a set of gear, with a live figure of that dweller standing beside the fields. The figure is a
+real dweller borrowed from the game's own pool, filmed by a private camera into a texture, and kept
+idling — which took four attempts, because a dweller carries no `Animator` at all. It is driven by
+the legacy `Animation` component with the game's own controller on top, and that controller
+replaces any clip anybody else sets, one frame later, for ever.
+
+**An appearance has no empty option.** "Random" was never a value; it was an instruction to write
+nothing, so the figure kept a random look of its own while the spawner rolled a different one for
+the dweller who walked away. The two were never the same person. Every slot holds something real
+from the moment the page opens, and a die in the figure's own box rolls them again.
+
+**Dressing the figure no longer mints weapons.** Equipping calls the game's own `EquipWeapon`, and
+the game does what it always does on a swap: it hands the old one back to storage. The old one was
+fabricated for a picture and never came from storage, so every re-dress left a real weapon behind —
+on every gender change, every visit, every creation. The bench now leaves the storage as it found
+it, and only takes back an item it can prove it minted.
+
+### The overrides
+
+Vault-wide actions and standing rules, **kept per vault** rather than once for the whole game:
+turning incidents off in the vault you are experimenting with should not turn them off in the one
+you are playing properly.
+
+**What cannot be undone asks first.** Level everyone, ten in every stat, every pregnancy, every
+child grown, every training finished, every recipe opened, and the staffing pass: `DO IT` steps
+aside, `YES` and `NO` take its place, and the row says so. Everything else simply happens — a
+question in front of a harmless action is one people learn to click through, and then it is not
+there when it matters.
+
+**Staffing the whole vault by ability.** Every post is cleared and the vault laid out from empty,
+because the arithmetic of free places is otherwise decided by an assignment nobody chose. Seven
+ranks: production, then the clinic and the laboratory, then the gyms, the crafting rooms, the door,
+the living quarters, and last the rooms that want a body and do nothing with it. Training rooms take
+the *lowest* scorers, since a dweller already at ten learns nothing in a gym. Whoever is left over
+is left alone. Which stat a room runs on, how many places it has and whether it produces anything
+are all asked of the room itself, so a room from an update or another mod is ranked by the same
+questions as the rooms that shipped.
+
+### The rest
+
+Items and pets are listed with the game's own art and its own descriptions, one row per record
+rather than one per animal, and a grant says so on the row that was pressed. Things are called what
+a player calls them — Caps, Stimpak, Nuka-Cola Quantum — rather than what the enum calls them. The
+panel draws in three greens and sets every label to one of six named sizes.
+
+### Two things worth knowing
+
+The mod is disabled until you switch it on, and everything it holds of a vault is let go when that
+vault closes. It writes to your save the way the game does: what you grant or create is yours and
+stays. The standing rules are held in memory while the mod runs and put back when it is disabled.
+
+Nothing here is a Harmony patch.
 
 **The bench was minting weapons.** Dressing the preview figure calls the game's own `EquipWeapon`,
 and the game does what it always does when a dweller's weapon is swapped: it hands the old one back
