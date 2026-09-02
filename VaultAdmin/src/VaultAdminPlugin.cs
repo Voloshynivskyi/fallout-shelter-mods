@@ -687,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.5";
+        public const string PluginVersion = "1.0.7";
 
         internal static ManualLogSource Log;
 
@@ -1236,6 +1236,26 @@ namespace VaultAdmin
         /// not, and a sensible guess where neither answers. A button in this HUD is a container
         /// with the sprite inside it, so asking the container alone gets nothing.
         /// </summary>
+        /// <summary>
+        /// The box a piece of the interface actually covers, in its parent's own space.
+        ///
+        /// NGUI keeps this for itself and it is the only honest answer to "where is this thing":
+        /// a transform's position is wherever its author put the origin, and two buttons written
+        /// by different people put it in different places.
+        /// </summary>
+        private static Bounds DrawnBounds(Transform space, Transform what)
+        {
+            try
+            {
+                return NGUIMath.CalculateRelativeWidgetBounds(space, what);
+            }
+            catch
+            {
+                float tall = HeightOf(what);
+                return new Bounds(what.localPosition, new Vector3(tall, tall, 0f));
+            }
+        }
+
         private static float HeightOf(Transform what)
         {
             float tall = 0f;
@@ -1352,14 +1372,24 @@ namespace VaultAdmin
                     // two units put ours on top of the one it was meant to sit under, because how
                     // far below "below" is depends on how tall they both are -- and neither of
                     // them told anybody that until they were asked.
-                    float drop = HeightOf(anchor) * 0.5f + HeightOf(source.transform) * 0.5f +
-                                 HudButtonOffsetY.Value;
+                    // Where the anchor is *drawn*, not where its transform happens to sit. Two
+                    // buttons built by different hands anchor their sprites differently, so one
+                    // origin is the middle of the picture and the other is a corner of it -- which
+                    // is why ours kept landing up and to the left of where it was aimed.
+                    Bounds seen = DrawnBounds(parent, anchor);
+                    Bounds ours = DrawnBounds(source.transform.parent, source.transform);
 
-                    place = anchor.localPosition + new Vector3(0f, -drop, 0f);
+                    float drop = seen.extents.y + ours.extents.y + HudButtonOffsetY.Value;
 
-                    Log.LogInfo("Anchor '" + anchor.name + "' at " + anchor.localPosition +
-                                " is " + HeightOf(anchor) + " tall; the panel button is " +
-                                HeightOf(source.transform) + " tall and goes to " + place + ".");
+                    place = seen.center + new Vector3(0f, -drop, 0f);
+
+                    // And our own picture is not centred on our transform either, so the offset
+                    // between the two has to come back out.
+                    place -= (ours.center - source.transform.localPosition);
+
+                    Log.LogInfo("Anchor '" + anchor.name + "' is drawn at " + seen.center +
+                                " sized " + seen.size + "; ours is drawn at " + ours.center +
+                                " sized " + ours.size + "; placing at " + place + ".");
                 }
 
                 _buttonSettled = anchor != null;
@@ -3657,7 +3687,16 @@ namespace VaultAdmin
         private void StepBonus(int by)
         {
             _petBonusIndex = (_petBonusIndex + by + Bonuses().Length) % Bonuses().Length;
-            if (_bonusLabel != null) _bonusLabel.text = Tidy(Bonuses()[_petBonusIndex].ToString()).ToUpper();
+            if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
+        }
+
+        /// <summary>The bonus, and where it stands in the list -- as every other picker says it.</summary>
+        private string BonusCaption()
+        {
+            EBonusEffect[] all = Bonuses();
+            int at = Mathf.Clamp(_petBonusIndex, 0, all.Length - 1);
+
+            return Tidy(all[at].ToString()).ToUpper() + "   " + (at + 1) + "/" + all.Length;
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -4246,7 +4285,8 @@ namespace VaultAdmin
             icon.atlas = atlas;
             icon.spriteName = chosen;
             icon.type = UIBasicSprite.Type.Simple;
-            FitSprite(icon, _wantWholeAnimal ? _wholeAnimalBox : IconBox);
+            if (_wantWholeAnimal) FillWithInk(icon, _wholeAnimalBox);
+            else FitSprite(icon, IconBox);
         }
 
         /// <summary>The full-body name that stands beside a head in the atlas.</summary>
@@ -4258,8 +4298,53 @@ namespace VaultAdmin
             return at < 0 ? name + "_FullBody" : name.Substring(0, at) + "_FullBody";
         }
 
+        /// <summary>
+        /// Sizes a sprite so the picture in it is as large as asked for, margins be damned.
+        ///
+        /// A trimmed sprite keeps its blank margins separately, and FitSprite sizes the widget so
+        /// that the picture *and its margins* fit the box. For a row of items that is right --
+        /// every icon then sits on the same grid. For one animal standing alone it is wrong: a
+        /// full-body sprite carries a great deal of empty space, so the box grew and the cat did
+        /// not. This makes the ink the size that was asked for and lets the empty space fall
+        /// outside, where nobody can see it.
+        /// </summary>
+        private static void FillWithInk(UISprite sprite, int box)
+        {
+            if (sprite == null || sprite.atlas == null) return;
+
+            try
+            {
+                UISpriteData data = sprite.atlas.GetSprite(sprite.spriteName);
+
+                if (data == null || data.width <= 0 || data.height <= 0)
+                {
+                    sprite.width = box;
+                    sprite.height = box;
+                    return;
+                }
+
+                sprite.type = UIBasicSprite.Type.Simple;
+
+                float full = data.width + data.paddingLeft + data.paddingRight;
+                float tall = data.height + data.paddingTop + data.paddingBottom;
+                if (full <= 0f) full = data.width;
+                if (tall <= 0f) tall = data.height;
+
+                // Against the ink rather than against the whole sheet.
+                float scale = box / Mathf.Max(data.width, data.height);
+
+                sprite.width = Mathf.Max(1, Mathf.RoundToInt(full * scale));
+                sprite.height = Mathf.Max(1, Mathf.RoundToInt(tall * scale));
+            }
+            catch
+            {
+                sprite.width = box;
+                sprite.height = box;
+            }
+        }
+
         private bool _wantWholeAnimal;
-        private int _wholeAnimalBox = 168;
+        private int _wholeAnimalBox = 104;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6251,11 +6336,11 @@ namespace VaultAdmin
             // two things you choose about it in rows beside it. Choosing a pet by a photograph of
             // its head was choosing a pet by its passport.
             const int pad = 8;
-            const int petBlock = 210;
+            const int petBlock = 128;
 
             int blockY = _cursorY - petBlock / 2;
 
-            int wellWidth = 186;
+            int wellWidth = 100;
             int wellHeight = petBlock - pad * 2;
 
             Plate(parent, "PetBlock", 0, blockY, width, petBlock, Skin.Row(width, petBlock), 1);
@@ -6325,10 +6410,15 @@ namespace VaultAdmin
                        delegate { StepBonus(-1); });
             MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, bonusY, 40, 32, false,
                        delegate { StepBonus(1); });
-            _bonusLabel = MakeLeftLabel(parent, "PetBonusName",
-                                        Tidy(Bonuses()[_petBonusIndex].ToString()).ToUpper(),
-                                        -width / 2 + 98, bonusY, width - 200, RowHeight,
-                                        Skin.Bright, 3);
+            // Stops where the field starts. It had been given the width of everything to its
+            // right, the field included, so the longer bonus names ran under the number.
+            int bonusLeft = -width / 2 + 98;
+            int bonusRight = width / 2 - 142;
+
+            _bonusLabel = MakeLeftLabel(parent, "PetBonusName", BonusCaption(),
+                                        bonusLeft, bonusY, bonusRight - bonusLeft,
+                                        RowHeight, Skin.Bright, 3);
+            _bonusLabel.maxLineCount = 1;
             _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, bonusY, 76, "10");
 
             // The strongest the game itself ever gives for this effect. A pet's bonus is one number
