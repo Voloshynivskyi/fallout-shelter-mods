@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.5";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
 
@@ -5724,6 +5724,11 @@ namespace VaultAdmin
 
                 for (int t = 0; t < types.Length; t++)
                 {
+                    // An enum's members are its own constant names, and one of them is called
+                    // AudioObjectEvent_UI_VaultNumber_Switch -- which this took as the answer,
+                    // giving every vault in the game the same key. A constant is not data.
+                    if (types[t].IsEnum) continue;
+
                     MemberInfo[] named;
                     try { named = Named(types[t], Statics, Ones); }
                     catch { continue; }
@@ -5740,6 +5745,10 @@ namespace VaultAdmin
 
                         string said = ValueOf(named[i], isStatic ? null : held);
                         if (said == null) continue;
+
+                        // A member whose value is its own name is a label, not an answer:
+                        // StatName.VaultName says "VaultName" in every vault ever loaded.
+                        if (said == named[i].Name) continue;
 
                         if (found.Length < 700)
                             found.Append("  ").Append(types[t].Name).Append(".")
@@ -5885,7 +5894,12 @@ namespace VaultAdmin
                 // when it is spelled differently, which is indistinguishable from the class not
                 // existing. SaveManager is in this game -- the log said so only because nobody
                 // had looked in the right place.
-                Type type = GameType("SaveManager");
+                // PersistenceManager, and the sweep is what found it. Not SaveManager, whose
+                // name is the one I kept reaching for; not any of the forty classes called after
+                // vaults or saves, none of which hold it. It keeps CurrentSaveSlot as the name of
+                // the file on disk -- "Vault1" -- which is exactly the key this needed.
+                Type type = GameType("PersistenceManager");
+                if (type == null) type = GameType("SaveManager");
                 if (type == null) return null;
 
                 const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
@@ -5966,7 +5980,10 @@ namespace VaultAdmin
             if (value == null) return null;
 
             string said = value.ToString().Trim();
-            return said.Length == 0 || said == "-1" ? null : said;
+
+            // "None" is the game saying it has no answer, and it said it for m_cachedSaveSlot
+            // right beside the one that did.
+            return said.Length == 0 || said == "-1" || said == "None" ? null : said;
         }
 
         /// <summary>What was written for one vault in a "name=value;name=value" line.</summary>
