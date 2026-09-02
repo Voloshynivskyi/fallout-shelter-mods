@@ -687,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.2";
+        public const string PluginVersion = "1.0.3";
 
         internal static ManualLogSource Log;
 
@@ -1074,6 +1074,49 @@ namespace VaultAdmin
         /// dwellers, and the whole of that hierarchy is written down once, so a miss is one line to
         /// correct rather than another round of guesses.
         /// </summary>
+        /// <summary>
+        /// Moves the button under the dwellers list once that button exists.
+        ///
+        /// The HUD is not finished when the mod first looks at it: both of the game's dwellers
+        /// buttons report themselves switched off, and the search honestly falls back to the corner
+        /// beside the camera. It becomes switched on later, and by then nothing was looking any
+        /// more -- the button is made once and the search never ran again. So it keeps looking, on
+        /// a slow beat, until it either finds the anchor or has waited long enough to stop.
+        /// </summary>
+        private void MoveToTheListWhenItAppears()
+        {
+            if (_buttonSettled) return;
+            if (++_lookedForList < 120) return;
+
+            _lookedForList = 0;
+
+            // A minute of looking is long enough. If the dwellers button has not appeared by then
+            // it is not going to, and checking for ever is a cost with no answer at the end of it.
+            if (++_lookedTimes > 30) { _buttonSettled = true; return; }
+
+            Transform list = FindDwellerListButton();
+            if (list == null) return;
+
+            try
+            {
+                _hudButton.transform.SetParent(list.parent, false);
+                _hudButton.transform.localPosition =
+                    list.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f);
+
+                _buttonSettled = true;
+                Log.LogInfo("Moved the panel button under '" + PathOf(list) + "'.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("buttonmove", "Could not move the panel button: " + e.Message);
+                _buttonSettled = true;
+            }
+        }
+
+        private bool _buttonSettled;
+        private int _lookedForList;
+        private int _lookedTimes;
+
         private Transform FindDwellerListButton()
         {
             try
@@ -1222,7 +1265,11 @@ namespace VaultAdmin
 
             // Cheap enough to run every frame: once the button exists this is one null check, and
             // while it does not the button should appear the moment the interface can hold it.
-            if (_hudButton != null) return;
+            if (_hudButton != null)
+            {
+                MoveToTheListWhenItAppears();
+                return;
+            }
 
             try
             {
@@ -1245,6 +1292,7 @@ namespace VaultAdmin
 
                 Transform found = FindDwellerListButton();
                 bool underTheList = found != null;
+                _buttonSettled = underTheList;
 
                 if (found == null) found = parent.Find(CameraButtonName);
 
@@ -4088,7 +4136,18 @@ namespace VaultAdmin
             string sprite = ReadMember(pet.Template, "Sprite");
             string head = ReadMember(pet.Template, "HeadSprite");
 
-            string chosen = BestSprite(atlas, head);
+            string chosen = null;
+
+            // The whole animal where there is room for one. The atlas carries a full body beside
+            // every head -- Abyssinian_FullBody next to Abyssinian_Head -- and a row in a list has
+            // room for a head while a bench has room for a cat.
+            if (_wantWholeAnimal)
+            {
+                chosen = BestSprite(atlas, Whole(head));
+                if (string.IsNullOrEmpty(chosen)) chosen = BestSprite(atlas, Whole(sprite));
+            }
+
+            if (string.IsNullOrEmpty(chosen)) chosen = BestSprite(atlas, head);
             if (string.IsNullOrEmpty(chosen)) chosen = BestSprite(atlas, sprite);
 
             if (chosen == null)
@@ -4137,8 +4196,20 @@ namespace VaultAdmin
             icon.atlas = atlas;
             icon.spriteName = chosen;
             icon.type = UIBasicSprite.Type.Simple;
-            FitSprite(icon, IconBox);
+            FitSprite(icon, _wantWholeAnimal ? _wholeAnimalBox : IconBox);
         }
+
+        /// <summary>The full-body name that stands beside a head in the atlas.</summary>
+        private static string Whole(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+
+            int at = name.IndexOf("_Head", StringComparison.OrdinalIgnoreCase);
+            return at < 0 ? name + "_FullBody" : name.Substring(0, at) + "_FullBody";
+        }
+
+        private bool _wantWholeAnimal;
+        private int _wholeAnimalBox = 96;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6126,38 +6197,68 @@ namespace VaultAdmin
         {
             AddHeader(parent, "PET", width);
 
-            // Taller than a plain row: it carries a picture of the animal, and a picture wants
-            // more than the height of a line of text.
-            const int pickHeight = 78;
+            // The same shape as the dweller's bench: the animal in a box down the left, and the
+            // two things you choose about it in rows beside it. Choosing a pet by a photograph of
+            // its head was choosing a pet by its passport.
+            const int pad = 8;
+            const int petBlock = 132;
 
-            int pickY = _cursorY - pickHeight / 2;
-            Plate(parent, "PetPick", 0, pickY, width, pickHeight, Skin.Row(width, pickHeight), 1);
+            int blockY = _cursorY - petBlock / 2;
+
+            int wellWidth = 116;
+            int wellHeight = petBlock - pad * 2;
+
+            Plate(parent, "PetBlock", 0, blockY, width, petBlock, Skin.Row(width, petBlock), 1);
+
+            int wellX = -width / 2 + pad + wellWidth / 2;
+            Plate(parent, "PetWell", wellX, blockY, wellWidth, wellHeight,
+                  Skin.Well(wellWidth, wellHeight), 2);
 
             GameObject iconGo = new GameObject("PetPickIcon");
             iconGo.layer = parent.gameObject.layer;
             iconGo.transform.SetParent(parent, false);
-            iconGo.transform.localPosition = new Vector3(-width / 2 + 78, pickY, 0f);
+            iconGo.transform.localPosition = new Vector3(wellX, blockY, 0f);
             iconGo.transform.localScale = Vector3.one;
-            _petPickIcon = iconGo.AddComponent<UISprite>();
-            _petPickIcon.width = 34;
-            _petPickIcon.height = 34;
-            _petPickIcon.depth = 3;
 
-            MakeButton(parent, "PetBack", "<", -width / 2 + 28, pickY, 40, 32, false,
-                       delegate { StepPet(-1); });
-            MakeButton(parent, "PetFwd", ">", -width / 2 + 128, pickY, 40, 32, false,
-                       delegate { StepPet(1); });
+            _petPickIcon = iconGo.AddComponent<UISprite>();
+            _petPickIcon.depth = 3;
 
             // Named before the row is made: AddChoiceRow writes the caption into a label there and
             // then, and an empty caption stays empty. It is a rarity, the same word a dweller uses.
             _petGrade.Caption = "RARITY";
 
-            _petPickLabel = MakeLeftLabel(parent, "PetPickName", "-",
-                                          -width / 2 + 154, pickY, width - 164, RowHeight,
-                                          Skin.Bright, 3);
-            _cursorY -= RowHeight + RowGap;
+            int columnLeft = -width / 2 + pad + wellWidth + pad;
+            int columnWidth = width - wellWidth - pad * 3;
+            int columnCentre = columnLeft + columnWidth / 2;
 
-            AddChoiceRow(parent, width, _petGrade);
+            int rowHeight = (wellHeight - RowGap) / 2;
+            int upper = blockY + wellHeight / 2 - rowHeight / 2;
+
+            Plate(parent, "PetBreedRow", columnCentre, upper, columnWidth, rowHeight,
+                  Skin.Row(columnWidth, rowHeight), 2);
+
+            int arrow = 26;
+
+            MakeButton(parent, "PetBack", "<", columnLeft + pad + arrow / 2, upper - 10,
+                       arrow, arrow - 2, false, delegate { StepPet(-1); });
+            MakeButton(parent, "PetFwd", ">", columnLeft + columnWidth - pad - arrow / 2, upper - 10,
+                       arrow, arrow - 2, false, delegate { StepPet(1); });
+
+            UILabel breed = MakeLeftLabel(parent, "PetBreedCaption", "BREED",
+                                          columnLeft + 12, upper + rowHeight / 2 - 13,
+                                          columnWidth - 24, 16, Skin.Bright, 3);
+            breed.fontSize = TextBody;
+            breed.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.8f);
+
+            _petPickLabel = MakeLabel(parent, "PetPickName", "-", columnCentre, upper - 10,
+                                      columnWidth - 2 * (arrow + 20), 22, Skin.Bright, 3);
+            _petPickLabel.maxLineCount = 1;
+
+            _cursorY = blockY - petBlock / 2 + rowHeight + RowGap;
+            AddCompactChoice(parent, _petGrade, columnCentre,
+                             blockY - wellHeight / 2 + rowHeight / 2, columnWidth, rowHeight, false);
+
+            _cursorY = blockY - petBlock / 2 - RowGap;
 
             AddHeader(parent, "NAME AND BONUS", width);
 
@@ -6302,7 +6403,10 @@ namespace VaultAdmin
             if (_petPickLabel != null)
                 _petPickLabel.text = group.Name + "   " + (_petIndex + 1) + "/" + _petGroups.Count;
 
-            ShowPetIcon(_petPickIcon, group.Best);
+            _wantWholeAnimal = true;
+            try { ShowPetIcon(_petPickIcon, group.Best); }
+            finally { _wantWholeAnimal = false; }
+
             RefillGrades();
         }
 
@@ -8022,7 +8126,11 @@ namespace VaultAdmin
             // The line sits lower and the die rides higher in what is left, so the lower half
             // is the die rather than the die and a gap under it.
             int lineY = pictureY - PreviewHeight / 2 - pad - 4;
-            int dieY = lineY - 2 - pad + 16 - dieRoom / 2;
+            // Centred in what is left below the line, rather than placed by an offset somebody
+            // adjusted until it looked about right. Half of a remainder is exactly the middle; a
+            // number chosen by eye is exactly the middle only by accident.
+            int wellFloor = middle - wellHeight / 2;
+            int dieY = (lineY - 1 + wellFloor) / 2;
 
             UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
                                       Skin.Solid(), 3);
