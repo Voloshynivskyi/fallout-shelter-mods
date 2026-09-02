@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.9";
+        public const string PluginVersion = "1.0.10";
 
         internal static ManualLogSource Log;
 
@@ -7654,10 +7654,15 @@ namespace VaultAdmin
                     object health = ReadObject(one, "Health");
                     if (health == null) continue;
 
+                    // Radiation first, and the ceiling read again afterwards. Radiation eats
+                    // into the maximum, so filling to the maximum while it is still there fills to
+                    // the reduced one -- and clearing it then raises the ceiling and leaves the
+                    // dweller short of it. That is the whole of why healing took two presses.
+                    WriteMember(health, "RadiationValue", 0f);
+
                     object most = ReadObject(health, "HealthMax");
                     if (most != null) WriteMember(health, "HealthValue", Convert.ToSingle(most));
 
-                    WriteMember(health, "RadiationValue", 0f);
                     mended++;
                 }
                 catch { }
