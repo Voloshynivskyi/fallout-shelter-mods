@@ -832,7 +832,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.4";
+        public const string PluginVersion = "1.4.5";
 
         internal static ManualLogSource Log;
 
@@ -1290,7 +1290,7 @@ namespace VaultAdmin
             if (++_lookedTimes > 30)
             {
                 _buttonSettled = true;
-                if (_hudButton != null) _hudButton.SetActive(_buttonSettled && !_panelOpen);
+                Fade(_hudButton, 1f);
                 return;
             }
 
@@ -1307,7 +1307,7 @@ namespace VaultAdmin
                 _hudButton.transform.localPosition = Underneath(list, _hudButton.transform);
 
                 _buttonSettled = true;
-                if (_hudButton != null) _hudButton.SetActive(!_panelOpen);
+                Fade(_hudButton, 1f);
 
                 Log.LogInfo("Moved the panel button under '" + PathOf(list) + "'.");
             }
@@ -1348,6 +1348,21 @@ namespace VaultAdmin
                         "; placing at " + place + ".");
 
             return place;
+        }
+
+        /// <summary>Makes a button see-through, or solid again, without switching it off.</summary>
+        private static void Fade(GameObject go, float alpha)
+        {
+            if (go == null) return;
+
+            try
+            {
+                UIWidget[] parts = go.GetComponentsInChildren<UIWidget>(true);
+
+                for (int i = 0; i < parts.Length; i++)
+                    if (parts[i] != null) parts[i].alpha = alpha;
+            }
+            catch { }
         }
 
         private bool _buttonSettled;
@@ -1709,12 +1724,13 @@ namespace VaultAdmin
                 StyleButton(clone);
                 _hudButton = clone;
 
-                // Out of sight until it is where it goes. The first placement is a guess made
-                // before the dwellers button has appeared, and the real one arrives a second or
-                // two later -- so the button was being watched sliding across the screen from the
-                // bottom left. A thing that has not found its place is better not shown than shown
-                // in the wrong one.
-                if (!_buttonSettled) clone.SetActive(false);
+                // Out of sight until it is where it goes -- but still switched on.
+                //
+                // Switching it off was wrong, and it moved the button for good: the placement
+                // measures this very widget, and NGUI does not measure what is switched off, so
+                // the offset was worked out from an empty box. Alpha hides it from the eye without
+                // hiding it from the arithmetic.
+                if (!_buttonSettled) Fade(clone, 0f);
 
                 // The clone was reported placed and could not be seen, so both are described here
                 // rather than guessed at again.
