@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.10.1";
+        public const string PluginVersion = "1.11.0";
 
         internal static ManualLogSource Log;
 
@@ -6331,10 +6331,11 @@ namespace VaultAdmin
                 // Six ranks, filled from the top. A dweller is worth most where something is
                 // produced and worth nothing at all in a lift, and everything between those is an
                 // order somebody has to decide -- so it is written down here rather than inferred.
-                List<Room>[] ranks = new List<Room>[6];
+                List<Room>[] ranks = new List<Room>[7];
                 for (int i = 0; i < ranks.Length; i++) ranks[i] = new List<Room>();
 
                 Room[] all = Resources.FindObjectsOfTypeAll<Room>();
+                System.Text.StringBuilder skipped = new System.Text.StringBuilder();
 
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -6344,7 +6345,21 @@ namespace VaultAdmin
                     if (RoomPlaces(room) <= 0) continue;
 
                     int rank = RankOf(room);
+
                     if (rank > 0) ranks[rank - 1].Add(room);
+                    else if (skipped.Length < 400) skipped.Append(" ").Append(TypeOf(room));
+                }
+
+                // What was left out, said once. The clinic and the laboratory were being skipped
+                // in silence -- they are production rooms by any sensible reading and the game
+                // does not file them under Production, so they fell through every test and nobody
+                // was told. A list of what a rule rejected is how a wrong rule is found.
+                if (!_reportedSkipped)
+                {
+                    _reportedSkipped = true;
+                    Log.LogInfo(skipped.Length == 0
+                        ? "Every room with a stat was ranked."
+                        : "Not staffed at all:" + skipped);
                 }
 
                 List<Room> works = ranks[0];
@@ -6388,7 +6403,7 @@ namespace VaultAdmin
                 {
                     // The gyms take the lowest scorers; everywhere else takes the best. Training
                     // raises the stat it teaches, so a dweller already at ten learns nothing there.
-                    bool best = i != 1;
+                    bool best = i != 2;
                     posted += Staff(ranks[i], pool, assign, manager, best);
                 }
 
@@ -6396,10 +6411,10 @@ namespace VaultAdmin
                 // offered its places and none of them wanted these, so nothing is gained by
                 // pushing them into a room that has no use for them.
                 Say("Posted " + posted + " across " + rooms + " room(s) — " + ranks[0].Count +
-                    " producing, " + ranks[1].Count + " training, " + ranks[2].Count +
-                    " crafting, " + ranks[3].Count + " door, " + ranks[4].Count + " quarters, " +
-                    ranks[5].Count + " last. " + pool.Count + " are on a coffee break; " +
-                    turnedAway + " were never eligible.");
+                    " producing, " + ranks[1].Count + " medical, " + ranks[2].Count +
+                    " training, " + ranks[3].Count + " crafting, " + ranks[4].Count + " door, " +
+                    ranks[5].Count + " quarters, " + ranks[6].Count + " last. " + pool.Count +
+                    " are on a coffee break; " + turnedAway + " were never eligible.");
             }
             catch (Exception e)
             {
@@ -6440,6 +6455,7 @@ namespace VaultAdmin
         }
 
         private static bool _reportedRooms;
+        private static bool _reportedSkipped;
 
         /// <summary>
         /// Whether the game will let this dweller be given a post at all.
@@ -6782,18 +6798,21 @@ namespace VaultAdmin
         {
             string kind = TypeOf(room);
 
-            if (kind == "Entrance") return 4;
-            if (kind == "LivingQuarters") return 5;
+            if (kind == "Entrance") return 5;
+            if (kind == "LivingQuarters") return 6;
 
             if (kind == "BarberShop" || kind == "Overseer" || kind == "OverseerOffice" ||
                 kind.IndexOf("storage", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                kind.IndexOf("observ", StringComparison.OrdinalIgnoreCase) >= 0) return 6;
+                kind.IndexOf("observ", StringComparison.OrdinalIgnoreCase) >= 0) return 7;
 
-            if (Teaches(room)) return 2;
-            if (Crafts(room)) return 3;
+            if (Heals(room)) return 2;
+            if (Teaches(room)) return 3;
+            if (Crafts(room)) return 4;
             if (Produces(room)) return 1;
 
-            return 0;
+            // Anything left that makes something is production the game files elsewhere. Better a
+            // room staffed in the wrong rank than a room the vault built and nobody works in.
+            return Makes(room) ? 2 : 0;
         }
 
         /// <summary>The game's own name for what kind of room this is.</summary>
@@ -6801,6 +6820,43 @@ namespace VaultAdmin
         {
             object kind = ReadObject(room, "RoomType");
             return kind == null ? "" : kind.ToString();
+        }
+
+        /// <summary>
+        /// Whether this room makes medicine.
+        ///
+        /// The clinic and the laboratory produce stimpaks and RadAway, which is production by any
+        /// sensible reading -- and the game does not file them under Production, so they fell
+        /// through every test and nobody was staffed in either. They rank just under the rooms
+        /// that make food, water and power, because a vault runs out of those first.
+        /// </summary>
+        private static bool Heals(Room room)
+        {
+            string kind = TypeOf(room);
+
+            if (kind == "MedBay" || kind == "ScienceLab") return true;
+
+            object grouping = ReadObject(room, "RoomClass");
+            if (grouping == null) return false;
+
+            string what = grouping.ToString();
+
+            return what.IndexOf("medic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   what.IndexOf("science", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   what.IndexOf("health", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>Whether anything at all comes out of this room.</summary>
+        private static bool Makes(Room room)
+        {
+            object made = ReadObject(room, "ProducedResource");
+            if (made == null) made = ReadObject(room, "m_producedResource");
+            if (made == null) made = ReadObject(room, "ResourcesProduced");
+
+            if (made == null) return false;
+
+            string what = made.ToString();
+            return what != "None" && what != "0" && what.Length > 0;
         }
 
         /// <summary>Whether this room builds things to order.</summary>
