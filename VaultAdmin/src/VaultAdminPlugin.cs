@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.2";
+        public const string PluginVersion = "1.3.3";
 
         internal static ManualLogSource Log;
 
@@ -8828,6 +8828,17 @@ namespace VaultAdmin
                     if (kind.IndexOf("LivingQuarter", StringComparison.OrdinalIgnoreCase) < 0)
                         continue;
 
+                    // What one of them is made of, once. How many a living quarters sleeps is not
+                    // how many work in it -- six can work in one and it houses a number that grows
+                    // with its size and its level -- so the first number that answers to a likely
+                    // name is not good enough. The game shows this figure on the room itself, so
+                    // it has it; this is asking where.
+                    if (!_saidWhatQuartersHold)
+                    {
+                        _saidWhatQuartersHold = true;
+                        SayWhatQuartersHold(room);
+                    }
+
                     for (int n = 0; n < names.Length; n++)
                     {
                         object many = ReadObject(room, names[n]);
@@ -8865,6 +8876,100 @@ namespace VaultAdmin
                 return -1;
             }
         }
+
+        /// <summary>
+        /// Writes down every number a living quarters carries, and every number its settings and
+        /// its level data carry, once.
+        ///
+        /// The figure wanted is the one the game paints on the room: how many it sleeps, which
+        /// grows with the room's size and with its level. That is not the number of places to work
+        /// in it, and it is not something to be guessed from a member name -- MaxDwellerCount
+        /// might be either. One line with all the numbers in it, matched against what the room
+        /// says on screen, ends the question. It has ended every other one in this project.
+        /// </summary>
+        private void SayWhatQuartersHold(Room room)
+        {
+            try
+            {
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+
+                said.Append("A living quarters (level ").Append(LevelOf(room)).Append("):");
+                Numbers(said, room, "room");
+
+                object kind = ReadObject(room, "RoomType");
+                object settings = kind == null ? null : RoomSettings(kind);
+
+                if (settings != null)
+                {
+                    Numbers(said, settings, "settings");
+
+                    // Per level, where a figure that grows with the level would have to live.
+                    object levels = ReadObject(settings, "m_roomLevels");
+                    if (levels == null) levels = ReadObject(settings, "RoomLevels");
+
+                    Array table = levels as Array;
+
+                    if (table != null)
+                    {
+                        said.Append("  ||  ").Append(table.Length).Append(" level(s)");
+
+                        for (int i = 0; i < table.Length && i < 3; i++)
+                            Numbers(said, table.GetValue(i), "level" + i);
+                    }
+                }
+
+                Log.LogWarning(said.ToString());
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not look inside a living quarters: " + e.Message);
+            }
+        }
+
+        /// <summary>Appends every whole number an object carries, named.</summary>
+        private static void Numbers(System.Text.StringBuilder said, object thing, string whose)
+        {
+            if (thing == null) return;
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            said.Append("  ||  ").Append(whose).Append(":");
+
+            for (Type type = thing.GetType(); type != null; type = type.BaseType)
+            {
+                FieldInfo[] fields;
+                try { fields = type.GetFields(Flags); }
+                catch { continue; }
+
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (fields[i].FieldType != typeof(int) &&
+                        fields[i].FieldType != typeof(float)) continue;
+
+                    try
+                    {
+                        object held = fields[i].GetValue(thing);
+                        if (held == null) continue;
+
+                        said.Append(" ").Append(fields[i].Name).Append("=").Append(held);
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>What level a room is on, for the line above.</summary>
+        private static string LevelOf(Room room)
+        {
+            object at = ReadObject(room, "CurrentLevel");
+            if (at == null) at = ReadObject(room, "m_currentLevel");
+            if (at == null) at = ReadObject(room, "Level");
+
+            return at == null ? "?" : at.ToString();
+        }
+
+        private static bool _saidWhatQuartersHold;
 
         /// <summary>Hands the limit back to the living quarters.</summary>
         private void ResetPopulation()
