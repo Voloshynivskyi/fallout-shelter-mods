@@ -35,7 +35,7 @@ REQUIRED = [
     ("VaultAdmin_Preview", "the camera that films the figure on the bench"),
     ("the dressing table left in storage", "the guard that stops the bench minting items"),
     ("Something else reached storage", "the refusal that protects the player's own items"),
-    ("Storage held ", "the measurement of where a returned item actually lands"),
+    ("Storage holds ", "the measurement of where a returned item actually lands"),
     ("THIS CANNOT BE UNDONE", "the confirmation on the powers that cannot be taken back"),
     ("ApplyCustomization", "the dweller's looks"),
     ("m_dwellerCustomizationData", "the appearance catalogue"),
