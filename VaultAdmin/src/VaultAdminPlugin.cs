@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.5";
+        public const string PluginVersion = "1.0.6";
 
         internal static ManualLogSource Log;
 
@@ -1009,7 +1009,10 @@ namespace VaultAdmin
             _petBonusIndex = at >= 0 ? at : Mathf.Clamp(_petBonusIndex, 0, _bonusChoices.Length - 1);
             _bonusChosen = _bonusChoices[_petBonusIndex];
 
+            // Not ShowBonus: that asks for the list, and the list is what is being built.
             if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
+            if (_bonusTally != null)
+                _bonusTally.text = (_petBonusIndex + 1) + "/" + _bonusChoices.Length;
 
             return _bonusChoices;
         }
@@ -3929,7 +3932,7 @@ namespace VaultAdmin
             _petBonusIndex = (_petBonusIndex + by + all.Length) % all.Length;
             _bonusChosen = all[_petBonusIndex];
 
-            if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
+            ShowBonus();
         }
 
         /// <summary>The bonus, and where it stands in the list -- as every other picker says it.</summary>
@@ -3949,7 +3952,23 @@ namespace VaultAdmin
 
             if (string.IsNullOrEmpty(amount)) amount = "10";
 
-            return BonusText(all[at], amount).ToUpper() + "   " + (at + 1) + "/" + all.Length;
+            return BonusText(all[at], amount).ToUpper();
+        }
+
+        /// <summary>Where the chosen bonus stands in the list, for the row the arrows are on.</summary>
+        private string BonusTally()
+        {
+            EBonusEffect[] all = Bonuses();
+            if (all.Length == 0) return "-";
+
+            return (Mathf.Clamp(_petBonusIndex, 0, all.Length - 1) + 1) + "/" + all.Length;
+        }
+
+        /// <summary>Puts the chosen bonus on both of its labels.</summary>
+        private void ShowBonus()
+        {
+            if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
+            if (_bonusTally != null) _bonusTally.text = BonusTally();
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -4385,6 +4404,7 @@ namespace VaultAdmin
         private readonly Dictionary<string, string> _bonusWords = new Dictionary<string, string>();
         private EBonusEffect _bonusChosen;
         private string _shownBonusValue;
+        private UILabel _bonusTally;
 
         /// <summary>
         /// A number with as many places as it takes to not be zero.
@@ -7993,29 +8013,42 @@ namespace VaultAdmin
             _petNameInput = AddInput(parent, "PetName", 34, nameY, width - 150, "RANDOM");
             _cursorY -= RowHeight + RowGap;
 
-            int bonusY = _cursorY - RowHeight / 2;
-            Plate(parent, "PetBonusRow", 0, bonusY, width, RowHeight, Skin.Row(width, RowHeight), 1);
-            MakeButton(parent, "PetBonusBack", "<", -width / 2 + 28, bonusY, 40, 32, false,
-                       delegate { StepBonus(-1); });
-            MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, bonusY, 40, 32, false,
-                       delegate { StepBonus(1); });
-            // Stops where the field starts. It had been given the width of everything to its
-            // right, the field included, so the longer bonus names ran under the number.
-            int bonusLeft = -width / 2 + 98;
-            int bonusRight = width / 2 - 142;
+            // Two rows to one bonus. The game writes a bonus as a whole sentence -- "increases
+            // the dweller's health by 12%" -- and a sentence does not share a line with a pair of
+            // arrows, a number field and a MAX button. Squeezed onto one row it ran under all
+            // three. The controls keep the upper row; the wording gets the lower one to itself.
+            int bonusHeight = RowHeight + 34;
+            int bonusY = _cursorY - bonusHeight / 2;
+            Plate(parent, "PetBonusRow", 0, bonusY, width, bonusHeight,
+                  Skin.Row(width, bonusHeight), 1);
 
-            _bonusLabel = MakeLeftLabel(parent, "PetBonusName", BonusCaption(),
-                                        bonusLeft, bonusY, bonusRight - bonusLeft,
-                                        RowHeight, Skin.Bright, 3);
-            _bonusLabel.maxLineCount = 1;
-            _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, bonusY, 76, "10");
+            int controlsY = bonusY + bonusHeight / 2 - RowHeight / 2;
+            int wordingY = bonusY - bonusHeight / 2 + 19;
+
+            MakeButton(parent, "PetBonusBack", "<", -width / 2 + 28, controlsY, 40, 32, false,
+                       delegate { StepBonus(-1); });
+            MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, controlsY, 40, 32, false,
+                       delegate { StepBonus(1); });
+
+            _bonusTally = MakeLeftLabel(parent, "PetBonusTally", BonusTally(),
+                                        -width / 2 + 104, controlsY, 110, RowHeight,
+                                        Skin.Bright, 3);
+            _bonusTally.maxLineCount = 1;
+
+            _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, controlsY, 76, "10");
 
             // The strongest the game itself ever gives for this effect. A pet's bonus is one number
             // and it can be any number, but the highest the game uses is the one worth knowing.
-            MakeButton(parent, "PetValueMax", "MAX", width / 2 - 32, bonusY, 52, 32, false,
+            MakeButton(parent, "PetValueMax", "MAX", width / 2 - 32, controlsY, 52, 32, false,
                        MaxOutPetBonus);
 
-            _cursorY -= RowHeight + RowGap;
+            // The whole width, and a second line when the sentence needs one.
+            _bonusLabel = MakeLeftLabel(parent, "PetBonusName", BonusCaption(),
+                                        -width / 2 + 16, wordingY, width - 32, 34,
+                                        Skin.Bright, 3);
+            _bonusLabel.maxLineCount = 2;
+
+            _cursorY -= bonusHeight + RowGap;
 
             // The same mark as the dweller bench, in the animal's shape: the game keeps a matching
             // pair of blanks, and a blank is the right picture for a button that fills one in.
@@ -11096,7 +11129,7 @@ namespace VaultAdmin
                         _petValueInput.value != _shownBonusValue)
                     {
                         _shownBonusValue = _petValueInput.value;
-                        _bonusLabel.text = BonusCaption();
+                        ShowBonus();
                     }
 
                     if (_filterInput != null)
