@@ -41,10 +41,11 @@ namespace VaultAdmin
         public static readonly Color Card = new Color32(0x08, 0x51, 0x08, 0x5A);    // a row on it
         public static readonly Color Hole = new Color32(0x08, 0x51, 0x08, 0xE6);    // a recess
 
-        // Between the two: the plate you press. A row is the surface things sit on, so drawing a
-        // button as one leaves nothing to say it answers a press -- the die on it did all the
-        // work of looking pressable. The same green again, half a step deeper than a row.
-        public static readonly Color Press = new Color32(0x08, 0x51, 0x08, 0x96);
+        // The plate you press. A deeper weight of the dark green was the wrong direction
+        // entirely: the well the figure stands in is dark green too, so a darker plate on a dark
+        // recess is one shape reading as another. This is the bright green at a low weight -- a
+        // lit surface on an unlit one, which is what a button on a panel actually looks like.
+        public static readonly Color Press = new Color32(0x14, 0xFF, 0x17, 0x1F);
 
         // Border weights, so every edge in the panel is one of three thicknesses rather than
         // whatever each piece of code felt like.
@@ -831,7 +832,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.3";
+        public const string PluginVersion = "1.4.4";
 
         internal static ManualLogSource Log;
 
@@ -1284,7 +1285,14 @@ namespace VaultAdmin
 
             // A minute of looking is long enough. If the dwellers button has not appeared by then
             // it is not going to, and checking for ever is a cost with no answer at the end of it.
-            if (++_lookedTimes > 30) { _buttonSettled = true; return; }
+            // A minute of looking is long enough, and then it is shown wherever it landed: a
+            // button in the wrong corner is still a button, and an invisible one is not.
+            if (++_lookedTimes > 30)
+            {
+                _buttonSettled = true;
+                if (_hudButton != null) _hudButton.SetActive(_buttonSettled && !_panelOpen);
+                return;
+            }
 
             Transform list = FindDwellerListButton();
             if (list == null) return;
@@ -1299,6 +1307,8 @@ namespace VaultAdmin
                 _hudButton.transform.localPosition = Underneath(list, _hudButton.transform);
 
                 _buttonSettled = true;
+                if (_hudButton != null) _hudButton.SetActive(!_panelOpen);
+
                 Log.LogInfo("Moved the panel button under '" + PathOf(list) + "'.");
             }
             catch (Exception e)
@@ -1698,6 +1708,13 @@ namespace VaultAdmin
 
                 StyleButton(clone);
                 _hudButton = clone;
+
+                // Out of sight until it is where it goes. The first placement is a guess made
+                // before the dwellers button has appeared, and the real one arrives a second or
+                // two later -- so the button was being watched sliding across the screen from the
+                // bottom left. A thing that has not found its place is better not shown than shown
+                // in the wrong one.
+                if (!_buttonSettled) clone.SetActive(false);
 
                 // The clone was reported placed and could not be seen, so both are described here
                 // rather than guessed at again.
@@ -2553,8 +2570,10 @@ namespace VaultAdmin
                 // Where the panel answers. Outside the scrolling, so it is in the same place
                 // whatever page is open and wherever that page has been scrolled to; three lines
                 // at reading size, because the answers worth giving do not fit on one.
+                // The same lit surface as the roll plate. The band is not a row of the page --
+                // it is the panel speaking -- and it should not be drawn as one.
                 Plate(_nguiWindow.transform, "Answer", 0, -_windowHeight / 2 + 74,
-                      _windowWidth - 28, 50, Skin.Row(_windowWidth - 28, 50), 1);
+                      _windowWidth - 28, 50, Skin.Roll(_windowWidth - 28, 50), 1);
 
                 // A mark on the left, so the band is recognisable as the panel speaking before
                 // anything in it has been read.
@@ -4652,12 +4671,16 @@ namespace VaultAdmin
                 try { empty = atlas.spriteList == null || atlas.spriteList.Count == 0; }
                 catch { }
 
-                if (empty)
-                {
-                    RequestPetType(pet.PetType);
-                    _petArtPending = true;
-                    return;
-                }
+                // Asked for again either way. An atlas can hold some of a breed's pictures and
+                // not yet the one wanted -- the bench asks for the whole animal, and the whole
+                // animal arrives after the head -- so "not empty" was being read as "this is
+                // everything there will ever be", and the icon on the bench stayed blank until
+                // the list was paged by hand. The wait has an end on it, so asking again costs
+                // nothing but a second look.
+                RequestPetType(pet.PetType);
+                _petArtPending = true;
+
+                if (empty) return;
 
                 SuggestSprites(atlas, string.IsNullOrEmpty(sprite) ? pet.Name : sprite);
                 ReportOnce("petsprite_" + pet.PetId,
