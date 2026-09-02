@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.4";
+        public const string PluginVersion = "1.2.0";
 
         internal static ManualLogSource Log;
 
@@ -5901,9 +5901,15 @@ namespace VaultAdmin
                     else works.Add(room);
                 }
 
+                if (!_reportedRooms)
+                {
+                    _reportedRooms = true;
+                    SayWhatTheRoomsAre(works, teaches, pool.Count);
+                }
+
                 if (works.Count == 0 && teaches.Count == 0)
                 {
-                    Trouble("No room in this vault runs on a stat.");
+                    Trouble("No room in this vault runs on a stat; the log says what was seen.");
                     return;
                 }
 
@@ -5922,6 +5928,40 @@ namespace VaultAdmin
             }
         }
 
+        /// <summary>
+        /// Writes down what this pass believes about the vault, once.
+        ///
+        /// Three numbers are read off every room by reflection, and if any of them is read wrongly
+        /// the pass will do something confident and wrong -- fill a full room, skip an empty one,
+        /// call a gym a factory. Saying them out loud costs one line and turns a wrong answer into
+        /// an obvious one.
+        /// </summary>
+        private static void SayWhatTheRoomsAre(List<Room> works, List<Room> teaches, int pool)
+        {
+            try
+            {
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+
+                said.Append("Staffing: ").Append(pool).Append(" available, ")
+                    .Append(works.Count).Append(" working room(s), ")
+                    .Append(teaches.Count).Append(" training room(s).");
+
+                for (int i = 0; i < works.Count && i < 6; i++) said.Append(Describe(works[i], "works"));
+                for (int i = 0; i < teaches.Count && i < 4; i++) said.Append(Describe(teaches[i], "teaches"));
+
+                Log.LogInfo(said.ToString());
+            }
+            catch { }
+        }
+
+        private static string Describe(Room room, string kind)
+        {
+            return "  |  " + room.name + " " + kind + " " + RoomStat(room) +
+                   ", " + Occupants(room) + " of " + RoomPlaces(room);
+        }
+
+        private static bool _reportedRooms;
+
         /// <summary>Fills a set of rooms from the pool, taking the highest scorers or the lowest.</summary>
         private int Staff(List<Room> rooms, List<Dweller> pool, MethodInfo assign,
                           DwellerManager manager, bool best)
@@ -5934,7 +5974,11 @@ namespace VaultAdmin
                 Room room = rooms[i];
 
                 ESpecialStat stat = (ESpecialStat)RoomStat(room);
-                int places = RoomPlaces(room);
+
+                // What is free, not what exists. Filling a room to its capacity when half of it is
+                // already occupied is asking the game to put six people in four chairs, and the
+                // answer to that is either a refusal or a mess.
+                int places = RoomPlaces(room) - Occupants(room);
 
                 pool.Sort(new ByStat(stat, best));
 
@@ -6049,6 +6093,41 @@ namespace VaultAdmin
             return stat;
         }
 
+        /// <summary>
+        /// How many people are already in a room.
+        ///
+        /// Asked of the room three ways, and answered nought when none of them will say -- which
+        /// makes the pass fill rooms it should have left alone rather than leaving rooms empty,
+        /// and of those two the first is the one a player can undo by hand.
+        /// </summary>
+        private static int Occupants(Room room)
+        {
+            // DwellersInRoom first: the game has a property by exactly that name, which the log
+            // said when it listed what a Room offers.
+            string[] names = { "DwellersInRoom", "Dwellers", "m_dwellers", "AssignedDwellers",
+                               "m_assignedDwellers" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                object held = ReadObject(room, names[i]);
+                if (held == null) continue;
+
+                try
+                {
+                    // The non-generic one: this file has System.Collections.Generic in scope, so
+                    // the bare name means the generic interface and will not compile without a
+                    // type argument nobody here knows.
+                    System.Collections.ICollection many = held as System.Collections.ICollection;
+                    if (many != null) return many.Count;
+
+                    return Convert.ToInt32(held);
+                }
+                catch { }
+            }
+
+            return 0;
+        }
+
         /// <summary>How many people a room has room for.</summary>
         private static int RoomPlaces(Room room)
         {
@@ -6080,30 +6159,91 @@ namespace VaultAdmin
         {
             if (_assigner != null) return _assigner;
 
-            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
-                                       BindingFlags.Instance;
+            // The names it is most likely to have, tried first. After that, anything on the three
+            // types whose name mentions assigning and whose arguments are a dweller, a room, or
+            // both -- because a method that takes exactly those and is called something with
+            // "assign" in it is the method, whatever else it is called.
+            // TryAssignDweller first, because that is what this build actually has -- the game
+            // was asked and it answered, and a list written from memory had every other name in
+            // it but that one. The rest stay as a hedge against a different build.
+            string[] likely = { "TryAssignDweller", "AssignDweller", "AssignDwellerToRoom",
+                                "AssignToRoom", "AddDweller", "AssignRoom" };
 
-            _assigner = typeof(Room).GetMethod("AssignDweller", Flags, null,
-                                               new[] { typeof(Dweller) }, null);
+            Type[] where = { typeof(Room), typeof(Dweller), typeof(DwellerManager) };
+
+            for (int n = 0; n < likely.Length && _assigner == null; n++)
+                for (int t = 0; t < where.Length && _assigner == null; t++)
+                    _assigner = ByShape(where[t], likely[n]);
 
             if (_assigner == null)
-                _assigner = typeof(Room).GetMethod("AddDweller", Flags, null,
-                                                   new[] { typeof(Dweller) }, null);
-
-            if (_assigner == null)
-                _assigner = typeof(DwellerManager).GetMethod("AssignDwellerToRoom", Flags, null,
-                                                             new[] { typeof(Dweller), typeof(Room) }, null);
+                for (int t = 0; t < where.Length && _assigner == null; t++)
+                    _assigner = ByShape(where[t], null);
 
             if (_assigner != null)
             {
-                Log.LogInfo("Assignments go through " + _assigner.DeclaringType.Name + "." +
-                            _assigner.Name + ".");
+                System.Text.StringBuilder how = new System.Text.StringBuilder();
+                how.Append("Assignments go through ").Append(_assigner.DeclaringType.Name)
+                   .Append(".").Append(_assigner.Name).Append("(");
+
+                ParameterInfo[] args = _assigner.GetParameters();
+                for (int i = 0; i < args.Length; i++)
+                    how.Append(i > 0 ? "," : "").Append(args[i].ParameterType.Name);
+
+                Log.LogInfo(how.Append(").").ToString());
                 return _assigner;
             }
 
             SayWhoCanAssign(typeof(Room));
             SayWhoCanAssign(typeof(Dweller));
             SayWhoCanAssign(typeof(DwellerManager));
+
+            return null;
+        }
+
+        /// <summary>
+        /// A method on this type that takes a dweller, a room, or both -- and, when a name is
+        /// given, is called that; when none is given, has "assign" somewhere in its name.
+        /// </summary>
+        private static MethodInfo ByShape(Type type, string named)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            try
+            {
+                MethodInfo[] all = type.GetMethods(Flags);
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    MethodInfo one = all[i];
+
+                    if (named == null)
+                    {
+                        if (one.Name.IndexOf("assign", StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+                    }
+                    else if (one.Name != named) continue;
+
+                    ParameterInfo[] args = one.GetParameters();
+                    if (args.Length < 1 || args.Length > 2) continue;
+
+                    bool takesDweller = false;
+                    bool takesRoom = false;
+
+                    for (int a = 0; a < args.Length; a++)
+                    {
+                        if (typeof(Dweller).IsAssignableFrom(args[a].ParameterType)) takesDweller = true;
+                        else if (typeof(Room).IsAssignableFrom(args[a].ParameterType)) takesRoom = true;
+                        else { takesDweller = false; takesRoom = false; break; }
+                    }
+
+                    // One argument is fine if the thing it is called on supplies the other half.
+                    if (args.Length == 2 && takesDweller && takesRoom) return one;
+                    if (args.Length == 1 && takesDweller && type != typeof(Dweller)) return one;
+                    if (args.Length == 1 && takesRoom && type == typeof(Dweller)) return one;
+                }
+            }
+            catch { }
 
             return null;
         }
