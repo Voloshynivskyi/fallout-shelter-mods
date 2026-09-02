@@ -323,3 +323,72 @@ original itself must be untouched.
 
 The two buttons may sit too close. `HudButtonOffsetX` in the config moves it; raise it and restart.
 Tell me the value that looks right and it becomes the default.
+
+---
+
+## The workshop and the overrides
+
+### 33. The bench shows what it will make
+
+- [ ] Open WORKSHOP. Set a hairstyle, a face, a hair colour and a skin you can recognise. Give the
+      dweller a name and a weapon. Press CREATE DWELLER.
+
+**Expect** the dweller waiting at the vault door to look like the figure that was standing on the
+bench, and to be carrying what was chosen. The log line beginning `Asked for` names both halves
+side by side; if they disagree, that line says where.
+
+### 34. The bench clears itself
+
+- [ ] After creating one, look at the bench without touching anything.
+
+**Expect** every field back to a value the bench would produce, and a new random figure in the box
+wearing the plain outfit with empty hands. It must never go on showing the person who has just left.
+
+### 35. The die
+
+- [ ] Press the die inside the figure's box, several times.
+
+**Expect** the four appearance rows to take new values and the figure to change with them, every
+time. The die turns and settles; the figure changes at the moment of the press, not at the end of
+the turn.
+
+### 36. Dressing does not mint weapons
+
+This is the one that matters. It is the fault a player found, and the guard against it deletes from
+the save.
+
+- [ ] Note how many of one weapon the vault holds. Set that weapon on the bench.
+- [ ] Change the gender ten times. Leave the tab and come back three times. Create one dweller.
+- [ ] Look at the vault's inventory again.
+
+**Expect** the same number of that weapon, plus the one on the dweller you created. The log may say
+`Took back N item(s) the dressing table left in storage`, which is the guard working. It must never
+say `Something else reached storage while the bench was dressing` — that means it declined to delete
+something, which is right, but the reason wants looking at.
+
+### 37. Staffing
+
+- [ ] Open OVERRIDES and press BEST DWELLER IN EVERY ROOM.
+
+**Expect** a line saying how many were posted across how many rooms. Then look at a production room
+and a training room: the production room should hold your highest scorers in its stat, and the
+training room your lowest.
+
+If nothing is posted, the log lists every method on `Room`, `Dweller` and `DwellerManager` that
+mentions assigning. That list is the answer; send it.
+
+### 38. The panel button
+
+- [ ] Look at the top-left of the vault HUD, under the game's own dwellers button.
+
+**Expect** the panel button there, and pressing it opens the panel. If it is beside the camera
+button instead, the search fell back; the log line beginning `Dwellers buttons in the vault HUD`
+names every candidate it considered, with whether each was switched on and clickable.
+
+### 39. The log after an ordinary session
+
+- [ ] Play for a few minutes with the panel open and closed a few times. Read `LogOutput.log`.
+
+**Expect** no atlas dumps, no lists of animation clips, and no line saying a plate is drawn at one
+size and shown at another. Those are diagnostics; in a shipped build they should have nothing to
+say.
