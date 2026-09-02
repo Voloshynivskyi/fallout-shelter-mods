@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.4";
+        public const string PluginVersion = "1.0.5";
 
         internal static ManualLogSource Log;
 
@@ -980,14 +980,36 @@ namespace VaultAdmin
                 ReportOnce("bonuslist", "Could not read which bonuses pets have: " + e);
             }
 
-            // Never leave the row with nothing to offer. If the templates could not be read, the
-            // whole enum is a worse list than this one but better than an empty one.
-            if (found.Count == 0) found.AddRange(AllBonusEffects);
-            else Log.LogInfo("Pets are built with " + found.Count + " of the " +
-                             AllBonusEffects.Length + " bonus kinds the game defines.");
+            // Never leave the row with nothing to offer -- but never keep the stand-in either.
+            //
+            // The pet templates are not readable the moment the panel first opens, so the first
+            // call fell back to the whole enum and cached it for the rest of the session. That
+            // fallback is where "ADD MAX ..." came from: raw enum names for effects no pet is ever
+            // built with. Worse, a later build read the real list, and a shorter list means a
+            // different bonus at the same index -- which is why the captions moved when the page
+            // was opened a second time.
+            //
+            // So the fallback answers this one call and is thrown away. Only a list actually read
+            // from the templates is worth remembering.
+            if (found.Count == 0)
+            {
+                EBonusEffect[] guess = new EBonusEffect[AllBonusEffects.Length];
+                AllBonusEffects.CopyTo(guess, 0);
+                return guess;
+            }
+
+            Log.LogInfo("Pets are built with " + found.Count + " of the " +
+                        AllBonusEffects.Length + " bonus kinds the game defines.");
 
             _bonusChoices = found.ToArray();
-            _petBonusIndex = Mathf.Clamp(_petBonusIndex, 0, _bonusChoices.Length - 1);
+
+            // The chosen bonus, not the chosen row. When the list changes underneath it, an index
+            // silently means something else; the effect itself still means what it meant.
+            int at = Array.IndexOf(_bonusChoices, _bonusChosen);
+            _petBonusIndex = at >= 0 ? at : Mathf.Clamp(_petBonusIndex, 0, _bonusChoices.Length - 1);
+            _bonusChosen = _bonusChoices[_petBonusIndex];
+
+            if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
 
             return _bonusChoices;
         }
@@ -3901,7 +3923,12 @@ namespace VaultAdmin
 
         private void StepBonus(int by)
         {
-            _petBonusIndex = (_petBonusIndex + by + Bonuses().Length) % Bonuses().Length;
+            EBonusEffect[] all = Bonuses();
+            if (all.Length == 0) return;
+
+            _petBonusIndex = (_petBonusIndex + by + all.Length) % all.Length;
+            _bonusChosen = all[_petBonusIndex];
+
             if (_bonusLabel != null) _bonusLabel.text = BonusCaption();
         }
 
@@ -3909,9 +3936,20 @@ namespace VaultAdmin
         private string BonusCaption()
         {
             EBonusEffect[] all = Bonuses();
+            if (all.Length == 0) return "-";
+
             int at = Mathf.Clamp(_petBonusIndex, 0, all.Length - 1);
 
-            return Tidy(all[at].ToString()).ToUpper() + "   " + (at + 1) + "/" + all.Length;
+            // The game's own sentence, not the enum's name. The wording exists already -- it is
+            // what the animal's own card says -- and ADD MAX is what the effect is called on the
+            // way to being turned into it.
+            string amount = _petValueInput != null && !string.IsNullOrEmpty(_petValueInput.value)
+                ? _petValueInput.value
+                : _petBonusValue;
+
+            if (string.IsNullOrEmpty(amount)) amount = "10";
+
+            return BonusText(all[at], amount).ToUpper() + "   " + (at + 1) + "/" + all.Length;
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -4170,6 +4208,8 @@ namespace VaultAdmin
         // and it is what the list needs to show one.
         private readonly Dictionary<string, UIAtlas> _petAtlases = new Dictionary<string, UIAtlas>();
         private bool _petArtPending;
+        private float _petArtNextTry;
+        private float _petArtDeadline = -1f;
 
         private UIAtlas PetAtlasFor(object petType)
         {
@@ -4181,11 +4221,15 @@ namespace VaultAdmin
 
             try
             {
+                // Not ready is not the same as not there, and both used to return null. The first
+                // look at the pets list happens before the game has built its atlas manager, so
+                // every icon came back empty and nothing ever asked a second time -- which is why
+                // the pictures only appeared once the list had been paged by hand.
                 PetAtlasManager manager = PetAtlasManager.Instance;
-                if (manager == null) return null;
+                if (manager == null) { _petArtPending = true; return null; }
 
                 Array infos = ReadObject(manager, "m_atlases") as Array;
-                if (infos == null) return null;
+                if (infos == null) { _petArtPending = true; return null; }
 
                 for (int i = 0; i < infos.Length; i++)
                 {
@@ -4221,6 +4265,8 @@ namespace VaultAdmin
                 ReportOnce("petatlas", "Could not reach the pet atlases: " + e.Message);
             }
 
+            // Asked for, not found, nothing thrown: the manager knows nothing of this kind yet.
+            _petArtPending = true;
             return null;
         }
 
@@ -4236,16 +4282,28 @@ namespace VaultAdmin
         /// </summary>
         private void PreloadPetArt()
         {
+            // The wait starts again every time the list is opened, so a page left alone and come
+            // back to still gets a fair chance at its pictures.
+            _petArtDeadline = Time.realtimeSinceStartup + 30f;
+
             if (_petArtAsked) return;
-            _petArtAsked = true;
 
             try
             {
-                foreach (object type in Enum.GetValues(typeof(EPetType)))
-                    RequestPetType(type);
+                bool heard = false;
 
-                Log.LogInfo("Asked the game for every kind of pet's art.");
+                foreach (object type in Enum.GetValues(typeof(EPetType)))
+                    if (RequestPetType(type)) heard = true;
+
+                // Only a request that reached a manager counts as having been made. Marking the
+                // job done when there was nobody to ask is how the art went unrequested on the one
+                // run where requesting it mattered.
+                _petArtAsked = heard;
                 _petArtPending = true;
+
+                Log.LogInfo(heard
+                    ? "Asked the game for every kind of pet's art."
+                    : "No pet atlas manager yet; will ask again.");
             }
             catch (Exception e)
             {
@@ -4253,23 +4311,27 @@ namespace VaultAdmin
             }
         }
 
-        private void RequestPetType(object petType)
+        private bool RequestPetType(object petType)
         {
             try
             {
                 PetAtlasManager manager = PetAtlasManager.Instance;
-                if (manager == null) return;
+                if (manager == null) return false;
 
                 MethodInfo load = typeof(PetAtlasManager).GetMethod(
                     "LoadAtlases",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                     null, new[] { petType.GetType() }, null);
 
-                if (load != null) load.Invoke(manager, new[] { petType });
+                if (load == null) return false;
+
+                load.Invoke(manager, new[] { petType });
+                return true;
             }
             catch (Exception e)
             {
                 ReportOnce("petload", "Could not ask for pet art: " + e.Message);
+                return false;
             }
         }
 
@@ -4321,6 +4383,8 @@ namespace VaultAdmin
         }
 
         private readonly Dictionary<string, string> _bonusWords = new Dictionary<string, string>();
+        private EBonusEffect _bonusChosen;
+        private string _shownBonusValue;
 
         /// <summary>
         /// A number with as many places as it takes to not be zero.
@@ -11005,12 +11069,34 @@ namespace VaultAdmin
                                                        Skin.Bright, Skin.Bright);
                     }
 
-                    if (_petArtPending)
+                    // Art loads over several frames, so trying once on the frame after asking
+                    // found nothing and gave up for good. This keeps looking on a quarter-second
+                    // beat until it arrives or the wait runs out.
+                    if (_petArtPending && Time.realtimeSinceStartup >= _petArtNextTry)
                     {
+                        _petArtNextTry = Time.realtimeSinceStartup + 0.25f;
                         _petArtPending = false;
-                        Trace("pet art arrived; drawing the animals again");
-                        if (_grantFamily == Family.Pet) FillRows();
-                        if (_making == Making.Pet) RefreshPetPick();
+
+                        if (_petArtDeadline > 0f && Time.realtimeSinceStartup > _petArtDeadline)
+                        {
+                            ReportOnce("petartlate", "The pet art never arrived; the animals will " +
+                                                     "be listed without pictures.");
+                        }
+                        else
+                        {
+                            Trace("looking for the pet art again");
+
+                            if (_grantFamily == Family.Pet) RefreshThings();
+                            if (_making == Making.Pet) RefreshPetPick();
+                        }
+                    }
+
+                    // The caption carries the number, so it goes stale the moment one is typed.
+                    if (_bonusLabel != null && _petValueInput != null &&
+                        _petValueInput.value != _shownBonusValue)
+                    {
+                        _shownBonusValue = _petValueInput.value;
+                        _bonusLabel.text = BonusCaption();
                     }
 
                     if (_filterInput != null)
