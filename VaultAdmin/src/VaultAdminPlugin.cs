@@ -634,6 +634,59 @@ namespace VaultAdmin
             return Keep(key, w, px);
         }
 
+        /// <summary>
+        /// A paw print, for the button that makes an animal.
+        ///
+        /// The atlas has silhouettes, and every one of them is a picture inside a frame -- which on
+        /// a filled button reads as a sticker somebody has put there. Four toes and a pad, drawn in
+        /// the same green as everything else, have no frame to read.
+        /// </summary>
+        public static Texture2D Paw(int size)
+        {
+            string key = "paw" + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            // The pad, and four toes above it on an arc.
+            Vector2 pad = new Vector2(w * 0.5f, w * 0.36f);
+            float padWide = w * 0.20f;
+            float padTall = w * 0.16f;
+
+            Vector2[] toes =
+            {
+                new Vector2(w * 0.22f, w * 0.60f), new Vector2(w * 0.40f, w * 0.74f),
+                new Vector2(w * 0.60f, w * 0.74f), new Vector2(w * 0.78f, w * 0.60f)
+            };
+            float toe = w * 0.105f;
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+
+                    float dx = (p.x - pad.x) / padWide;
+                    float dy = (p.y - pad.y) / padTall;
+                    float ink = Mathf.Clamp01((1f - Mathf.Sqrt(dx * dx + dy * dy)) * w * 0.30f);
+
+                    for (int i = 0; i < toes.Length; i++)
+                    {
+                        float d = Vector2.Distance(p, toes[i]);
+                        float on = Mathf.Clamp01(toe - d + 0.5f);
+                        if (on > ink) ink = on;
+                    }
+
+                    px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
@@ -670,7 +723,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.11";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Log;
 
@@ -2069,6 +2122,10 @@ namespace VaultAdmin
                     if (_tab == Tab.Create && _making == Making.Dweller) RemakePreview();
                 }
                 if (_nguiWindow != null) _nguiWindow.SetActive(_panelOpen);
+
+            // Out of the way while the panel is up. It is the way in, and once you are in it is a
+            // button that does the same thing as the one marked CLOSE.
+            if (_hudButton != null) _hudButton.SetActive(!_panelOpen);
         }
             catch (Exception e)
             {
@@ -3171,6 +3228,27 @@ namespace VaultAdmin
         /// AddIcon always sets its sprite into a dark recess, which is right on the panel and wrong
         /// on a filled button, where a dark box holding a dark picture is just a dark box.
         /// </summary>
+        /// <summary>A drawn mark on a button: no recess, no atlas, in whatever colour is asked.</summary>
+        private void AddDrawnMark(Transform parent, string name, Texture2D drawn,
+                                  int x, int y, int size, Color colour)
+        {
+            GameObject go = new GameObject(name);
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(x, y, 0f);
+            go.transform.localScale = Vector3.one;
+
+            UITexture face = go.AddComponent<UITexture>();
+            face.mainTexture = drawn;
+            face.width = size;
+            face.height = size;
+            face.depth = 7;
+            face.color = colour;
+
+            Shader flat = Shader.Find("Unlit/Transparent Colored");
+            if (flat != null) face.shader = flat;
+        }
+
         private void AddBareIcon(Transform parent, string name, string[] candidates, string what,
                                  int x, int y, int size, Color colour)
         {
@@ -4366,7 +4444,7 @@ namespace VaultAdmin
 
         private bool _wantWholeAnimal;
         private static bool _reportedAnimalSize;
-        private int _wholeAnimalBox = 76;
+        private int _wholeAnimalBox = 91;
 
         /// <summary>Grants whatever sits in this row, through the same paths the panel already uses.</summary>
         private void GiveRow(int rowIndex)
@@ -6455,9 +6533,8 @@ namespace VaultAdmin
             GameObject makePet = MakeButton(parent, "CreatePet", "CREATE PET", 0, _cursorY - 22,
                                             width, 44, true, CreatePetFromPanel);
 
-            AddBareIcon(makePet.transform, "CreatePetMark",
-                        new[] { "Silhouette_Pet", "Icon_Pet", "PetCarrier" },
-                        "silhouette pet", width / 2 - 32, 0, 30, Skin.Ink);
+            AddDrawnMark(makePet.transform, "CreatePetMark", Skin.Paw(36),
+                         width / 2 - 34, 0, 36, Skin.Ink);
 
             _cursorY -= 44 + RowGap;
 
@@ -8328,6 +8405,8 @@ namespace VaultAdmin
             rollPress.tweenTarget = rollPlate.gameObject;
             rollPress.onClick.Add(new EventDelegate(RollTheLooks));
 
+            Respond(rollPress, rollPlate);
+
             // The word before the picture. A die alone is a die; a die after the word RANDOM is a
             // button that rolls one, which is the thing this actually does.
             UILabel rollWord = MakeLeftLabel(parent, "RollWord", "RANDOM",
@@ -9135,6 +9214,41 @@ namespace VaultAdmin
             return button;
         }
 
+        /// <summary>
+        /// Makes a button answer the pointer: a little brighter under it, a little smaller and
+        /// dimmer while it is held.
+        ///
+        /// Everything in this panel is drawn rather than sprited, and a drawn button with no
+        /// response to a press is indistinguishable from a picture of a button. NGUI already tweens
+        /// the widget's colour for us; the size is one component more.
+        /// </summary>
+        private static void Respond(UIButton button, UIWidget face)
+        {
+            if (button == null) return;
+
+            try
+            {
+                Color resting = face != null ? face.color : Color.white;
+
+                button.tweenTarget = button.gameObject;
+                button.duration = 0.12f;
+
+                button.defaultColor = resting;
+                button.hover = resting * 1.18f;
+                button.pressed = resting * 0.82f;
+
+                UIButtonScale grow = button.gameObject.AddComponent<UIButtonScale>();
+                grow.tweenTarget = button.transform;
+                grow.hover = new Vector3(1.04f, 1.04f, 1f);
+                grow.pressed = new Vector3(0.95f, 0.95f, 1f);
+                grow.duration = 0.10f;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("respond", "Could not give a button its press: " + e.Message);
+            }
+        }
+
         private UITexture Plate(Transform parent, string name, int x, int y, int width, int height,
                                 Texture2D texture, int depthOffset)
         {
@@ -9269,6 +9383,8 @@ namespace VaultAdmin
             UIButton button = go.AddComponent<UIButton>();
             button.tweenTarget = go;
             button.onClick.Add(new EventDelegate(onClick));
+
+            Respond(button, face);
 
             MakeLabel(go.transform, "Text", text, 0, 0, width - 16, height,
                       solid ? Skin.Ink : Skin.Bright, 6);
