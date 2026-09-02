@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.3.1";
 
         internal static ManualLogSource Log;
 
@@ -6254,12 +6254,11 @@ namespace VaultAdmin
                                         width / 2 - button - field / 2 - 16, middle, field,
                                         figure, true);
 
-            // What the rooms actually hold. A typed limit is a number somebody chose and then had
-            // no way back from -- the vault kept it across restarts and there was nothing to say
-            // what it had been before. This asks the vault.
-            MakeButton(parent, "PowerReset_" + name, "RESET",
-                       width / 2 - button - field - reset / 2 - 22, middle, reset, 40, false,
-                       ResetPopulation);
+            // The figure is the field's hint, and a hint is the grey word a field shows while it
+            // is empty -- it is not what the field contains. So the row read 200 and SET answered
+            // that a number was needed, because as far as the field was concerned none had been
+            // typed. It now holds the number it is showing.
+            PutInField(_populationInput, figure);
 
             Power power = new Power();
             power.Note = note;
@@ -6278,6 +6277,22 @@ namespace VaultAdmin
             GameObject press = MakeButton(parent, "PowerDo_" + name, "SET",
                                           width / 2 - button / 2 - 10, middle, button, 40,
                                           false, wrapped);
+
+            // What the rooms actually hold. A typed limit is a number somebody chose and then had
+            // no way back from: the vault kept it across restarts with nothing to say what it had
+            // been before. In the colours of undoing, and wrapped like its neighbour -- without
+            // the wrapper its complaints had no row to be written on and it looked like a button
+            // that did nothing at all, which is exactly how it was described.
+            EventDelegate.Callback putBack = delegate
+            {
+                _pressed = power;
+                try { ResetPopulation(); }
+                finally { _pressed = null; }
+            };
+
+            MakeDangerButton(parent, "PowerReset_" + name, "RESET",
+                             width / 2 - button - field - reset / 2 - 22, middle, reset, 40,
+                             putBack);
 
             _cursorY -= cell + RowGap;
             return press;
@@ -7193,8 +7208,13 @@ namespace VaultAdmin
         /// <summary>The room a dweller is standing in, by whichever name this build gives it.</summary>
         private static Room RoomOf(Dweller who)
         {
-            string[] names = { "CurrentRoom", "m_currentRoom", "Room", "room", "m_room",
-                               "assignedRoom" };
+            // WorkingRoom, which the game named itself when it was finally asked: the dump listed
+            // m_workingRoom, m_workingRoomSaved, WorkingRoom and WorkingRoomSaved and nothing else
+            // that is a Room. Two guesses before this -- assignedRoom, then CurrentRoom -- both
+            // read null, and null is what a dweller standing in no room reads as, so neither guess
+            // announced itself as wrong.
+            string[] names = { "WorkingRoom", "m_workingRoom", "WorkingRoomSaved",
+                               "m_workingRoomSaved", "CurrentRoom", "m_currentRoom", "room" };
 
             for (int i = 0; i < names.Length; i++)
             {
@@ -7242,6 +7262,29 @@ namespace VaultAdmin
         }
 
         private static bool _saidWhatADwellerIs;
+
+        /// <summary>
+        /// Puts a number into an input, leaving it usable afterwards.
+        ///
+        /// Assigning value while the field is the selected one leaves NGUI holding a caret into
+        /// text that has been replaced underneath it: the field then draws without a cursor and
+        /// refuses to take another number, which is what happened every time a limit was set. The
+        /// selection is dropped first, so what comes back is a plain field with a number in it.
+        /// </summary>
+        private static void PutInField(UIInput field, string text)
+        {
+            if (field == null) return;
+
+            try
+            {
+                if (field.isSelected) field.isSelected = false;
+                field.value = text;
+            }
+            catch (Exception e)
+            {
+                ReportOnce("field", "Could not put a number in the field: " + e.Message);
+            }
+        }
 
         /// <summary>Sort keys that put rank one first and an unranked room last.</summary>
         private static int[] RankKeys(List<int> ranks)
@@ -8633,13 +8676,101 @@ namespace VaultAdmin
                     }
                 }
 
-                ReportOnce("capacity", "Nothing here knows what the rooms hold: neither the " +
-                                       "vault nor the dweller manager has GetMaxDwellers or " +
-                                       "MaxDwellersInVault.");
+                // Neither of the two obvious owners has it, so the game is asked which class
+                // does -- the same sweep that found PersistenceManager after four rounds of
+                // guessing at names, pointed at a different question.
+                int swept = SweepForCapacity();
+                if (swept > 0) return swept;
             }
             catch (Exception e)
             {
                 ReportOnce("capacity", "Could not ask the vault what it holds: " + e.Message);
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Asks the whole of the game which class knows how many the rooms hold.
+        ///
+        /// GetMaxDwellers and MaxDwellersInVault are both in this build and neither is on Vault or
+        /// on DwellerManager. Guessing a third owner would be the fourth time that has gone wrong
+        /// this week; sweeping for the member and writing down where it was found is what ended
+        /// the same argument about the vault's own key.
+        /// </summary>
+        private int SweepForCapacity()
+        {
+            const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
+                                         BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+            const BindingFlags Ones = BindingFlags.Public | BindingFlags.NonPublic |
+                                      BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            try
+            {
+                Assembly game = null;
+                Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
+
+                for (int a = 0; a < loaded.Length && game == null; a++)
+                    if (loaded[a].GetName().Name == "Assembly-CSharp") game = loaded[a];
+
+                if (game == null) return -1;
+
+                Type[] types;
+                try { types = game.GetTypes(); }
+                catch { return -1; }
+
+                for (int t = 0; t < types.Length; t++)
+                {
+                    if (types[t].IsEnum) continue;
+
+                    MethodInfo how = null;
+                    PropertyInfo held = null;
+
+                    try
+                    {
+                        how = types[t].GetMethod("GetMaxDwellers", Statics | Ones, null,
+                                                 Type.EmptyTypes, null);
+
+                        if (how == null)
+                        {
+                            held = types[t].GetProperty("MaxDwellersInVault", Statics | Ones);
+                            if (held != null && !held.CanRead) held = null;
+                            if (held != null && held.GetIndexParameters().Length > 0) held = null;
+                        }
+                    }
+                    catch { }
+
+                    if (how == null && held == null) continue;
+
+                    bool needsOne = how != null ? !how.IsStatic
+                                                : !held.GetGetMethod(true).IsStatic;
+
+                    object on = needsOne ? Singleton(types[t]) : null;
+                    if (needsOne && on == null) continue;
+
+                    try
+                    {
+                        object many = how != null ? how.Invoke(on, null) : held.GetValue(on, null);
+                        if (many == null) continue;
+
+                        int number = Convert.ToInt32(many);
+                        if (number <= 0) continue;
+
+                        Log.LogInfo("The rooms hold " + number + ", which " + types[t].Name +
+                                    " keeps as " + (how != null ? "GetMaxDwellers()"
+                                                                : "MaxDwellersInVault") + ".");
+
+                        return number;
+                    }
+                    catch { }
+                }
+
+                ReportOnce("capacity", "Nothing in the game would say how many the rooms hold.");
+            }
+            catch (Exception e)
+            {
+                ReportOnce("capacity", "Could not ask what the rooms hold: " + e.Message);
             }
 
             return -1;
@@ -8661,7 +8792,7 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault != null) WriteMember(vault, "MaxDwellers", real);
 
-                if (_populationInput != null) _populationInput.value = real.ToString();
+                PutInField(_populationInput, real.ToString());
 
                 // Nought means "leave it alone" to the standing rule, which is what a reset is:
                 // the vault goes back to being governed by its rooms rather than by a number.
@@ -8717,7 +8848,7 @@ namespace VaultAdmin
                     // And the field is corrected to match. Leaving it saying five hundred while
                     // the vault takes two hundred is the interface disagreeing with the setting,
                     // which is the fault this panel has just spent a day removing elsewhere.
-                    if (_populationInput != null) _populationInput.value = real.ToString();
+                    PutInField(_populationInput, real.ToString());
 
                     RememberNumber(MaxDwellersHere, MaxDwellersWanted, real);
 
