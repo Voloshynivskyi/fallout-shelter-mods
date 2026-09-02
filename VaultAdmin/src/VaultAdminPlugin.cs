@@ -278,7 +278,9 @@ namespace VaultAdmin
             Color spots = Ink;
             Color edge = Color.Lerp(Ink, Color.black, 0.45f);
 
-            float stroke = Mathf.Max(1.2f, 1.4f * Scale);
+            // Finer. At the old weight the edges were as loud as the numbers, and on a shape
+            // this small that is a drawing of a cage rather than of a cube.
+            float stroke = Mathf.Max(1f, 0.9f * Scale);
 
             // Every edge that shows: the six around the outside, and the three that radiate from
             // the near corner and tell the three faces apart.
@@ -591,6 +593,46 @@ namespace VaultAdmin
             return Keep(key, w, px);
         }
 
+        /// <summary>
+        /// Three bars, longest first: a ranking, for the power that puts the best dweller in each
+        /// room. Nothing in the game's atlas says "sorted by ability" and this does.
+        /// </summary>
+        public static Texture2D Ranked(int size)
+        {
+            string key = "ranked" + size + "s" + Scale.ToString("0.00");
+
+            Texture2D cached;
+            if (_cache.TryGetValue(key, out cached) && cached != null) return cached;
+
+            int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
+            Color[] px = new Color[w * w];
+
+            float thick = w * 0.13f;
+            float left = w * 0.20f;
+            float[] ends = { w * 0.82f, w * 0.64f, w * 0.46f };
+            float[] rows = { w * 0.72f, w * 0.50f, w * 0.28f };
+
+            for (int y = 0; y < w; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+                    float best = float.MaxValue;
+
+                    for (int i = 0; i < 3; i++)
+                    {
+                        float d = ToSegment(p, new Vector2(left, rows[i]), new Vector2(ends[i], rows[i]));
+                        if (d < best) best = d;
+                    }
+
+                    float ink = Mathf.Clamp01(thick * 0.5f - best + 0.5f);
+                    px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
+                }
+            }
+
+            return Keep(key, w, px);
+        }
+
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
         public static Texture2D Row(int width, int height)
         {
@@ -627,7 +669,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.7.1";
+        public const string PluginVersion = "1.10.0";
 
         internal static ManualLogSource Log;
 
@@ -642,6 +684,7 @@ namespace VaultAdmin
         private static ConfigEntry<int> MaxDwellersWanted;
         private static ConfigEntry<bool> ShowHudButton;
         private static ConfigEntry<float> HudButtonOffsetX;
+        private static ConfigEntry<float> HudButtonOffsetY;
         private static ConfigEntry<string> HudButtonSprite;
         private static ConfigEntry<string> HudButtonTint;
         private static ConfigEntry<string> HudButtonImage;
@@ -967,6 +1010,9 @@ namespace VaultAdmin
                 "icons fill their square almost edge to edge, so a value under one only makes this " +
                 "look undersized beside them.");
 
+            HudButtonOffsetY = Config.Bind("Interface", "HudButtonOffsetY", 62f,
+                "How far below the dwellers-list button the panel button sits.");
+
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
                 "interface's own units. Raise it if the two overlap.");
@@ -1001,6 +1047,61 @@ namespace VaultAdmin
         // The name our button carries, which is also how it is found again. The HUD is rebuilt
         // when a vault is reloaded, and a clone made each time would stack buttons on each other.
         private const string HudButtonName = "VaultAdmin_PanelButton";
+
+        /// <summary>
+        /// The game's own button for the list of dwellers, wherever it keeps it.
+        ///
+        /// Not by a path, because the path is the thing I do not know and guessing it has been an
+        /// expensive habit. The HUD's own hierarchy is searched for a button whose name says
+        /// dwellers, and the whole of that hierarchy is written down once, so a miss is one line to
+        /// correct rather than another round of guesses.
+        /// </summary>
+        private Transform FindDwellerListButton()
+        {
+            try
+            {
+                GameObject hud = GameObject.Find(HudPanelPath);
+                if (hud == null) return null;
+
+                Transform[] all = hud.GetComponentsInChildren<Transform>(true);
+
+                if (!_reportedHud)
+                {
+                    _reportedHud = true;
+
+                    System.Text.StringBuilder said = new System.Text.StringBuilder();
+                    said.Append("The vault HUD holds:");
+
+                    for (int i = 0; i < all.Length && i < 120; i++)
+                        said.Append(" ").Append(all[i].name);
+
+                    Log.LogInfo(said.ToString());
+                }
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    string name = all[i].name;
+
+                    if (name.IndexOf("dweller", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        name.IndexOf("button", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    Log.LogInfo("Putting the panel button under '" + name + "'.");
+                    return all[i];
+                }
+            }
+            catch (Exception e)
+            {
+                ReportOnce("hudsearch", "Could not look through the vault HUD: " + e.Message);
+            }
+
+            return null;
+        }
+
+        private static bool _reportedHud;
+
+        private const string HudPanelPath =
+            "MainScene_Root/GUI/VaultHUDWindow/VaultHUDPanel";
 
         // The anchor is the thing to look for, not the button inside it.
         //
@@ -1063,14 +1164,28 @@ namespace VaultAdmin
                 Transform existing = parent.Find(HudButtonName);
                 if (existing != null) { _hudButton = existing.gameObject; return; }
 
-                Transform found = parent.Find(CameraButtonName);
+                Transform found = FindDwellerListButton();
+                bool underTheList = found != null;
+
+                if (found == null) found = parent.Find(CameraButtonName);
+
                 if (found == null)
                 {
                     Log.LogWarning("No '" + CameraButtonName + "' under " + AnchorPath +
                                    "; nothing to copy the button from.");
                     return;
                 }
+
                 GameObject source = found.gameObject;
+
+                // Beneath the dwellers list if that is what was found, beside the camera if it was
+                // not. A button that opens a panel about dwellers belongs under the button that
+                // opens the list of them, and nowhere near the screenshot key.
+                parent = source.transform.parent;
+
+                Vector3 place = underTheList
+                    ? source.transform.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f)
+                    : source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
 
                 GameObject clone = UnityEngine.Object.Instantiate(source);
                 clone.name = HudButtonName;
@@ -1078,8 +1193,7 @@ namespace VaultAdmin
                 // false, because keeping world position puts the clone somewhere off screen: NGUI
                 // lays out in its own scaled space, not the world's.
                 clone.transform.SetParent(parent, false);
-                clone.transform.localPosition =
-                    source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
+                clone.transform.localPosition = place;
                 clone.transform.localRotation = source.transform.localRotation;
                 clone.transform.localScale = source.transform.localScale;
 
@@ -1089,8 +1203,7 @@ namespace VaultAdmin
                 MakeVisible(clone, source);
 
                 // After the anchors are gone, so the position actually holds.
-                clone.transform.localPosition =
-                    source.transform.localPosition + new Vector3(HudButtonOffsetX.Value, 0f, 0f);
+                clone.transform.localPosition = place;
 
                 StyleButton(clone);
                 _hudButton = clone;
@@ -3367,7 +3480,7 @@ namespace VaultAdmin
         private void StepBonus(int by)
         {
             _petBonusIndex = (_petBonusIndex + by + Bonuses().Length) % Bonuses().Length;
-            if (_bonusLabel != null) _bonusLabel.text = Bonuses()[_petBonusIndex].ToString();
+            if (_bonusLabel != null) _bonusLabel.text = Tidy(Bonuses()[_petBonusIndex].ToString()).ToUpper();
         }
 
         /// <summary>Rereads the catalogue for the chosen family and puts the list back to its top.</summary>
@@ -4408,11 +4521,17 @@ namespace VaultAdmin
             AddPower(parent, width, "UNLOCK EVERY RECIPE",
                      "every weapon and outfit", UnlockEveryRecipe, Skin.Padlock(38));
 
-            AddPower(parent, width, "UNLOCK EVERY THEME",
-                     "every room decoration", UnlockEveryTheme, Skin.Padlock(38));
 
 
             AddHeader(parent, "PEACE AND QUIET", width);
+
+            AddHeader(parent, "ASSIGNMENT", width);
+
+            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
+                     "best where it works, worst where it trains", AssignTheBest,
+                     Skin.Ranked(38));
+
+            AddHeader(parent, "THE VAULT", width);
 
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
                                    "no accident from rushing",
@@ -5184,7 +5303,6 @@ namespace VaultAdmin
         }
 
         private static bool _reportedItemShape;
-        private static bool _reportedThemeShape;
         private static bool _reportedMood;
 
         /// <summary>Writes down what an inventory item is made of, once, when it cannot be read.</summary>
@@ -5212,102 +5330,292 @@ namespace VaultAdmin
         }
 
         /// <summary>
-        /// Opens every room theme, the way the recipe power opens every weapon.
+        /// Staffs the whole vault by the one number each room runs on.
         ///
-        /// A theme is unlocked through the same survival guide as a recipe, so the hard part is not
-        /// the unlocking but finding the list: the item tables name their collections differently
-        /// from family to family, and this game's build is the only authority on which name. Rather
-        /// than guess once and fail silently, it asks for each name it might be and, if none of
-        /// them answer, writes down what the table actually holds -- so the next attempt is
-        /// informed rather than another guess.
+        /// A vault of fifty is an hour of dragging people about and squinting at seven figures each
+        /// time. The game already knows which stat a room uses and what every dweller scores in it;
+        /// all that is missing is somebody willing to do the sorting.
+        ///
+        /// The rules, in the order they are applied:
+        ///
+        ///   1. A room with no stat is left alone. Storage has nobody to place and nothing to gain.
+        ///   2. Rooms that produce something are staffed first, largest first, each taking the
+        ///      highest scorers left in the pool. A point of a stat is worth most in the room with
+        ///      the most places, so the big merged rooms get first pick.
+        ///   3. Training rooms are staffed last, and they take the LOWEST scorers left. Training
+        ///      raises the stat it teaches, and a dweller already at ten learns nothing there --
+        ///      putting your best in a gym is the most expensive mistake this screen can make.
+        ///   4. Anyone not placed stays exactly where they were.
+        ///
+        /// Every one of those decisions is read from the game rather than listed here: which stat,
+        /// whether anything is produced, how many places there are. A room added by an update or by
+        /// another mod is classified by the same questions as the rooms that shipped, so it is
+        /// staffed correctly without this code having heard of it.
         /// </summary>
-        private void UnlockEveryTheme()
+        private void AssignTheBest()
         {
-            int opened = 0;
-
             try
             {
-                VaultGUIManager gui = VaultGUIManager.Instance;
-                object window = gui == null ? null : ReadObject(gui, "m_survivalWindow");
-
-                if (window == null) { Trouble("The survival guide is not open to be written to."); return; }
-
-                MethodInfo unlock = window.GetType().GetMethod(
-                    "UnlockRecipe",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (unlock == null) { Trouble("Themes cannot be unlocked from here."); return; }
-
-                object themeKind;
-                try { themeKind = Enum.Parse(typeof(EItemType), "Theme"); }
-                catch { Trouble("This build of the game has no theme item type."); return; }
-
-                GameParameters parameters = GameParameters.Instance;
-                ItemParameters items = parameters == null ? null : parameters.Items;
-
-                if (items == null) { Trouble("The game's item tables are not available yet."); return; }
-
-                string[] names = { "ThemesList", "ThemeList", "m_themesList", "m_themeList",
-                                   "Themes", "m_themes" };
-
-                Array themes = null;
-                for (int i = 0; i < names.Length && themes == null; i++)
-                    themes = ReadObject(items, names[i]) as Array;
-
-                if (themes == null)
+                DwellerManager manager = SafeDwellerManager();
+                if (manager == null || manager.Dwellers == null)
                 {
-                    SayWhatTheTablesHold(items);
-                    Trouble("Could not find the theme list; what the tables do hold is in the log.");
+                    Trouble("The vault is not loaded.");
                     return;
                 }
 
-                for (int i = 0; i < themes.Length; i++)
+                MethodInfo assign = FindTheAssigner();
+                if (assign == null)
                 {
-                    object theme = themes.GetValue(i);
-                    if (theme == null) continue;
+                    Trouble("Nothing here can assign a dweller; the log lists what the game offers.");
+                    return;
+                }
 
-                    string id = ReadMember(theme, "ThemeId");
-                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "Id");
-                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "m_themeId");
-                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "m_id");
-                    if (string.IsNullOrEmpty(id)) id = ReadMember(theme, "Name");
+                // Everyone who can hold a post: no children, nobody out in the wasteland. The game
+                // refuses the rest anyway, and asking it to refuse fifty times is a slower way of
+                // finding that out.
+                List<Dweller> pool = new List<Dweller>();
 
-                    if (string.IsNullOrEmpty(id))
-                    {
-                        // The list was found and its records were not. Rather than skip them in
-                        // silence -- which is what "no themes could be unlocked" was -- the record
-                        // says what it is made of, once.
-                        if (!_reportedThemeShape)
-                        {
-                            _reportedThemeShape = true;
-                            SayWhatAnItemIs(theme);
-                        }
-                        continue;
-                    }
+                for (int i = 0; i < manager.Dwellers.Count; i++)
+                {
+                    Dweller one = manager.Dwellers[i];
+                    if (one == null) continue;
 
                     try
                     {
-                        unlock.Invoke(window, new object[] { new DwellerItem((EItemType)themeKind, id) });
-                        opened++;
+                        if (one.IsChild) continue;
+                        if (one.IsRegisteredInWasteland) continue;
                     }
-                    catch (Exception e)
-                    {
-                        ReportOnce("themeunlock", "The game refused to unlock theme '" + id + "': " + e);
-                    }
+                    catch { continue; }
+
+                    pool.Add(one);
                 }
+
+                List<Room> works = new List<Room>();
+                List<Room> teaches = new List<Room>();
+
+                Room[] all = Resources.FindObjectsOfTypeAll<Room>();
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Room room = all[i];
+                    if (room == null || !room.gameObject.activeInHierarchy) continue;
+                    if (!(RoomStat(room) is ESpecialStat)) continue;
+                    if (RoomPlaces(room) <= 0) continue;
+
+                    if (Teaches(room)) teaches.Add(room);
+                    else works.Add(room);
+                }
+
+                if (works.Count == 0 && teaches.Count == 0)
+                {
+                    Trouble("No room in this vault runs on a stat.");
+                    return;
+                }
+
+                works.Sort(new ByPlaces());
+
+                int posted = Staff(works, pool, assign, manager, true) +
+                             Staff(teaches, pool, assign, manager, false);
+
+                Say("Posted " + posted + " dweller(s): " + works.Count + " working room(s) got " +
+                    "their best, " + teaches.Count + " training room(s) got those with the most " +
+                    "to learn.");
             }
             catch (Exception e)
             {
-                Trouble("Could not unlock the themes: " + e.Message);
-                return;
+                Trouble("Could not assign the dwellers: " + e.Message);
             }
-
-            if (opened == 0) Trouble("No themes could be unlocked; the log says what was found.");
-            else Say("Unlocked " + opened + " theme(s).");
         }
 
-        /// <summary>Writes down every collection the item tables carry, once.</summary>
-        private static void SayWhatTheTablesHold(ItemParameters items)
+        /// <summary>Fills a set of rooms from the pool, taking the highest scorers or the lowest.</summary>
+        private int Staff(List<Room> rooms, List<Dweller> pool, MethodInfo assign,
+                          DwellerManager manager, bool best)
+        {
+            int posted = 0;
+            bool twoArgs = assign.GetParameters().Length == 2;
+
+            for (int i = 0; i < rooms.Count; i++)
+            {
+                Room room = rooms[i];
+
+                ESpecialStat stat = (ESpecialStat)RoomStat(room);
+                int places = RoomPlaces(room);
+
+                pool.Sort(new ByStat(stat, best));
+
+                for (int taken = 0; taken < places && pool.Count > 0; taken++)
+                {
+                    Dweller chosen = pool[0];
+                    pool.RemoveAt(0);
+
+                    try
+                    {
+                        if (twoArgs) assign.Invoke(manager, new object[] { chosen, room });
+                        else assign.Invoke(room, new object[] { chosen });
+
+                        posted++;
+                    }
+                    catch (Exception e)
+                    {
+                        ReportOnce("assigncall", "The game refused an assignment: " + e);
+                    }
+                }
+            }
+
+            return posted;
+        }
+
+        /// <summary>Rooms with more places first.</summary>
+        private sealed class ByPlaces : IComparer<Room>
+        {
+            public int Compare(Room left, Room right)
+            {
+                return RoomPlaces(right).CompareTo(RoomPlaces(left));
+            }
+        }
+
+        /// <summary>
+        /// Whether a room teaches rather than produces.
+        ///
+        /// Asked three ways, weakest last, so a room this code has never heard of is still sorted
+        /// correctly: the game's own flag if it has one, then the name of the type, and failing
+        /// both, whether the room produces any resource at all. A room that runs on a stat and
+        /// makes nothing is a gym.
+        /// </summary>
+        private static bool Teaches(Room room)
+        {
+            object flag = ReadObject(room, "IsTrainingRoom");
+            if (flag == null) flag = ReadObject(room, "m_isTrainingRoom");
+            if (flag is bool) return (bool)flag;
+
+            if (room.GetType().Name.IndexOf("training", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            object made = ReadObject(room, "ProducedResource");
+            if (made == null) made = ReadObject(room, "m_producedResource");
+            if (made == null) made = ReadObject(room, "Resource");
+
+            if (made != null)
+            {
+                string what = made.ToString();
+                if (what == "None" || what == "0") return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Sorts by one stat: the ablest first, or those with the most to learn.</summary>
+        private sealed class ByStat : IComparer<Dweller>
+        {
+            private readonly ESpecialStat _stat;
+            private readonly bool _best;
+
+            public ByStat(ESpecialStat stat, bool best) { _stat = stat; _best = best; }
+
+            public int Compare(Dweller left, Dweller right)
+            {
+                return _best
+                    ? Value(right).CompareTo(Value(left))
+                    : Value(left).CompareTo(Value(right));
+            }
+
+            private int Value(Dweller who)
+            {
+                try
+                {
+                    DwellerStats stats = who == null ? null : who.Stats;
+                    SpecialStat one = stats == null ? null : stats.GetStat(_stat);
+
+                    return one == null ? 0 : one.Value;
+                }
+                catch { return 0; }
+            }
+        }
+
+        /// <summary>Which stat a room runs on, asked for by each name it might have.</summary>
+        private static object RoomStat(Room room)
+        {
+            object stat = ReadObject(room, "SpecialStat");
+            if (stat == null) stat = ReadObject(room, "m_specialStat");
+
+            if (stat == null)
+            {
+                object parameters = ReadObject(room, "RoomParameters");
+                if (parameters == null) parameters = ReadObject(room, "m_roomParameters");
+                if (parameters == null) parameters = ReadObject(room, "Parameters");
+
+                if (parameters != null)
+                {
+                    stat = ReadObject(parameters, "SpecialStat");
+                    if (stat == null) stat = ReadObject(parameters, "m_specialStat");
+                }
+            }
+
+            return stat;
+        }
+
+        /// <summary>How many people a room has room for.</summary>
+        private static int RoomPlaces(Room room)
+        {
+            string[] names = { "MaxDwellers", "m_maxDwellers", "Capacity", "m_capacity",
+                               "MaxWorkers", "m_maxWorkers" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                object many = ReadObject(room, names[i]);
+                if (many == null) continue;
+
+                try { return Convert.ToInt32(many); }
+                catch { }
+            }
+
+            // The game builds rooms two places wide per merged section; two is the smallest a room
+            // ever is, so it is the safe answer when nothing will say.
+            return 2;
+        }
+
+        /// <summary>
+        /// The game's own way of putting a dweller in a room.
+        ///
+        /// Tried by name, and if none of them answer, every method that mentions assigning goes in
+        /// the log. Guessing at somebody else's API and failing quietly is how this mod has wasted
+        /// its afternoons; guessing and then saying exactly what was there is how it stops.
+        /// </summary>
+        private MethodInfo FindTheAssigner()
+        {
+            if (_assigner != null) return _assigner;
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            _assigner = typeof(Room).GetMethod("AssignDweller", Flags, null,
+                                               new[] { typeof(Dweller) }, null);
+
+            if (_assigner == null)
+                _assigner = typeof(Room).GetMethod("AddDweller", Flags, null,
+                                                   new[] { typeof(Dweller) }, null);
+
+            if (_assigner == null)
+                _assigner = typeof(DwellerManager).GetMethod("AssignDwellerToRoom", Flags, null,
+                                                             new[] { typeof(Dweller), typeof(Room) }, null);
+
+            if (_assigner != null)
+            {
+                Log.LogInfo("Assignments go through " + _assigner.DeclaringType.Name + "." +
+                            _assigner.Name + ".");
+                return _assigner;
+            }
+
+            SayWhoCanAssign(typeof(Room));
+            SayWhoCanAssign(typeof(Dweller));
+            SayWhoCanAssign(typeof(DwellerManager));
+
+            return null;
+        }
+
+        private MethodInfo _assigner;
+
+        private static void SayWhoCanAssign(Type type)
         {
             try
             {
@@ -5315,15 +5623,24 @@ namespace VaultAdmin
                                            BindingFlags.Instance;
 
                 System.Text.StringBuilder said = new System.Text.StringBuilder();
-                said.Append("The item tables hold:");
+                said.Append(type.Name).Append(" offers:");
 
-                FieldInfo[] fields = items.GetType().GetFields(Flags);
-                for (int i = 0; i < fields.Length; i++)
-                    said.Append(" .").Append(fields[i].Name);
+                MethodInfo[] all = type.GetMethods(Flags);
+                for (int i = 0; i < all.Length; i++)
+                {
+                    string name = all[i].Name;
 
-                PropertyInfo[] props = items.GetType().GetProperties(Flags);
-                for (int i = 0; i < props.Length; i++)
-                    said.Append(" .").Append(props[i].Name);
+                    if (name.IndexOf("assign", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        name.IndexOf("room", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    said.Append(" ").Append(name).Append("(");
+
+                    ParameterInfo[] args = all[i].GetParameters();
+                    for (int a = 0; a < args.Length; a++)
+                        said.Append(a > 0 ? "," : "").Append(args[a].ParameterType.Name);
+
+                    said.Append(")");
+                }
 
                 Log.LogWarning(said.ToString());
             }
@@ -5711,6 +6028,11 @@ namespace VaultAdmin
 
             // Only when the bench is the thing being looked at. Building the window used to make
             // one and throw it away in the same breath.
+            // The animal bench is one screenful. A bar down the side of a list that does not
+            // move is a control that says something untrue about the page.
+            if (_createView != null && _createView.verticalScrollBar != null)
+                _createView.verticalScrollBar.gameObject.SetActive(making != Making.Pet);
+
             if (making == Making.Dweller && _tab == Tab.Create && _panelOpen) RemakePreview();
             else DisposePreview();
 
@@ -5724,8 +6046,12 @@ namespace VaultAdmin
         {
             AddHeader(parent, "PET", width);
 
-            int pickY = _cursorY - RowHeight / 2;
-            Plate(parent, "PetPick", 0, pickY, width, RowHeight, Skin.Row(width, RowHeight), 1);
+            // Taller than a plain row: it carries a picture of the animal, and a picture wants
+            // more than the height of a line of text.
+            const int pickHeight = 78;
+
+            int pickY = _cursorY - pickHeight / 2;
+            Plate(parent, "PetPick", 0, pickY, width, pickHeight, Skin.Row(width, pickHeight), 1);
 
             GameObject iconGo = new GameObject("PetPickIcon");
             iconGo.layer = parent.gameObject.layer;
@@ -5769,7 +6095,7 @@ namespace VaultAdmin
             MakeButton(parent, "PetBonusFwd", ">", -width / 2 + 72, bonusY, 40, 32, false,
                        delegate { StepBonus(1); });
             _bonusLabel = MakeLeftLabel(parent, "PetBonusName",
-                                        Bonuses()[_petBonusIndex].ToString(),
+                                        Tidy(Bonuses()[_petBonusIndex].ToString()).ToUpper(),
                                         -width / 2 + 98, bonusY, width - 200, RowHeight,
                                         Skin.Bright, 3);
             _petValueInput = AddInput(parent, "PetValue", width / 2 - 96, bonusY, 76, "10");
@@ -6088,7 +6414,7 @@ namespace VaultAdmin
             choice.Picture.gameObject.SetActive(true);
             ShowIcon(choice.Picture, entry);
 
-            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 58);
+            if (choice == _outfit || choice == _weapon) FitSprite(choice.Picture, 46);
         }
 
         /// <summary>
@@ -7563,8 +7889,8 @@ namespace VaultAdmin
             // Everything inside is measured from a single padding, so the gap above the figure,
             // below the die and either side of both is the same number.
             const int pad = 8;
-            const int dieRoom = 44;
-            const int rollHeight = dieRoom - 12;
+            const int dieRoom = 50;
+            const int rollHeight = dieRoom - 6;
 
             int wellWidth = PreviewWidth + pad * 2;
             int wellHeight = PreviewHeight + dieRoom + pad * 3 + 2;
@@ -7588,7 +7914,7 @@ namespace VaultAdmin
             // line that divides the box sits lower with it, which leaves the die where the eye
             // expects a control to be.
             int wellTop = middle + wellHeight / 2;
-            int pictureY = wellTop - pad - 6 - PreviewHeight / 2;
+            int pictureY = wellTop - pad - 12 - PreviewHeight / 2;
 
             GameObject picture = new GameObject("PreviewPicture");
             picture.layer = parent.gameObject.layer;
@@ -7613,8 +7939,10 @@ namespace VaultAdmin
             _previewHeadgear.depth = 4;
 
             // The line, and the die below it: the same padding above the line as below it.
-            int lineY = pictureY - PreviewHeight / 2 - pad + 2;
-            int dieY = lineY - 1 - pad + 2 - dieRoom / 2;
+            // The line sits lower and the die rides higher in what is left, so the lower half
+            // is the die rather than the die and a gap under it.
+            int lineY = pictureY - PreviewHeight / 2 - pad - 4;
+            int dieY = lineY - 2 - pad + 4 - dieRoom / 2;
 
             UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
                                       Skin.Solid(), 3);
@@ -7709,18 +8037,21 @@ namespace VaultAdmin
             caption.maxLineCount = 1;
             choice.Title = caption;
 
-            // A larger recess holding a slightly smaller picture: the picture had been drawn to
-            // the recess's own size and was standing on its edges.
-            int well = height - 38;
-            int middle = y - 6;
+            // Measured from the card's own edges rather than placed by eye: the gap below the
+            // recess is the gap to its left, which is what makes a box inside a box look deliberate
+            // rather than dropped in.
+            const int inset = 8;
 
-            Plate(parent, "SlotWell_" + choice.Caption, left + 8 + well / 2, middle, well, well,
+            int well = height - 34;
+            int middle = y - height / 2 + inset + well / 2;
+
+            Plate(parent, "SlotWell_" + choice.Caption, left + inset + well / 2, middle, well, well,
                   Skin.Well(well), 2);
 
             GameObject pictureGo = new GameObject("SlotPic_" + choice.Caption);
             pictureGo.layer = parent.gameObject.layer;
             pictureGo.transform.SetParent(parent, false);
-            pictureGo.transform.localPosition = new Vector3(left + 8 + well / 2, middle, 0f);
+            pictureGo.transform.localPosition = new Vector3(left + inset + well / 2, middle, 0f);
             pictureGo.transform.localScale = Vector3.one;
 
             choice.Picture = pictureGo.AddComponent<UISprite>();
@@ -7730,7 +8061,7 @@ namespace VaultAdmin
             // Three lines of one size, set lower so they sit against the picture rather than
             // above it. Three sizes over three lines that say three parts of the same thing is
             // hierarchy invented where there is none.
-            int lineLeft = left + 16 + well;
+            int lineLeft = left + inset * 2 + well;
             int lineWidth = Mathf.Max(48, right - 8 - lineLeft);
 
             choice.Display = MakeLeftLabel(parent, "SlotValue_" + choice.Caption, "-",
@@ -7853,11 +8184,11 @@ namespace VaultAdmin
                 // keys are keys.
                 UILabel letter = MakeLabel(parent, "SpecLetter" + i,
                                            Specials[i].ToString().Substring(0, 1),
-                                           x, specialY + 34, cell, 26, Skin.Bright, 3);
+                                           x, specialY + 29, cell, 26, Skin.Bright, 3);
                 letter.fontSize = TextTitle;
 
-                UIInput box = AddInput(parent, "Spec" + i, x, specialY + 6, cell - 24,
-                                       _special[i].ToString(), true);
+                UIInput box = AddInput(parent, "Spec" + i, x, specialY + 4, cell - 24,
+                                       _special[i].ToString(), true, 24);
                 _specialInputs[i] = box;
 
                 UILabel typed = box.GetComponentInChildren<UILabel>();
@@ -7920,6 +8251,13 @@ namespace VaultAdmin
         private UIInput AddInput(Transform parent, string name, int x, int y, int width, string hint,
                                  bool numeric)
         {
+            return AddInput(parent, name, x, y, width, hint, numeric, RowHeight - 12);
+        }
+
+        /// <summary>A field of a stated height, for the cells that hold two digits rather than a word.</summary>
+        private UIInput AddInput(Transform parent, string name, int x, int y, int width, string hint,
+                                 bool numeric, int fieldHeight)
+        {
             GameObject go = new GameObject("Input_" + name);
             go.layer = parent.gameObject.layer;
             go.transform.SetParent(parent, false);
@@ -7928,7 +8266,6 @@ namespace VaultAdmin
 
             // A field has to look like one. Without a sunken plate behind it a place to type is
             // indistinguishable from a label, and the search box read as the word ALL.
-            int fieldHeight = RowHeight - 12;
             Plate(go.transform, "Field", 0, 0, width, fieldHeight,
                   Skin.Field(width, fieldHeight), 2);
 
@@ -9617,7 +9954,7 @@ namespace VaultAdmin
             GUILayout.Label("Bonus", GUILayout.Width(44f));
             if (GUILayout.Button("<", GUILayout.Width(24f)))
                 _petBonusIndex = (_petBonusIndex - 1 + Bonuses().Length) % Bonuses().Length;
-            GUILayout.Label(Bonuses()[_petBonusIndex].ToString(), GUILayout.Width(180f));
+            GUILayout.Label(Tidy(Bonuses()[_petBonusIndex].ToString()), GUILayout.Width(180f));
             if (GUILayout.Button(">", GUILayout.Width(24f)))
                 _petBonusIndex = (_petBonusIndex + 1) % Bonuses().Length;
             GUILayout.EndHorizontal();
