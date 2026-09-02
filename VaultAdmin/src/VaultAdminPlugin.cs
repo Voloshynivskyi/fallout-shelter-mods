@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.8";
+        public const string PluginVersion = "1.4.0";
 
         internal static ManualLogSource Log;
 
@@ -5402,6 +5402,17 @@ namespace VaultAdmin
 
                 int wantedHere = NumberFor(MaxDwellersHere, MaxDwellersWanted);
 
+                // Following the rooms. Counted on a slow beat rather than every frame: it walks
+                // every room in the vault, and a limit that is right within five seconds of a
+                // room being built is right enough.
+                if (wantedHere < 0 && Time.time >= _nextCount)
+                {
+                    _nextCount = Time.time + 5f;
+
+                    int holds = CountTheQuarters();
+                    if (holds > 0) wantedHere = holds;
+                }
+
                 if (wantedHere > 0)
                 {
                     object now = ReadObject(vault, "MaxDwellers");
@@ -5423,6 +5434,7 @@ namespace VaultAdmin
         // game back rather than leaving it altered.
         private float _wasMinimumChance = -1f;
         private float _wasChancePerTier = -1f;
+        private float _nextCount;
 
         // The rest of what this panel changes about the vault, as it was before the change. Three
         // of these switches used to be one-way: the mod could turn incidents off and then be
@@ -6381,7 +6393,13 @@ namespace VaultAdmin
         {
             if (_pressed == null || _pressed.Note == null) return;
 
+            // Big enough to read, and on as many lines as it takes. A report squeezed onto the
+            // one small line meant for "best where it works, worst where it trains" was there and
+            // unreadable, which is the same as not being there.
             _pressed.Note.text = message;
+            _pressed.Note.maxLineCount = 3;
+            _pressed.Note.fontSize = TextBody;
+            _pressed.Note.overflowMethod = UILabel.Overflow.ShrinkContent;
             // A refusal is quieter, not a different colour. There are three greens in this
             // interface and an amber warning belongs to some other program.
             _pressed.Note.color = went
@@ -6403,6 +6421,8 @@ namespace VaultAdmin
 
                 if (power.Note == null) continue;
                 power.Note.text = power.Description;
+                power.Note.maxLineCount = 1;
+                power.Note.fontSize = TextNote;
                 power.Note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             }
         }
@@ -6958,7 +6978,13 @@ namespace VaultAdmin
                 {
                     Room room = all[i];
                     if (room == null || !room.gameObject.activeInHierarchy) continue;
-                    if (!(RoomStat(room) is ESpecialStat)) continue;
+                    // The door is the exception, and it was silently failing this test. It asks
+                    // nothing of a guard but that they stand there, so it carries no stat -- and
+                    // the filter threw it out before the ranking ever saw it, which is why the
+                    // report kept saying "0 door" in a vault that plainly has one.
+                    bool door = TypeOf(room) == "Entrance";
+
+                    if (!(RoomStat(room) is ESpecialStat) && !door) continue;
                     if (RoomPlaces(room) <= 0) continue;
 
                     int rank = RankOf(room);
@@ -7027,11 +7053,15 @@ namespace VaultAdmin
                 // Whoever is left is left: unassigned, wandering the vault. Every rank has been
                 // offered its places and none of them wanted these, so nothing is gained by
                 // pushing them into a room that has no use for them.
-                Say("Posted " + posted + " across " + rooms + " room(s) — " + ranks[0].Count +
-                    " producing, " + ranks[1].Count + " medical, " + ranks[2].Count +
-                    " training, " + ranks[3].Count + " crafting, " + ranks[4].Count + " door, " +
-                    ranks[5].Count + " quarters, " + ranks[6].Count + " last. " + pool.Count +
-                    " are on a coffee break; " + turnedAway + " were never eligible.");
+                // Two short lines rather than one long one. The breakdown by rank goes to the
+                // log, where there is room for it and nobody is squinting at a row.
+                Log.LogInfo("Ranks: " + ranks[0].Count + " producing, " + ranks[1].Count +
+                            " medical, " + ranks[2].Count + " training, " + ranks[3].Count +
+                            " crafting, " + ranks[4].Count + " door, " + ranks[5].Count +
+                            " quarters, " + ranks[6].Count + " last.");
+
+                Say("POSTED " + posted + " IN " + rooms + " ROOMS\n" +
+                    pool.Count + " idle, " + turnedAway + " not eligible");
             }
             catch (Exception e)
             {
@@ -7793,6 +7823,23 @@ namespace VaultAdmin
         private bool _lookedForCanBeAdded;
 
         /// <summary>Fills a set of rooms from the pool, taking the highest scorers or the lowest.</summary>
+        /// <summary>
+        /// The stat a room is staffed on, and something sensible where it has none.
+        ///
+        /// The vault door has no stat: the game asks nothing of a guard except that they be there
+        /// with a weapon. Casting its missing stat is what would have thrown had the filter ever
+        /// let it through. Strength is the nearest thing a guard has to a job requirement, so the
+        /// door takes the strongest of whoever is left -- a better answer than the empty doorway
+        /// that filtering it out produced.
+        /// </summary>
+        private static ESpecialStat StatOfRoom(Room room)
+        {
+            object stat = RoomStat(room);
+            if (stat is ESpecialStat) return (ESpecialStat)stat;
+
+            return Specials[0];
+        }
+
         private int Staff(List<Room> rooms, List<Dweller> pool, MethodInfo assign,
                           DwellerManager manager, bool best)
         {
@@ -7803,7 +7850,7 @@ namespace VaultAdmin
             {
                 Room room = rooms[i];
 
-                ESpecialStat stat = (ESpecialStat)RoomStat(room);
+                ESpecialStat stat = StatOfRoom(room);
 
                 // What is free, not what exists. Filling a room to its capacity when half of it is
                 // already occupied is asking the game to put six people in four chairs, and the
@@ -8978,8 +9025,12 @@ namespace VaultAdmin
                     return -1;
                 }
 
-                Log.LogInfo("The living quarters hold " + total + " between " + rooms +
-                            " room(s), counted from " + how + ":" + each);
+                if (!_saidTheCount)
+                {
+                    _saidTheCount = true;
+                    Log.LogInfo("The living quarters hold " + total + " between " + rooms +
+                                " room(s), counted from " + how + ":" + each);
+                }
 
                 return total;
             }
@@ -9092,6 +9143,7 @@ namespace VaultAdmin
         }
 
         private static bool _saidWhatQuartersHold;
+        private static bool _saidTheCount;
 
         /// <summary>Hands the limit back to the living quarters.</summary>
         private void ResetPopulation()
@@ -9111,12 +9163,14 @@ namespace VaultAdmin
 
                 PutInField(_populationInput, real.ToString());
 
-                // The counted number, not nought. Nought means "leave it alone", and leaving it
-                // alone is not what was wanted: the game recomputes the limit at load and another
-                // mod raises it, so a reset that only stopped overriding lasted until the next
-                // reload and then read 200 again. Writing what the quarters hold makes the
-                // standing rule put it back every time the vault opens.
-                RememberNumber(MaxDwellersHere, MaxDwellersWanted, real);
+                // Minus one, meaning "follow the rooms" -- not the number counted just now.
+                //
+                // Nought meant "stop overriding", and the game put 200 back at the next load. A
+                // fixed number survived the load and stopped being true the moment another living
+                // quarters was built. Neither of those is a reset. This is: the standing rule
+                // counts the quarters again as it goes, so building changes the limit and nothing
+                // else does.
+                RememberNumber(MaxDwellersHere, MaxDwellersWanted, -1);
                 _wasMaxDwellers = -1;
 
                 Say("Back to what the quarters hold: " + real + ".");
