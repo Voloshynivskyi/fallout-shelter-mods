@@ -687,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.0.2";
 
         internal static ManualLogSource Log;
 
@@ -4602,9 +4602,16 @@ namespace VaultAdmin
 
 
 
-            AddHeader(parent, "PEACE AND QUIET", width);
+            // On its own, and next to last. Everything else here changes a rule and is done with;
+            // this moves fifty people about, and it is the only thing on the page worth a moment's
+            // thought before pressing.
+            AddHeader(parent, "ASSIGNMENT", width);
 
-            AddHeader(parent, "THE VAULT", width);
+            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
+                     "best where it works, worst where it trains", AssignTheBest,
+                     Skin.Ranked(38));
+
+            AddHeader(parent, "PEACE AND QUIET", width);
 
             _rushSwitch = AddPower(parent, width, "RUSH NEVER FAILS",
                                    "no accident from rushing",
@@ -4616,14 +4623,6 @@ namespace VaultAdmin
             _bottleSwitch = AddPower(parent, width, "NO BOTTLE AND CAPPY",
                                      "the pair stay away", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
-
-            // Last, and on its own. Everything above changes a rule; this moves fifty people about
-            // and is the only thing on the page you would want to think before pressing.
-            AddHeader(parent, "ASSIGNMENT", width);
-
-            AddPower(parent, width, "BEST DWELLER IN EVERY ROOM",
-                     "best where it works, worst where it trains", AssignTheBest,
-                     Skin.Ranked(38));
 
             EndScroll(view, width);
             RefreshPowerSwitches();
@@ -7971,7 +7970,7 @@ namespace VaultAdmin
             // below the die and either side of both is the same number.
             const int pad = 8;
             const int dieRoom = 50;
-            const int rollHeight = dieRoom - 14;
+            const int rollHeight = dieRoom - 8;
 
             int wellWidth = PreviewWidth + pad * 2;
             int wellHeight = PreviewHeight + dieRoom + pad * 3 + 2;
@@ -8023,7 +8022,7 @@ namespace VaultAdmin
             // The line sits lower and the die rides higher in what is left, so the lower half
             // is the die rather than the die and a gap under it.
             int lineY = pictureY - PreviewHeight / 2 - pad - 4;
-            int dieY = lineY - 2 - pad + 10 - dieRoom / 2;
+            int dieY = lineY - 2 - pad + 16 - dieRoom / 2;
 
             UITexture divider = Plate(parent, "RollLine", pictureX, lineY, wellWidth - pad * 2, 2,
                                       Skin.Solid(), 3);

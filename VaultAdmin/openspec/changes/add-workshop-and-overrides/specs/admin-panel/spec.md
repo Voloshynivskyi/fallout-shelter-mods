@@ -183,3 +183,106 @@ texture shown at a different size has its rounded corners pulled out of shape.
 
 - **WHEN** the texture has no corners to pull
 - **THEN** it may be stretched over anything, and is not reported
+
+### Requirement: The button sits beside the thing it belongs with
+
+The panel button SHALL be placed under the game's own dwellers button, found by searching the vault
+HUD rather than by a fixed path, so that a change to the interface moves it rather than breaking it.
+
+#### Scenario: The dwellers button is found
+
+- **WHEN** the vault HUD carries a dwellers button that is switched on and takes a press
+- **THEN** the panel button is cloned from it and placed directly beneath it
+
+#### Scenario: Several candidates
+
+- **WHEN** the HUD carries more than one button for the dwellers list, as it does when it keeps one
+  per layout
+- **THEN** only one that is switched on and accepts a press is used, preferring the one in the
+  corner the player sees
+
+#### Scenario: None is found
+
+- **WHEN** no such button can be found
+- **THEN** the panel button falls back to the position it had before, the hotkey still works, and
+  every candidate that was considered is written to the log with the reason it was passed over
+
+### Requirement: The panel is drawn in one palette and one set of sizes
+
+The panel SHALL draw itself in three greens and nothing else, and SHALL set every label to one of
+six named sizes chosen for what the label is rather than for where it sits.
+
+#### Scenario: A colour
+
+- **WHEN** any part of the panel is drawn
+- **THEN** its colour is one of the three, or one of the three at reduced strength
+
+#### Scenario: A label
+
+- **WHEN** a label is created
+- **THEN** it is given a size from the ladder, and labels that say the same kind of thing in
+  different places are given the same one
+
+### Requirement: Things are named as the player knows them
+
+The panel SHALL show the name a player would use, not the name the game's code uses.
+
+#### Scenario: A resource
+
+- **WHEN** a resource is listed
+- **THEN** it reads CAPS, POWER, STIMPAK and so on, rather than the identifier its enum carries
+
+#### Scenario: A thing the game has no name for
+
+- **WHEN** the game's own name for something is a bare number, as it is for most hairstyles
+- **THEN** the number is given something to be the number of, rather than being shown alone or
+  replaced by an invented name
+
+### Requirement: Diagnostics are off by default and say enough to act on
+
+Every diagnostic SHALL be off in a fresh configuration. When one does run, it SHALL write down what
+was actually found rather than that something was not.
+
+#### Scenario: An ordinary session
+
+- **WHEN** the mod is enabled with a fresh configuration and played with
+- **THEN** the log carries no listings of atlases, animation clips or interface hierarchies
+
+#### Scenario: Something the panel depends on is missing
+
+- **WHEN** a member, method or list the panel needs cannot be found
+- **THEN** the panel writes down what the object it was looking at actually holds, so the next
+  attempt is informed rather than another guess
+
+### Requirement: The panel takes the wheel and the drag while it is open
+
+The game reads the mouse wheel and the drag for its own camera whatever the interface does, so
+scrolling a list in the panel would zoom the vault at the same time. While the panel is open the
+panel SHALL have them.
+
+#### Scenario: Scrolling a list
+
+- **WHEN** the player scrolls or drags inside the panel
+- **THEN** the list moves and the vault behind it does not
+
+#### Scenario: Closing the panel
+
+- **WHEN** the panel is closed, or the mod is disabled
+- **THEN** the game's camera answers to the wheel and the drag again, exactly as before
+
+### Requirement: A panel that cannot be built still leaves a way in
+
+If the panel cannot be built from the game's own widgets, the mod SHALL fall back to a plain
+scaffold rather than leaving the player with a hotkey that does nothing.
+
+#### Scenario: The interface cannot be reached
+
+- **WHEN** the game's UI root, font or atlases cannot be found
+- **THEN** a plain window is drawn instead, the log says what could not be found, and the game is
+  otherwise untouched
+
+#### Scenario: The fallback is not a second interface
+
+- **WHEN** the fallback is shown
+- **THEN** it offers the same actions and applies the same limits to what can be typed, so nothing
+  reachable there can write a value the panel would have refused

@@ -1,16 +1,20 @@
 schema: spec-driven
 
 context: |
-  Vault Admin — a BepInEx mod for Fallout Shelter (Steam PC, v2.5.1, Unity 6000.0.58, Mono).
+  Vault Admin — a BepInEx mod for Fallout Shelter (Steam PC, v2.6.0, Unity 6000.0.58, Mono).
   A debug panel built INTO the game's own interface, able to create dwellers, weapons and pets
   with full control over every attribute the game holds.
 
   Stack and build
     C# targeting the Unity Mono profile. No .NET SDK: compiled with
     C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe using /nostdlib+ /noconfig against the
-    game's own assemblies in FalloutShelter_Data\Managed. BepInEx 5.4.23.5 + HarmonyX 2.9.
+    game's own assemblies in FalloutShelter_Data\Managed. BepInEx 5.4.23.5, which ships HarmonyX
+    alongside it — this mod uses none of it. There are no patches at all: everything goes through
+    the game's own methods, reached by reflection.
     Build with .\build.ps1; it reads PluginVersion out of the source, so the version number exists
-    in exactly one place.
+    in exactly one place. It prints the compiler's warnings before its success line and proves the
+    install by hash. tools/verify-install.py answers, separately, whether the plugin the game will
+    load is the one that was just built.
 
   The single most important constraint
     The agent cannot run the game or see the screen. Anything needing a running game costs a round
@@ -20,7 +24,17 @@ context: |
   The UI must be part of the game
     Not an IMGUI overlay drawn on top. The panel is built from the game's own NGUI widgets —
     UIAtlas, UISprite, UILabel, UIButton, UIPanel — parented into the game's UI hierarchy so it
-    looks and behaves like the rest of the interface.
+    looks and behaves like the rest of the interface. An IMGUI scaffold remains, reached only when
+    the NGUI window cannot be built at all, so a UI failure is a UI failure and not a dead mod.
+
+  What this game does that is worth knowing before writing against it
+    A dweller carries no Animator. It is driven by the legacy Animation component with the game's
+    own controller on top, and that controller replaces any clip anybody else sets, one frame later.
+    ApplyCustomization only ever puts a piece on; nothing takes one off.
+    Equipping a dweller returns whatever it was wearing to the vault's storage — which mints real
+    items when what it was wearing was fabricated rather than taken from the vault.
+    A pooled dweller arrives with no pieces and no outfit, and carries a visibility detector that
+    stops the game when something looks at it.
 
   Danger
     This mod writes to the player's save. Writing an id or enum value the base game does not know
