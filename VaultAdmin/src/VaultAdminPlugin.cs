@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.3.2";
 
         internal static ManualLogSource Log;
 
@@ -1200,7 +1200,7 @@ namespace VaultAdmin
             // the player: changing a default does nothing for anybody who has already run the mod,
             // so tuning where this sits by changing a default would have moved it for nobody.
             const float nudgeAcross = 0f;
-            const float nudgeUp = 4f;
+            const float nudgeUp = -8f;
 
             float drop = seen.extents.y + mine.extents.y - nudgeUp;
 
@@ -5923,7 +5923,13 @@ namespace VaultAdmin
 
                 if (works.Count == 0 && teaches.Count == 0)
                 {
-                    Trouble("No room in this vault runs on a stat; the log says what was seen.");
+                    // Nothing matched, so the question was wrong. Rather than say so and stop, the
+                    // first room in the vault is asked what it is made of -- names and values --
+                    // and the answer goes in the log. Every time this project has been stuck, that
+                    // has been the thing that unstuck it.
+                    SayWhatARoomIs(all);
+
+                    Trouble("No room in this vault runs on a stat; the log says what one holds.");
                     return;
                 }
 
@@ -6055,6 +6061,65 @@ namespace VaultAdmin
             }
 
             return lifted;
+        }
+
+        /// <summary>
+        /// Writes down what a room is made of, once, when the stat cannot be found on it.
+        ///
+        /// Names and values both: a field called something unexpected is findable by its value
+        /// being Strength when the room is a power plant, and a field whose name looked right but
+        /// holds nothing is only distinguishable from the right one by what it holds.
+        /// </summary>
+        private static void SayWhatARoomIs(Room[] all)
+        {
+            try
+            {
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                Room room = null;
+                for (int i = 0; i < all.Length && room == null; i++)
+                    if (all[i] != null && all[i].gameObject.activeInHierarchy) room = all[i];
+
+                if (room == null) { Log.LogWarning("No active room to look at."); return; }
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("A room ('").Append(room.name).Append("') holds:");
+
+                PropertyInfo[] props = room.GetType().GetProperties(Flags);
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length > 0) continue;
+
+                    string got;
+                    try { got = SafeText(props[i].GetValue(room, null)); }
+                    catch { got = "<threw>"; }
+
+                    said.Append("  |  .").Append(props[i].Name).Append("=").Append(Short(got));
+                }
+
+                FieldInfo[] fields = room.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    string got;
+                    try { got = SafeText(fields[i].GetValue(room)); }
+                    catch { got = "<threw>"; }
+
+                    said.Append("  |  .").Append(fields[i].Name).Append("=").Append(Short(got));
+                }
+
+                Log.LogWarning(said.ToString());
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not look at a room: " + e.Message);
+            }
+        }
+
+        private static string Short(string what)
+        {
+            if (what == null) return "<null>";
+            return what.Length <= 40 ? what : what.Substring(0, 40) + "...";
         }
 
         /// <summary>Whether the game will accept this dweller in this particular room.</summary>
