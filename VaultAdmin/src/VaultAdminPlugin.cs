@@ -839,7 +839,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
 
@@ -9264,7 +9264,25 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault != null) WriteMember(vault, "MaxDwellers", real);
 
-                PutInField(_populationInput, real.ToString());
+                // What the game gives, not what the rooms add up to. The two part company as soon
+                // as the quarters hold more than the game's own ceiling: RESET counted 240, wrote
+                // 240, and announced 240, while the vault went on taking 200. That is the panel
+                // saying one thing while the game does another, which is the fault this whole page
+                // has been chasing for a week.
+                int given = real;
+
+                if (vault != null)
+                {
+                    object capped = ReadObject(vault, "ClampedMaxDwellers");
+
+                    try
+                    {
+                        if (capped != null) given = Convert.ToInt32(capped);
+                    }
+                    catch { }
+                }
+
+                PutInField(_populationInput, (given > 0 ? given : real).ToString());
 
                 // Minus one, meaning "follow the rooms" -- not the number counted just now.
                 //
@@ -9276,7 +9294,9 @@ namespace VaultAdmin
                 RememberNumber(MaxDwellersHere, MaxDwellersWanted, -1);
                 _wasMaxDwellers = -1;
 
-                Say("Back to what the quarters hold: " + real + ".");
+                Say(given > 0 && given < real
+                    ? "The quarters hold " + real + "; the game holds it at " + given + "."
+                    : "Back to what the quarters hold: " + real + ".");
             }
             catch (Exception e)
             {
