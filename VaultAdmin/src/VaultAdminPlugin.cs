@@ -1069,44 +1069,33 @@ namespace VaultAdmin
                 {
                     _reportedHud = true;
 
+                    // Every candidate with its whole path, not the first hundred and twenty names
+                    // in the tree. The cut fell exactly where the top-right group begins, so the
+                    // one button this is looking for was the first thing the listing did not say.
                     System.Text.StringBuilder said = new System.Text.StringBuilder();
-                    said.Append("The vault HUD holds:");
+                    said.Append("Dwellers buttons in the vault HUD:");
 
-                    for (int i = 0; i < all.Length && i < 120; i++)
-                        said.Append(" ").Append(all[i].name);
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        if (all[i].name.IndexOf("dweller", StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+
+                        said.Append("  |  ").Append(PathOf(all[i]))
+                            .Append("  active=").Append(all[i].gameObject.activeInHierarchy)
+                            .Append(" clickable=")
+                            .Append(all[i].GetComponentInChildren<Collider>(true) != null);
+                    }
 
                     Log.LogInfo(said.ToString());
                 }
 
-                for (int i = 0; i < all.Length; i++)
-                {
-                    string name = all[i].name;
+                // The one in the corner the player pointed at, if there is one there. A HUD keeps
+                // several buttons for the same thing -- one per layout -- and only the corner
+                // decides which of them anybody means. Top left is where this game keeps it.
+                Transform corner = PickButton(all, true);
+                if (corner != null) return corner;
 
-                    if (name.IndexOf("dweller", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0 &&
-                        name.IndexOf("button", StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-                    // Only one that is actually on screen. This HUD carries two dwellers buttons --
-                    // a handset one and a tablet one -- and whichever the layout is not using is
-                    // switched off. Copying that one put our button on a branch nothing draws and
-                    // nothing clicks, which is a button that is present and useless.
-                    if (!all[i].gameObject.activeInHierarchy)
-                    {
-                        Log.LogInfo("Skipping '" + name + "': it is switched off in this layout.");
-                        continue;
-                    }
-
-                    // And one that is a button. A label called Dweller Button Value is not.
-                    if (all[i].GetComponent<Collider>() == null &&
-                        all[i].GetComponentInChildren<Collider>(true) == null)
-                    {
-                        Log.LogInfo("Skipping '" + name + "': nothing on it takes a press.");
-                        continue;
-                    }
-
-                    Log.LogInfo("Putting the panel button under '" + name + "'.");
-                    return all[i];
-                }
+                return PickButton(all, false);
             }
             catch (Exception e)
             {
@@ -1114,6 +1103,60 @@ namespace VaultAdmin
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The dwellers button, preferring the one in the top-right corner.
+        ///
+        /// Three things have to hold. It has to be named for dwellers and be a button rather than
+        /// one of the labels inside one. It has to be switched on: this HUD carries a handset
+        /// version and a tablet version of the same button and keeps the unused one disabled, and
+        /// copying that put our button on a branch nothing draws and nothing clicks. And it should
+        /// be in the corner the player is looking at, which is what the layout group it sits under
+        /// says.
+        /// </summary>
+        private static Transform PickButton(Transform[] all, bool cornerOnly)
+        {
+            for (int i = 0; i < all.Length; i++)
+            {
+                string name = all[i].name;
+
+                if (name.IndexOf("dweller", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("button", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                if (!all[i].gameObject.activeInHierarchy) continue;
+                if (all[i].GetComponentInChildren<Collider>(true) == null) continue;
+
+                if (cornerOnly && !InTheCorner(all[i])) continue;
+
+                Log.LogInfo("Putting the panel button under '" + PathOf(all[i]) + "'.");
+                return all[i];
+            }
+
+            return null;
+        }
+
+        /// <summary>Whether anything above this in the tree names the top-left group.</summary>
+        private static bool InTheCorner(Transform what)
+        {
+            for (Transform up = what; up != null; up = up.parent)
+            {
+                string name = up.name.Replace(" ", "");
+                if (name.IndexOf("topleft", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+
+            return false;
+        }
+
+        private static string PathOf(Transform what)
+        {
+            string path = what.name;
+
+            for (Transform up = what.parent; up != null; up = up.parent)
+                path = up.name + "/" + path;
+
+            return path;
         }
 
         private static bool _reportedHud;

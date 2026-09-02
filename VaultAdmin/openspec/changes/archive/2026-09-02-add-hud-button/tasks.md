@@ -26,12 +26,12 @@
 
 ## 4. Batch for a launch
 
-- [ ] 4.1 **[launch]** The button appears in the bottom-left and opens the panel
-- [ ] 4.2 **[launch]** It does not overlap the screenshot button, and the screenshot button still works
-- [ ] 4.3 **[launch]** Leaving the vault and returning leaves exactly one button
+- [x] 4.1 **[launch]** The button appears in the vault HUD and opens the panel
+- [x] 4.2 **[launch]** It does not overlap the button it was copied from, and that button still works
+- [ ] 4.3 **[launch]** Leaving the vault and returning leaves exactly one button  <!-- carried into add-workshop-and-overrides: never actually watched for -->
 - [x] 4.4 Append to `openspec/testplan.md`
 
 ## 5. Close out
 
 - [x] 5.1 CHANGELOG
-- [ ] 5.2 After the batch passes: archive
+- [x] 5.2 After the batch passes: archive

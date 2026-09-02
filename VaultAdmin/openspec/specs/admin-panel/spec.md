@@ -1,7 +1,15 @@
 # admin-panel Specification
 
 ## Purpose
-TBD - created by archiving change add-panel-skeleton. Update Purpose after archive.
+
+Vault Admin is a debug panel for Fallout Shelter, built out of the game's own interface widgets and
+reaching the game only through the game's own methods. It reads live vault state, grants anything
+the game can hold, builds dwellers and animals to order, and overrides a handful of the vault's
+rules — and it is disabled until somebody deliberately switches it on.
+
+Two constraints shape every requirement below. There are no Harmony patches, so nothing here can
+depend on intercepting the game; and the panel is a guest in someone else's UI, so a failure in it
+is a UI failure and never the game's.
 
 ## Requirements
 
@@ -339,3 +347,134 @@ The survey SHALL run only when explicitly requested, and SHALL NOT run on load.
 
 - **WHEN** the mod is enabled and the survey has not been asked for
 - **THEN** nothing is surveyed and nothing is logged about the interface
+
+### Requirement: The panel is drawn in the game's interface
+
+The panel SHALL be built from the game's own widget types and parented under its UI root, so that it
+scales with the interface and is drawn in the game's own style rather than over it.
+
+#### Scenario: The panel is opened
+
+- **WHEN** the player opens the panel
+- **THEN** a window appears in the game's style, sized and scaled with the rest of the interface
+
+#### Scenario: The interface cannot be reached
+
+- **WHEN** no UI root or font is available
+- **THEN** the mod falls back to the plain scaffold, so the panel is never unreachable
+
+### Requirement: The panel is divided into three tabs
+
+The panel SHALL present resources, dwellers, and items and pets as three tabs, with one shown at a
+time and the chosen one marked.
+
+#### Scenario: Choosing a tab
+
+- **WHEN** the player presses a tab
+- **THEN** that tab's page is shown, the others are hidden, and the chosen tab is drawn as the
+  emphasised control
+
+#### Scenario: Switching back
+
+- **WHEN** the player returns to a tab
+- **THEN** the page appears as it was left, without being rebuilt
+
+### Requirement: The panel leaves the game's own controls reachable
+
+The window SHALL occupy at most a third of the screen's width, sit against the left edge, and stop
+short of the full height.
+
+#### Scenario: A different screen
+
+- **WHEN** the panel is opened on any screen size or aspect
+- **THEN** its width is at most a third of the interface's width, and space remains above and below
+  it for the game's own controls
+
+### Requirement: Items are listed with the game's own art
+
+Items SHALL be listed with the picture the game itself draws for them, taken from the family's
+atlas.
+
+#### Scenario: Browsing a family
+
+- **WHEN** the player chooses a family
+- **THEN** the list shows each item's own icon and name, a page at a time
+
+#### Scenario: An item with no picture
+
+- **WHEN** an item's sprite cannot be resolved
+- **THEN** the row is still listed and still grants, with the picture left blank
+
+### Requirement: The list can be filtered and paged
+
+The items page SHALL offer a filter and paging, so a family of any length can be reached.
+
+#### Scenario: Filtering
+
+- **WHEN** the player types into the filter
+- **THEN** the list shows only matching items, from its first page
+
+#### Scenario: Nothing matches
+
+- **WHEN** no item matches the filter
+- **THEN** the list says so rather than showing an empty frame
+
+### Requirement: Dwellers and pets are configured in the panel
+
+The panel SHALL offer, in the game's own controls, the attributes the grant paths already accept:
+name, rarity, gender, level and SPECIAL for a dweller; name, bonus and bonus value for a pet.
+
+#### Scenario: Creating a dweller
+
+- **WHEN** the player fills the fields and presses create
+- **THEN** a dweller with those attributes arrives at the vault door, as before
+
+#### Scenario: Granting a pet
+
+- **WHEN** the player sets a name and bonus and grants a pet
+- **THEN** the pet is added carrying them
+
+### Requirement: The panel opens from the game's interface
+
+The mod SHALL place a button in the vault interface that opens and closes the panel, so it can be
+reached without knowing a key.
+
+#### Scenario: Opening from the button
+
+- **WHEN** the player presses the button in the vault HUD
+- **THEN** the panel opens, and pressing it again closes it
+
+#### Scenario: The hotkey still works
+
+- **WHEN** the configured key is pressed
+- **THEN** the panel opens and closes as before
+
+#### Scenario: The button cannot be placed
+
+- **WHEN** the part of the interface it attaches to cannot be found
+- **THEN** the mod logs where it looked, the hotkey continues to work, and the game is unaffected
+
+### Requirement: The button belongs to the interface
+
+The button SHALL be made by cloning one the game already built, so that it inherits its appearance
+and placement rather than being described from scratch.
+
+#### Scenario: Appearance
+
+- **WHEN** the button is shown
+- **THEN** it matches the interface around it in size and style
+
+#### Scenario: The clone carries nothing it should not
+
+- **WHEN** the button is created
+- **THEN** it does only what this mod asks of it, and nothing the button it was cloned from used to
+  do
+
+### Requirement: The button is created once
+
+The mod SHALL NOT create more than one such button, however many times the interface is rebuilt.
+
+#### Scenario: Reopening the vault
+
+- **WHEN** the player leaves the vault and returns
+- **THEN** exactly one button is present

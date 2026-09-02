@@ -44,4 +44,4 @@
 
 - [x] 8.1 Builds clean
 - [x] 8.2 Installed artifact verified by hash and by markers with controls
-- [ ] 8.3 Confirmed in game
+- [x] 8.3 Confirmed in game
