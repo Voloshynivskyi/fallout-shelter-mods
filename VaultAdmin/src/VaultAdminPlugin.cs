@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.8.0";
+        public const string PluginVersion = "1.8.1";
 
         internal static ManualLogSource Log;
 
@@ -11820,6 +11820,8 @@ namespace VaultAdmin
         /// <summary>
         /// The same for boxes, which the game carries with a call of their own.
         /// </summary>
+        private static bool _reportedFlight;
+
         private void ShowBoxFlight(ELunchBoxType type, int quantity)
         {
             if (quantity <= 0) return;
@@ -11844,7 +11846,29 @@ namespace VaultAdmin
                     return;
                 }
 
-                fly.Invoke(particles, new object[] { from, quantity, type, true, null });
+                // Say what this method's arguments are, once. One of them is what made a box
+                // count twice, and the name of the parameter is the difference between knowing
+                // that and guessing at it.
+                if (!_reportedFlight)
+                {
+                    _reportedFlight = true;
+
+                    System.Text.StringBuilder said = new System.Text.StringBuilder();
+                    said.Append("AddLunchboxParticlesAt takes:");
+
+                    ParameterInfo[] args = fly.GetParameters();
+                    for (int i = 0; i < args.Length; i++)
+                        said.Append(" ").Append(args[i].ParameterType.Name).Append(" ")
+                            .Append(args[i].Name);
+
+                    Log.LogInfo(said.ToString());
+                }
+
+                // False, where it used to be true. The boxes were arriving twice -- once from the
+                // loop above, which adds them on purpose, and once from this, which was asked for
+                // an animation and was quietly doing the giving as well. A flight of boxes that
+                // also delivers them is not decoration.
+                fly.Invoke(particles, new object[] { from, quantity, type, false, null });
             }
             catch (Exception e)
             {
