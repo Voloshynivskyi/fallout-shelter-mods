@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.4.0";
+        public const string PluginVersion = "1.4.1";
 
         internal static ManualLogSource Log;
 
@@ -2311,6 +2311,8 @@ namespace VaultAdmin
         // ---- the window, built from the game's own widget types ----
 
         private GameObject _nguiWindow;
+        private UILabel _statusLabel;
+        private float _statusUntil;
         private UITexture _frame;      // the window's own backing, and the proof it is being drawn
         private int _drawCheckFrames;
         private bool _drawChecked;
@@ -2485,6 +2487,19 @@ namespace VaultAdmin
                 BuildPages(_nguiWindow.transform);
                 ShowTab(_tab);
             RefreshThings();
+
+                // Where the panel answers. Outside the scrolling, so it is in the same place
+                // whatever page is open and wherever that page has been scrolled to; three lines
+                // at reading size, because the answers worth giving do not fit on one.
+                Plate(_nguiWindow.transform, "Answer", 0, -_windowHeight / 2 + 74,
+                      _windowWidth - 28, 50, Skin.Row(_windowWidth - 28, 50), 1);
+
+                _statusLabel = MakeLabel(_nguiWindow.transform, "AnswerText", "",
+                                         0, -_windowHeight / 2 + 74, _windowWidth - 44, 46,
+                                         Skin.Bright, 5);
+                _statusLabel.fontSize = TextBody;
+                _statusLabel.maxLineCount = 3;
+                _statusLabel.overflowMethod = UILabel.Overflow.ShrinkContent;
 
                 // On the bottom edge, as the title is on the top one: outlined rather than solid,
                 // smaller than it was, and lettered large enough to read as the way out.
@@ -3589,7 +3604,10 @@ namespace VaultAdmin
 
         // Below the title and the tab bar; above the close button.
         private int ContentTop() { return _windowHeight / 2 - 86; }
-        private int ContentBottom() { return -_windowHeight / 2 + 44; }
+        // Room made above the CLOSE button for the band that answers back. A report belongs
+        // somewhere it can be read without scrolling to find it, and the alternative was writing
+        // it into the one small line that describes what a button does.
+        private int ContentBottom() { return -_windowHeight / 2 + 100; }
 
         // ---- the items and pets page ----
 
@@ -5191,11 +5209,12 @@ namespace VaultAdmin
                                      "the pair stay away", ToggleBottleAndCappy,
                      new[] { "NukaCaps", "Icon_nukacapsPlain" });
 
+            // What the vault takes right now, not what was once typed. The field is a picture of
+            // a setting and it was showing a different number from the one in force -- and after
+            // a room is built the number in force changes on its own.
             AddPowerWithNumber(parent, width, "POPULATION LIMIT",
                                "how many the vault takes",
-                               NumberFor(MaxDwellersHere, MaxDwellersWanted) > 0
-                                   ? NumberFor(MaxDwellersHere, MaxDwellersWanted).ToString()
-                                   : "200",
+                               LimitNow(),
                                RaisePopulation,
                                new[] { "Icon_dwellerPlain", "Icon_dweller" });
 
@@ -6391,27 +6410,32 @@ namespace VaultAdmin
         /// <summary>Puts an answer on the row that was pressed, for as long as it takes to read.</summary>
         private void Answer(string message, bool went)
         {
-            if (_pressed == null || _pressed.Note == null) return;
+            // In the band, not in the row. Writing a report into a row's description meant a
+            // label built for six small words holding sixty large ones: it grew, and a label that
+            // grows from its middle grows over the icon on one side and the buttons on the other.
+            // Which is exactly what it did.
+            if (_statusLabel == null) return;
 
-            // Big enough to read, and on as many lines as it takes. A report squeezed onto the
-            // one small line meant for "best where it works, worst where it trains" was there and
-            // unreadable, which is the same as not being there.
-            _pressed.Note.text = message;
-            _pressed.Note.maxLineCount = 3;
-            _pressed.Note.fontSize = TextBody;
-            _pressed.Note.overflowMethod = UILabel.Overflow.ShrinkContent;
+            _statusLabel.text = message;
+
             // A refusal is quieter, not a different colour. There are three greens in this
             // interface and an amber warning belongs to some other program.
-            _pressed.Note.color = went
+            _statusLabel.color = went
                 ? Skin.Bright
                 : new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.55f);
 
-            _pressed.Until = Time.time + 6f;
+            _statusUntil = Time.time + 9f;
         }
 
         /// <summary>Puts the descriptions back once their answers have been read.</summary>
         private void ForgetOldAnswers()
         {
+            if (_statusUntil > 0f && Time.time >= _statusUntil)
+            {
+                _statusUntil = 0f;
+                if (_statusLabel != null) _statusLabel.text = "";
+            }
+
             for (int i = 0; i < _powers.Count; i++)
             {
                 Power power = _powers[i];
@@ -6421,8 +6445,6 @@ namespace VaultAdmin
 
                 if (power.Note == null) continue;
                 power.Note.text = power.Description;
-                power.Note.maxLineCount = 1;
-                power.Note.fontSize = TextNote;
                 power.Note.color = new Color(Skin.Bright.r, Skin.Bright.g, Skin.Bright.b, 0.75f);
             }
         }
@@ -7326,6 +7348,28 @@ namespace VaultAdmin
             {
                 ReportOnce("field", "Could not put a number in the field: " + e.Message);
             }
+        }
+
+        /// <summary>What the vault will take at this moment, as a number to show in a field.</summary>
+        private string LimitNow()
+        {
+            try
+            {
+                Vault vault = SafeVault();
+
+                object now = vault == null ? null : ReadObject(vault, "ClampedMaxDwellers");
+                if (now == null && vault != null) now = ReadObject(vault, "MaxDwellers");
+
+                if (now != null)
+                {
+                    int many = Convert.ToInt32(now);
+                    if (many > 0) return many.ToString();
+                }
+            }
+            catch { }
+
+            int wanted = NumberFor(MaxDwellersHere, MaxDwellersWanted);
+            return wanted > 0 ? wanted.ToString() : "200";
         }
 
         /// <summary>Sort keys that put rank one first and an unranked room last.</summary>
@@ -12749,6 +12793,16 @@ namespace VaultAdmin
                             if (_grantFamily == Family.Pet) RefreshThings();
                             if (_making == Making.Pet) RefreshPetPick();
                         }
+                    }
+
+                    // The limit changes without anybody typing -- a living quarters is built and
+                    // the vault takes more -- so the field follows it. Never while it is being
+                    // typed in, because a field that rewrites itself under the cursor is worse
+                    // than one showing yesterday's number.
+                    if (_populationInput != null && !_populationInput.isSelected)
+                    {
+                        string now = LimitNow();
+                        if (_populationInput.value != now) PutInField(_populationInput, now);
                     }
 
                     // The caption carries the number, so it goes stale the moment one is typed.
