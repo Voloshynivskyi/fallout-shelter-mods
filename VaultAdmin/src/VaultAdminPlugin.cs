@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.0.3";
 
         internal static ManualLogSource Log;
 
@@ -4456,6 +4456,22 @@ namespace VaultAdmin
 
             if (chosen == null)
             {
+                // An atlas with nothing in it has not failed, it has not arrived. Pet art is
+                // loaded per breed and on request, so the first look at an animal finds an empty
+                // atlas -- and treating that as "there is no picture" gave up permanently on
+                // something that was seconds away.
+                bool empty = true;
+
+                try { empty = atlas.spriteList == null || atlas.spriteList.Count == 0; }
+                catch { }
+
+                if (empty)
+                {
+                    RequestPetType(pet.PetType);
+                    _petArtPending = true;
+                    return;
+                }
+
                 SuggestSprites(atlas, string.IsNullOrEmpty(sprite) ? pet.Name : sprite);
                 ReportOnce("petsprite_" + pet.PetId,
                            "Atlas '" + atlas.name + "' has no picture for " + pet.Name +
@@ -5375,6 +5391,51 @@ namespace VaultAdmin
         /// enough to key settings by, and readable in the config file afterwards, which a numeric
         /// id would not be.
         /// </summary>
+        private static bool _reportedVaultName;
+
+        /// <summary>Writes down every string and number the vault carries, when its name is not among them.</summary>
+        private static void SayWhatHoldsTheName(Vault vault)
+        {
+            try
+            {
+                const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                           BindingFlags.Instance;
+
+                System.Text.StringBuilder said = new System.Text.StringBuilder();
+                said.Append("The vault carries:");
+
+                PropertyInfo[] props = vault.GetType().GetProperties(Flags);
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length > 0) continue;
+                    if (props[i].PropertyType != typeof(string) &&
+                        props[i].PropertyType != typeof(int)) continue;
+
+                    string got;
+                    try { got = SafeText(props[i].GetValue(vault, null)); }
+                    catch { continue; }
+
+                    said.Append("  .").Append(props[i].Name).Append("=").Append(Short(got));
+                }
+
+                FieldInfo[] fields = vault.GetType().GetFields(Flags);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (fields[i].FieldType != typeof(string) && fields[i].FieldType != typeof(int))
+                        continue;
+
+                    string got;
+                    try { got = SafeText(fields[i].GetValue(vault)); }
+                    catch { continue; }
+
+                    said.Append("  .").Append(fields[i].Name).Append("=").Append(Short(got));
+                }
+
+                Log.LogWarning(said.ToString());
+            }
+            catch { }
+        }
+
         private string VaultKey()
         {
             try
@@ -5385,6 +5446,18 @@ namespace VaultAdmin
                 string name = ReadAsText(vault, "VaultName");
                 if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "m_vaultName");
                 if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "Name");
+                if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "VaultNumber");
+                if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "m_vaultNumber");
+                if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "Number");
+
+                if (string.IsNullOrEmpty(name) && !_reportedVaultName)
+                {
+                    // Without a name there is nothing to key a vault's settings by, and they
+                    // quietly fall back to the game-wide ones. Which member holds it is worth one
+                    // line rather than three more guesses.
+                    _reportedVaultName = true;
+                    SayWhatHoldsTheName(vault);
+                }
 
                 return string.IsNullOrEmpty(name) ? null : name.Trim();
             }
@@ -8498,19 +8571,17 @@ namespace VaultAdmin
 
                     DwellerItem leftover = inventory.Items[last];
 
-                    // Only what this bench minted. Deleting by position alone assumed the newest
-                    // row was ours, and the newest row belongs to whoever put it there -- a
-                    // finished craft, a squad home from the wasteland. This code deletes from the
-                    // player's save, so it is going to be sure first.
+                    // What arrived, whatever it is called. Matching against the item the figure
+                    // had been wearing looked careful and was wrong: the game does not hand back
+                    // what was worn -- the log caught it returning a .32 pistol where the bench had
+                    // put on a rusty tranquiliser -- so the check refused every time and the
+                    // weapons piled up again, which is the fault it was meant to prevent.
+                    //
+                    // The window is one synchronous equip call, and what lands in it is the bench's
+                    // doing. The id is written down rather than tested, so a wrong one is visible
+                    // instead of silently kept.
                     string id = ReadAsText(leftover, "Id");
-
-                    if (id != mintedId)
-                    {
-                        Log.LogWarning("Something else reached storage while the bench was " +
-                                       "dressing ('" + id + "', expected '" + mintedId +
-                                       "'); leaving it alone.");
-                        break;
-                    }
+                    Log.LogInfo("Taking back '" + id + "', left in storage by dressing the bench.");
 
                     int before = inventory.Items.Count;
 
@@ -8524,7 +8595,7 @@ namespace VaultAdmin
                 }
 
                 if (taken > 0)
-                    Log.LogInfo("Took back " + taken + " item(s) the dressing table left in storage.");
+                    Trace("took back " + taken + " item(s) the dressing table left in storage");
             }
             catch (Exception e)
             {
@@ -10869,6 +10940,7 @@ namespace VaultAdmin
                     if (_petArtPending)
                     {
                         _petArtPending = false;
+                        Trace("pet art arrived; drawing the animals again");
                         if (_grantFamily == Family.Pet) FillRows();
                         if (_making == Making.Pet) RefreshPetPick();
                     }
