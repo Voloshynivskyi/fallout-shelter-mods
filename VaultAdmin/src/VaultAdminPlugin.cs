@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.5.1";
 
         internal static ManualLogSource Log;
 
@@ -5162,7 +5162,9 @@ namespace VaultAdmin
         private void KeepThePowersOn()
         {
             CheckWhichVault();
-            if (SafeVault() == null) return;
+
+            Vault vault = SafeVault();
+            if (vault == null || !vault.Loaded) return;
 
             try
             {
@@ -5181,8 +5183,7 @@ namespace VaultAdmin
 
                 if (MaxDwellersWanted != null && MaxDwellersWanted.Value > 0)
                 {
-                    Vault vault = SafeVault();
-                    object now = vault == null ? null : ReadObject(vault, "MaxDwellers");
+                    object now = ReadObject(vault, "MaxDwellers");
 
                     if (now != null && Convert.ToInt32(now) != MaxDwellersWanted.Value)
                     {
@@ -10102,7 +10103,17 @@ namespace VaultAdmin
             // Leaving one for the vault list tears down every room, every dweller and every widget
             // this mod holds a reference to, and a per-frame pass over objects in the middle of
             // being destroyed is the worst place to be standing when that happens.
-            bool inAVault = SafeVault() != null;
+            // Loaded, not merely existing. Vault.Instance is there from the moment the object
+            // is created, which is long before the vault it represents has been built -- and this
+            // guard asked only whether it was there. So with the rush switch on, every frame of a
+            // sixty-room vault's load was spent walking rooms that were still being constructed
+            // and calling methods on them.
+            //
+            // The project has known this since its first page: Vault.Loaded is what separates "at
+            // the main menu" from "in a vault", and six other places in this file check it. This
+            // one did not.
+            Vault here = SafeVault();
+            bool inAVault = here != null && here.Loaded;
 
             if (!inAVault)
             {
