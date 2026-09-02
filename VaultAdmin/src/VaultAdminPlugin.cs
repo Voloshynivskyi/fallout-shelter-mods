@@ -651,50 +651,74 @@ namespace VaultAdmin
             int w = Mathf.Max(12, Mathf.RoundToInt(size * Scale));
             Color[] px = new Color[w * w];
 
-            // A pad with a dent in the top of it, and four toes on an arc above -- the outer two
-            // lower than the inner two, the way a paw actually sits. They were a row of circles
-            // touching each other and an ellipse touching those, which is a shape with no gaps in
-            // it and therefore no toes.
-            Vector2 pad = new Vector2(w * 0.5f, w * 0.31f);
-            float padWide = w * 0.215f;
-            float padTall = w * 0.165f;
+            // Four toes, each an oval leaning away from the centre, and a pad with three lobes
+            // along its lower edge. The first attempt was circles in a row over an ellipse, which
+            // is a shape with no gaps and therefore no toes; a real print has both the lean and
+            // the lobes, and without them it reads as a flower.
+            float[] toeX = { 0.175f, 0.385f, 0.615f, 0.825f };
+            float[] toeY = { 0.575f, 0.740f, 0.740f, 0.575f };
+            float[] toeLean = { 38f, 13f, -13f, -38f };
 
-            Vector2 dent = new Vector2(w * 0.5f, w * 0.50f);
-            float dentR = w * 0.085f;
-
-            Vector2[] toes =
-            {
-                new Vector2(w * 0.185f, w * 0.575f), new Vector2(w * 0.375f, w * 0.735f),
-                new Vector2(w * 0.625f, w * 0.735f), new Vector2(w * 0.815f, w * 0.575f)
-            };
-            float toe = w * 0.088f;
+            float toeWide = w * 0.078f;
+            float toeTall = w * 0.108f;
 
             for (int y = 0; y < w; y++)
             {
                 for (int x = 0; x < w; x++)
                 {
                     Vector2 p = new Vector2(x + 0.5f, y + 0.5f);
+                    float ink = 0f;
 
-                    float dx = (p.x - pad.x) / padWide;
-                    float dy = (p.y - pad.y) / padTall;
-                    float ink = Mathf.Clamp01((1f - Mathf.Sqrt(dx * dx + dy * dy)) * w * 0.30f);
-
-                    // The dent, taken back out of the top of the pad.
-                    float notch = Mathf.Clamp01(dentR - Vector2.Distance(p, dent) + 0.5f);
-                    ink = Mathf.Min(ink, 1f - notch);
-
-                    for (int i = 0; i < toes.Length; i++)
+                    for (int i = 0; i < 4; i++)
                     {
-                        float d = Vector2.Distance(p, toes[i]);
-                        float on = Mathf.Clamp01(toe - d + 0.5f);
+                        float on = InOval(p, new Vector2(toeX[i] * w, toeY[i] * w),
+                                          toeWide, toeTall, toeLean[i], w);
                         if (on > ink) ink = on;
                     }
+
+                    // The pad: a broad oval with three lobes hanging beneath it, which is what
+                    // gives a paw print its scalloped bottom edge.
+                    float pad = InOval(p, new Vector2(0.5f * w, 0.360f * w),
+                                       w * 0.225f, w * 0.130f, 0f, w);
+
+                    float left = InOval(p, new Vector2(0.345f * w, 0.255f * w),
+                                        w * 0.098f, w * 0.105f, 18f, w);
+                    float mid = InOval(p, new Vector2(0.5f * w, 0.225f * w),
+                                       w * 0.105f, w * 0.115f, 0f, w);
+                    float right = InOval(p, new Vector2(0.655f * w, 0.255f * w),
+                                         w * 0.098f, w * 0.105f, -18f, w);
+
+                    float body = Mathf.Max(pad, Mathf.Max(left, Mathf.Max(mid, right)));
+
+                    // A shallow notch at the top of the pad, so it is not a plain dome.
+                    float notch = InOval(p, new Vector2(0.5f * w, 0.520f * w),
+                                         w * 0.075f, w * 0.055f, 0f, w);
+                    body = Mathf.Min(body, 1f - notch);
+
+                    if (body > ink) ink = body;
 
                     px[y * w + x] = ink > 0f ? Color.Lerp(Clear, Bright, ink) : Clear;
                 }
             }
 
             return Keep(key, w, px);
+        }
+
+        /// <summary>How much of an oval, leaning by so many degrees, covers this pixel.</summary>
+        private static float InOval(Vector2 p, Vector2 centre, float wide, float tall,
+                                    float lean, int across)
+        {
+            float rad = lean * Mathf.Deg2Rad;
+            float cos = Mathf.Cos(rad);
+            float sin = Mathf.Sin(rad);
+
+            Vector2 away = p - centre;
+
+            float u = (away.x * cos + away.y * sin) / wide;
+            float v = (-away.x * sin + away.y * cos) / tall;
+
+            // Softened by about a pixel, whatever the texture's size, so the edge is even.
+            return Mathf.Clamp01((1f - Mathf.Sqrt(u * u + v * v)) * across * 0.32f);
         }
 
         /// <summary>A content row: a quieter outline, dimmed inside.</summary>
@@ -733,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.1.2";
 
         internal static ManualLogSource Log;
 
@@ -9479,7 +9503,7 @@ namespace VaultAdmin
             button.tweenTarget = go;
             button.onClick.Add(new EventDelegate(onClick));
 
-            Respond(button, face);
+            Respond(button, face, width >= 150);
 
             MakeLabel(go.transform, "Text", text, 0, 0, width - 16, height,
                       solid ? Skin.Ink : Skin.Bright, 6);
