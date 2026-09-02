@@ -670,7 +670,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.9";
+        public const string PluginVersion = "1.0.10";
 
         internal static ManualLogSource Log;
 
@@ -1112,8 +1112,8 @@ namespace VaultAdmin
             // Constants, not configuration. A config file is written once and then belongs to
             // the player: changing a default does nothing for anybody who has already run the mod,
             // so tuning where this sits by changing a default would have moved it for nobody.
-            const float nudgeAcross = -14f;
-            const float nudgeUp = 22f;
+            const float nudgeAcross = 0f;
+            const float nudgeUp = 10f;
 
             float drop = seen.extents.y + mine.extents.y - nudgeUp;
 
@@ -4345,7 +4345,12 @@ namespace VaultAdmin
                 if (tall <= 0f) tall = data.height;
 
                 // Against the ink rather than against the whole sheet.
-                float scale = box / Mathf.Max(data.width, data.height);
+                //
+                // The cast is the whole of it. Mathf.Max of two ints returns an int, so this was
+                // 190 / 217 in integers, which is nought -- and the widget came out two pixels
+                // square, which is a UISprite's floor rather than anything anybody asked for. The
+                // log said "asked for 190 and the widget came out 2x2" and that was the answer.
+                float scale = box / (float)Mathf.Max(data.width, data.height);
 
                 sprite.width = Mathf.Max(1, Mathf.RoundToInt(full * scale));
                 sprite.height = Mathf.Max(1, Mathf.RoundToInt(tall * scale));
@@ -8289,7 +8294,9 @@ namespace VaultAdmin
             // adjusted until it looked about right. Half of a remainder is exactly the middle; a
             // number chosen by eye is exactly the middle only by accident.
             int wellFloor = middle - wellHeight / 2;
-            int dieY = (lineY - 1 + wellFloor) / 2 + 7;
+            // Measured from the floor of the box: the gap under the plate is the same number as
+            // the gap at its sides, which is what makes the two halves look deliberate.
+            int dieY = wellFloor + pad + (rollHeight + 2) / 2;
 
             // No rule across the middle. The two halves are told apart by the figure filling one
             // of them, which is enough, and a line inside a small box is one more edge in an
@@ -8299,13 +8306,27 @@ namespace VaultAdmin
             // rounded rectangles and one circle in the middle of it was the only round thing
             // anywhere. Slightly narrower than the figure's recess above it, so the two read as a
             // pair rather than as one shape interrupted.
-            Plate(parent, "RollPlate", pictureX, dieY, wellWidth - pad * 4, rollHeight + 10,
-                  Skin.Well(wellWidth - pad * 4, rollHeight + 10), 3);
+            // The same margin on both sides as underneath, so the plate sits in its half the way
+            // a picture sits in a frame rather than being pushed against one edge of it.
+            int rollWidth = wellWidth - pad * 2;
+            int rollTall = rollHeight + 2;
+
+            Plate(parent, "RollPlate", pictureX, dieY, rollWidth, rollTall,
+                  Skin.Well(rollWidth, rollTall), 3);
+
+            // The word before the picture. A die alone is a die; a die after the word RANDOM is a
+            // button that rolls one, which is the thing this actually does.
+            UILabel rollWord = MakeLeftLabel(parent, "RollWord", "RANDOM",
+                                             pictureX - rollWidth / 2 + 12, dieY,
+                                             rollWidth - rollHeight - 24, 20, Skin.Bright, 4);
+            rollWord.fontSize = TextBody;
+            rollWord.maxLineCount = 1;
 
             GameObject die = new GameObject("RollLooks");
             die.layer = parent.gameObject.layer;
             die.transform.SetParent(parent, false);
-            die.transform.localPosition = new Vector3(pictureX, dieY, 0f);
+            die.transform.localPosition =
+                new Vector3(pictureX + rollWidth / 2 - rollHeight / 2 - 6, dieY, 0f);
             die.transform.localScale = Vector3.one;
 
             _dieFace = die.AddComponent<UITexture>();
