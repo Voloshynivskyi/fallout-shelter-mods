@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.6";
+        public const string PluginVersion = "1.3.7";
 
         internal static ManualLogSource Log;
 
@@ -7145,7 +7145,7 @@ namespace VaultAdmin
 
                 // Back into the vault suit, all of them, so the wardrobe is in one place before any
                 // of it is handed out.
-                int undressed = Undress(wearers, plain);
+                int undressed = Undress(wearers, plain, inventory);
 
                 List<DwellerItem> wardrobe = Wardrobe(inventory);
 
@@ -7310,22 +7310,51 @@ namespace VaultAdmin
         }
 
         /// <summary>Puts everyone back in the vault suit, which returns what they wore to storage.</summary>
-        private int Undress(List<Dweller> wearers, string plain)
+        private int Undress(List<Dweller> wearers, string plain, VaultInventory inventory)
         {
             int changed = 0;
+            int before = inventory.Items.Count;
+
+            System.Text.StringBuilder took = new System.Text.StringBuilder();
 
             for (int i = 0; i < wearers.Count; i++)
             {
                 try
                 {
                     DwellerItem worn = wearers[i].EquippedOutfit;
-                    if (worn != null && ReadAsText(worn, "Id") == plain) continue;
+                    if (worn == null) continue;
+
+                    string id = ReadAsText(worn, "Id");
+                    if (id == plain) continue;
 
                     wearers[i].EquipOutfit(new DwellerItem(EItemType.Outfit, plain), false);
                     changed++;
+
+                    // Put back by hand if the game did not put it back itself. It does not: the
+                    // coat a dweller was wearing simply ceased to exist, which is the one outcome
+                    // a tidy-up must never have. Storage is checked by reference and the very item
+                    // that was taken off is the item returned, so this cannot conjure a second one.
+                    if (!InStorage(inventory, worn)) PutInStorage(inventory, worn);
+
+                    if (took.Length < 300) took.Append(" ").Append(id);
                 }
                 catch { }
             }
+
+            // Counted, because taking a coat off somebody is only safe if it arrives somewhere.
+            // A dweller created by this panel wears an outfit this panel built, and an item built
+            // rather than taken out of storage is exactly the kind the game might not put back --
+            // in which case undressing does not move a coat, it destroys one.
+            int arrived = inventory.Items.Count - before;
+
+            if (changed > 0)
+                Log.LogInfo("Took " + changed + " outfit(s) off:" + took +
+                            " — storage went from " + before + " to " + inventory.Items.Count +
+                            " (" + arrived + " arrived).");
+
+            if (arrived < changed)
+                Log.LogWarning("Undressing lost " + (changed - arrived) + " outfit(s): the game " +
+                               "did not put them back in storage.");
 
             return changed;
         }
@@ -10099,6 +10128,61 @@ namespace VaultAdmin
 
         private static bool _saidWhatStorageHolds;
         private static readonly List<string> _benchWore = new List<string>();
+
+        /// <summary>Whether storage is already holding this exact item.</summary>
+        private static bool InStorage(VaultInventory inventory, DwellerItem thing)
+        {
+            try
+            {
+                for (int i = 0; i < inventory.Items.Count; i++)
+                    if (ReferenceEquals(inventory.Items[i], thing)) return true;
+            }
+            catch { }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Puts one item into storage, by the game's own method where there is one.
+        ///
+        /// The list is the fallback rather than the first choice: adding a row directly skips
+        /// whatever the game does about sorting, counting and telling its own interface, and a
+        /// coat that is in the list but not in the count is its own kind of lost.
+        /// </summary>
+        private static bool PutInStorage(VaultInventory inventory, DwellerItem thing)
+        {
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
+                                       BindingFlags.Instance;
+
+            string[] names = { "AddItem", "Add", "AddDwellerItem", "StoreItem" };
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                try
+                {
+                    MethodInfo go = inventory.GetType().GetMethod(
+                        names[i], Flags, null, new[] { typeof(DwellerItem) }, null);
+
+                    if (go == null) continue;
+
+                    go.Invoke(inventory, new object[] { thing });
+
+                    if (InStorage(inventory, thing)) return true;
+                }
+                catch { }
+            }
+
+            try
+            {
+                inventory.Items.Add(thing);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not put an outfit back in storage: " + e.Message);
+                return false;
+            }
+        }
 
         private bool TookItBack(VaultInventory inventory, DwellerItem leftover)
         {
