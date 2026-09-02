@@ -757,7 +757,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.2.1";
 
         internal static ManualLogSource Log;
 
@@ -5869,6 +5869,7 @@ namespace VaultAdmin
                 // refuses the rest anyway, and asking it to refuse fifty times is a slower way of
                 // finding that out.
                 List<Dweller> pool = new List<Dweller>();
+                int turnedAway = 0;
 
                 for (int i = 0; i < manager.Dwellers.Count; i++)
                 {
@@ -5877,10 +5878,16 @@ namespace VaultAdmin
 
                     try
                     {
-                        if (one.IsChild) continue;
-                        if (one.IsRegisteredInWasteland) continue;
+                        if (one.IsChild) { turnedAway++; continue; }
+                        if (one.IsRegisteredInWasteland) { turnedAway++; continue; }
+
+                        // And whatever else the game itself objects to. Listing the states by hand
+                        // -- dead, pregnant, on a quest, a Mr Handy -- means naming each of them
+                        // correctly and keeping the list right through every update. The game
+                        // already has one method that knows all of them, so it is asked instead.
+                        if (!CanBeAssigned(one)) { turnedAway++; continue; }
                     }
-                    catch { continue; }
+                    catch { turnedAway++; continue; }
 
                     pool.Add(one);
                 }
@@ -5918,9 +5925,9 @@ namespace VaultAdmin
                 int posted = Staff(works, pool, assign, manager, true) +
                              Staff(teaches, pool, assign, manager, false);
 
-                Say("Posted " + posted + " dweller(s): " + works.Count + " working room(s) got " +
-                    "their best, " + teaches.Count + " training room(s) got those with the most " +
-                    "to learn.");
+                Say("Posted " + posted + " dweller(s) across " + works.Count + " working and " +
+                    teaches.Count + " training room(s); " + turnedAway +
+                    " were left where they were.");
             }
             catch (Exception e)
             {
@@ -5962,6 +5969,72 @@ namespace VaultAdmin
 
         private static bool _reportedRooms;
 
+        /// <summary>
+        /// Whether the game will let this dweller be given a post at all.
+        ///
+        /// The states that disqualify somebody -- dead, unconscious, expecting, away on a quest, a
+        /// Mr Handy rather than a person -- are a list that has to be named correctly and kept
+        /// right through every update. The game holds one method that knows the whole of it, so
+        /// this asks that instead of keeping a list of its own. Where the method cannot be found,
+        /// everyone passes: the assignment itself is checked again per room, and a pass that
+        /// refuses everybody is worse than one that lets the game refuse a few.
+        /// </summary>
+        private bool CanBeAssigned(Dweller who)
+        {
+            try
+            {
+                if (_canAssign == null && !_lookedForCanAssign)
+                {
+                    _lookedForCanAssign = true;
+                    _canAssign = typeof(Dweller).GetMethod(
+                        "CanAssignDweller",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, Type.EmptyTypes, null);
+
+                    Log.LogInfo(_canAssign == null
+                        ? "The game has no CanAssignDweller; everyone will be offered a post."
+                        : "Fitness for a post comes from Dweller.CanAssignDweller.");
+                }
+
+                if (_canAssign == null) return true;
+
+                object said = _canAssign.Invoke(who, null);
+                return !(said is bool) || (bool)said;
+            }
+            catch { return true; }
+        }
+
+        /// <summary>Whether the game will accept this dweller in this particular room.</summary>
+        private bool CanGoThere(DwellerManager manager, Dweller who, Room room)
+        {
+            try
+            {
+                if (_canBeAdded == null && !_lookedForCanBeAdded)
+                {
+                    _lookedForCanBeAdded = true;
+                    _canBeAdded = typeof(DwellerManager).GetMethod(
+                        "CanDwellerBeAddedToRoom",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, new[] { typeof(Dweller), typeof(Room) }, null);
+
+                    Log.LogInfo(_canBeAdded == null
+                        ? "The game has no CanDwellerBeAddedToRoom; every room will be tried."
+                        : "Room fitness comes from DwellerManager.CanDwellerBeAddedToRoom.");
+                }
+
+                if (_canBeAdded == null) return true;
+
+                object said = _canBeAdded.Invoke(manager, new object[] { who, room });
+                return !(said is bool) || (bool)said;
+            }
+            catch { return true; }
+        }
+
+        private MethodInfo _canAssign;
+        private MethodInfo _canBeAdded;
+        private bool _lookedForCanAssign;
+        private bool _lookedForCanBeAdded;
+
         /// <summary>Fills a set of rooms from the pool, taking the highest scorers or the lowest.</summary>
         private int Staff(List<Room> rooms, List<Dweller> pool, MethodInfo assign,
                           DwellerManager manager, bool best)
@@ -5984,8 +6057,18 @@ namespace VaultAdmin
 
                 for (int taken = 0; taken < places && pool.Count > 0; taken++)
                 {
-                    Dweller chosen = pool[0];
-                    pool.RemoveAt(0);
+                    // The best one this room will actually take. Skipping past a refusal rather
+                    // than spending a place on it means one dweller the game will not accept does
+                    // not cost the room its whole staffing.
+                    int pick = -1;
+
+                    for (int c = 0; c < pool.Count && c < 8; c++)
+                        if (CanGoThere(manager, pool[c], room)) { pick = c; break; }
+
+                    if (pick < 0) break;
+
+                    Dweller chosen = pool[pick];
+                    pool.RemoveAt(pick);
 
                     try
                     {
