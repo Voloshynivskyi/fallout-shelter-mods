@@ -687,7 +687,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.0.4";
+        public const string PluginVersion = "1.0.5";
 
         internal static ManualLogSource Log;
 
@@ -1028,8 +1028,10 @@ namespace VaultAdmin
                 "icons fill their square almost edge to edge, so a value under one only makes this " +
                 "look undersized beside them.");
 
-            HudButtonOffsetY = Config.Bind("Interface", "HudButtonOffsetY", 62f,
-                "How far below the dwellers-list button the panel button sits.");
+            HudButtonOffsetY = Config.Bind("Interface", "HudButtonOffsetY", 10f,
+                "The gap between the dwellers-list button and the panel button beneath it. The " +
+                "distance between their centres is worked out from how tall the two of them are; " +
+                "this is only the air in between.");
 
             HudButtonOffsetX = Config.Bind("Interface", "HudButtonOffsetX", 90f,
                 "How far to the right of the screenshot button the panel button sits, in the " +
@@ -1227,6 +1229,29 @@ namespace VaultAdmin
             return path;
         }
 
+        /// <summary>
+        /// How tall a piece of the interface is, in the units its parent lays out in.
+        ///
+        /// The widget's own height where it has one, the largest of its children's where it does
+        /// not, and a sensible guess where neither answers. A button in this HUD is a container
+        /// with the sprite inside it, so asking the container alone gets nothing.
+        /// </summary>
+        private static float HeightOf(Transform what)
+        {
+            float tall = 0f;
+
+            try
+            {
+                UIWidget[] widgets = what.GetComponentsInChildren<UIWidget>(true);
+
+                for (int i = 0; i < widgets.Length; i++)
+                    if (widgets[i] != null && widgets[i].height > tall) tall = widgets[i].height;
+            }
+            catch { }
+
+            return tall > 0f ? tall : 50f;
+        }
+
         private static bool _reportedHud;
 
         private const string HudPanelPath =
@@ -1322,7 +1347,19 @@ namespace VaultAdmin
                 if (anchor != null && anchor.parent != null)
                 {
                     parent = anchor.parent;
-                    place = anchor.localPosition + new Vector3(0f, -HudButtonOffsetY.Value, 0f);
+
+                    // Measured off the two buttons rather than added as a constant. A fixed sixty
+                    // two units put ours on top of the one it was meant to sit under, because how
+                    // far below "below" is depends on how tall they both are -- and neither of
+                    // them told anybody that until they were asked.
+                    float drop = HeightOf(anchor) * 0.5f + HeightOf(source.transform) * 0.5f +
+                                 HudButtonOffsetY.Value;
+
+                    place = anchor.localPosition + new Vector3(0f, -drop, 0f);
+
+                    Log.LogInfo("Anchor '" + anchor.name + "' at " + anchor.localPosition +
+                                " is " + HeightOf(anchor) + " tall; the panel button is " +
+                                HeightOf(source.transform) + " tall and goes to " + place + ".");
                 }
 
                 _buttonSettled = anchor != null;
