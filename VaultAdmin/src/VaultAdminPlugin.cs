@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.2.1";
+        public const string PluginVersion = "1.2.2";
 
         internal static ManualLogSource Log;
 
@@ -5551,12 +5551,22 @@ namespace VaultAdmin
                 Vault vault = SafeVault();
                 if (vault == null || !vault.Loaded) return null;
 
+                // Found once and then remembered: the sweep below is cheap but not free, and the
+                // answer cannot change while a vault is open.
+                if (_vaultKey != null) return _vaultKey.Length == 0 ? null : _vaultKey;
+
                 // The slot it was loaded from, before anything else. A vault's name is a thing a
                 // player types: it can be left blank, and two vaults can carry the same one. The
                 // slot is the game's own answer to which vault this is, it is what the file on
                 // disk is called, and it is there whether the vault feels like naming itself.
                 string slot = SaveSlot();
-                if (!string.IsNullOrEmpty(slot)) return "slot" + slot;
+                if (!string.IsNullOrEmpty(slot)) return Remember("slot" + slot);
+
+                // And if the class I expected is not the class that holds it, ask the game rather
+                // than guess a fourth name. Two rounds of this went on candidate lists that were
+                // wrong in the same way each time -- the member exists, on something else.
+                string found = AskWhoThisVaultIs();
+                if (!string.IsNullOrEmpty(found)) return Remember(found);
 
                 string name = ReadAsText(vault, "VaultName");
                 if (string.IsNullOrEmpty(name)) name = ReadAsText(vault, "m_vaultName");
@@ -5579,7 +5589,7 @@ namespace VaultAdmin
                     SayWhatHoldsTheName(vault);
                 }
 
-                return string.IsNullOrEmpty(name) ? null : name.Trim();
+                return string.IsNullOrEmpty(name) ? Remember("") : Remember(name.Trim());
             }
             catch { return null; }
         }
@@ -5648,6 +5658,111 @@ namespace VaultAdmin
             }
 
             store.Value = Write(store.Value, key, many.ToString());
+        }
+
+        /// <summary>Keeps the answer, and hands it back.</summary>
+        private static string Remember(string key)
+        {
+            _vaultKey = key;
+            return key.Length == 0 ? null : key;
+        }
+
+        private static string _vaultKey;
+
+        /// <summary>
+        /// Asks every class that sounds like it would know which vault this is.
+        ///
+        /// Guessing the class name has now failed twice -- SaveManager was not reachable the way
+        /// I reached for it, and Vault carries no name at all. The members themselves are not in
+        /// doubt: CurrentSaveSlot, saveSlotNumber and VaultName are all in this build. What is in
+        /// doubt is which object holds them, and that is a question a sweep answers once and a
+        /// guess answers wrongly for a week.
+        ///
+        /// Narrow on purpose. Only classes whose names mention saving, profiles or vaults, and
+        /// only members by those exact names, because reading a static property runs somebody
+        /// else's code and there is no reason to run all of it.
+        /// </summary>
+        private static string AskWhoThisVaultIs()
+        {
+            string[] wanted = { "CurrentSaveSlot", "m_currentSaveSlot", "saveSlotNumber",
+                                "VaultName", "m_vaultName", "VaultNumber", "m_vaultNumber" };
+
+            string[] singletons = { "Instance", "instance", "s_instance", "m_instance" };
+
+            const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic |
+                                         BindingFlags.Static;
+
+            try
+            {
+                Assembly[] loaded = AppDomain.CurrentDomain.GetAssemblies();
+
+                for (int a = 0; a < loaded.Length; a++)
+                {
+                    Type[] types;
+                    try { types = loaded[a].GetTypes(); }
+                    catch { continue; }
+
+                    for (int t = 0; t < types.Length; t++)
+                    {
+                        string called = types[t].Name;
+
+                        if (called.IndexOf("Save", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            called.IndexOf("Profile", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            called.IndexOf("Vault", StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+
+                        // Whatever this class keeps of itself, if anything.
+                        object held = null;
+
+                        for (int i = 0; i < singletons.Length && held == null; i++)
+                        {
+                            try
+                            {
+                                FieldInfo one = types[t].GetField(singletons[i], Statics);
+                                if (one != null) held = one.GetValue(null);
+
+                                if (held == null)
+                                {
+                                    PropertyInfo said = types[t].GetProperty(singletons[i], Statics);
+                                    if (said != null && said.CanRead) held = said.GetValue(null, null);
+                                }
+                            }
+                            catch { }
+                        }
+
+                        for (int w = 0; w < wanted.Length; w++)
+                        {
+                            string answer = null;
+
+                            try
+                            {
+                                FieldInfo flat = types[t].GetField(wanted[w], Statics);
+                                if (flat != null) answer = Text(flat.GetValue(null));
+
+                                if (answer == null && held != null)
+                                    answer = Text(ReadObject(held, wanted[w]));
+                            }
+                            catch { }
+
+                            if (string.IsNullOrEmpty(answer)) continue;
+
+                            Log.LogInfo("This vault is '" + answer + "', which " + called +
+                                        " keeps as " + wanted[w] + ".");
+
+                            return called + ":" + answer;
+                        }
+                    }
+                }
+
+                Log.LogWarning("No class that mentions saving, profiles or vaults would say " +
+                               "which vault this is.");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("Could not ask which vault this is: " + e.Message);
+            }
+
+            return null;
         }
 
         /// <summary>Which save slot is loaded, as the game itself has it.</summary>
@@ -5798,6 +5913,7 @@ namespace VaultAdmin
                 // could never put it back and the whole process was left with a rush disaster
                 // chance of zero and a switch reading OFF.
                 _knownVault = now;
+                _vaultKey = null;
                 _wasMinimumChance = -1f;
                 _knowIncidents = false;
                 _knowPairLocked = false;
