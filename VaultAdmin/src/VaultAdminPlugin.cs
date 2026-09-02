@@ -769,7 +769,7 @@ namespace VaultAdmin
     {
         public const string PluginGuid = "ovolo.falloutshelter.vaultadmin";
         public const string PluginName = "Vault Admin";
-        public const string PluginVersion = "1.3.4";
+        public const string PluginVersion = "1.3.5";
 
         internal static ManualLogSource Log;
 
@@ -8815,10 +8815,17 @@ namespace VaultAdmin
                 string how = null;
 
                 System.Text.StringBuilder kinds = new System.Text.StringBuilder();
+                System.Text.StringBuilder each = new System.Text.StringBuilder();
                 List<string> already = new List<string>();
 
-                string[] names = { "MaxDwellerCount", "m_maxDwellerCount", "Capacity",
-                                   "m_capacity" };
+                // AddedPopulation, which the room named itself when it was finally asked to list
+                // what it carries: m_addedPopulation=28 on a merged living quarters, beside
+                // m_mergeLevel=3. It is a value on the room rather than in its settings, so it
+                // already accounts for how wide the room is and what level it has been taken to --
+                // which is the whole of what makes this figure awkward. MaxDwellerCount and
+                // Capacity, which this was summing before, are not on a room at all.
+                string[] names = { "m_addedPopulation", "AddedPopulation", "MaxDwellerCount",
+                                   "m_maxDwellerCount", "Capacity", "m_capacity" };
 
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -8861,6 +8868,13 @@ namespace VaultAdmin
                             total += holds;
                             rooms++;
                             if (how == null) how = names[n];
+
+                            // Each room's own figure, so the total can be checked against what the
+                            // rooms say on screen rather than taken on trust.
+                            if (each.Length < 400)
+                                each.Append(" ").Append(kind).Append("(")
+                                    .Append(SizeOf(room)).Append(")=").Append(holds);
+
                             break;
                         }
                         catch { }
@@ -8895,7 +8909,7 @@ namespace VaultAdmin
                 }
 
                 Log.LogInfo("The living quarters hold " + total + " between " + rooms +
-                            " room(s), counted from " + how + ".");
+                            " room(s), counted from " + how + ":" + each);
 
                 return total;
             }
@@ -8986,6 +9000,15 @@ namespace VaultAdmin
                     catch { }
                 }
             }
+        }
+
+        /// <summary>How wide a room is, which is the other half of what its capacity depends on.</summary>
+        private static string SizeOf(Room room)
+        {
+            object wide = ReadObject(room, "m_mergeLevel");
+            if (wide == null) wide = ReadObject(room, "MergeLevel");
+
+            return wide == null ? "?" : wide.ToString();
         }
 
         /// <summary>What level a room is on, for the line above.</summary>
